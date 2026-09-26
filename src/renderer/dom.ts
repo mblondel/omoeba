@@ -202,6 +202,40 @@ export function confirmDialog(title: string, message: string, okLabel = 'OK', da
   });
 }
 
+/**
+ * Modal dialog offering several choices. It cannot be dismissed without choosing, so use it
+ * only for decisions that must be made (e.g. which copy of the annotations to keep).
+ */
+export function choiceDialog<T extends string>(
+  title: string,
+  body: string | Node,
+  choices: { label: string; value: T; primary?: boolean; hint?: string }[],
+): Promise<T> {
+  return new Promise((resolve) => {
+    const buttons = choices.map((c) =>
+      h(
+        'button',
+        {
+          class: `btn ${c.primary ? 'primary' : ''}`,
+          title: c.hint,
+          onclick: () => {
+            overlay.remove();
+            resolve(c.value);
+          },
+        },
+        c.label,
+      ),
+    );
+    const overlay = h(
+      'div',
+      { class: 'overlay' },
+      h('div', { class: 'dialog' }, h('h3', null, title), typeof body === 'string' ? h('p', null, body) : body, h('div', { class: 'dialog-actions' }, buttons)),
+    );
+    document.body.appendChild(overlay);
+    (buttons.find((_, i) => choices[i].primary) ?? buttons[0])?.focus();
+  });
+}
+
 export function formatAuthors(authors: string[], max = 3): string {
   if (authors.length <= max) return authors.join(', ');
   return authors.slice(0, max).join(', ') + ` +${authors.length - max}`;

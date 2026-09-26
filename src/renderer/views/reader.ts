@@ -2,9 +2,10 @@
 import '../pdfjs';
 import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from 'pdfjs-dist/legacy/web/pdf_viewer.mjs';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import type { Annotation, AnnotationType, Config, PaperDetail, RGBA } from '../../shared/types';
+import type { Annotation, AnnotationSources, AnnotationType, Config, PaperDetail, RGBA } from '../../shared/types';
+import { mergeAnnotations } from '../../shared/annotations';
 import { api, newJobId } from '../api';
-import { clear, confirmDialog, debounce, errorMessage, h, icon, iconButton, toast, KEY } from '../dom';
+import { clear, confirmDialog, debounce, errorMessage, h, icon, iconButton, toast, KEY, choiceDialog } from '../dom';
 import { mountMarkdown } from '../markdown';
 import { navigate, refreshConfig, isActiveView, type ViewHandle } from '../app';
 import { loadDocument } from '../pdfjs';
@@ -963,6 +964,65 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   // ---------------------------------------------------------------------------
   // Load
 
+  /**
+   * Annotations are stored in both the .skim file and the .json sidecar. Use whichever exists,
+   * fill in the other copy, and ask what to do when the two copies differ.
+   */
+  async function resolveAnnotations(src: AnnotationSources): Promise<Annotation[]> {
+    const { skim, json } = src;
+    const sync = (anns: Annotation[]) =>
+      api.saveAnnotations(id, anns).catch((e) => toast('Could not save annotations: ' + errorMessage(e), 'error', 8000));
+    if (!skim && !json) return [];
+    if (skim && !json) {
+      if (skim.length) await sync(skim);
+      return skim;
+    }
+    if (!skim && json) {
+      if (json.length) await sync(json);
+      return json;
+    }
+    if (src.same) return skim!;
+    const when = (ms?: number) => (ms ? new Date(ms).toLocaleString() : 'unknown');
+    // Most recent annotation change in each copy (falls back to the file's modification time;
+    // the .json also changes when tags or notes are edited).
+    const latest = (anns: Annotation[], fallback?: number) => {
+      const t = Math.max(...anns.map((a) => (a.modificationDate ? Date.parse(a.modificationDate) : 0)));
+      return t > 0 ? t : fallback;
+    };
+    const d = src.diff ?? { onlySkim: 0, onlyJson: 0, changed: 0 };
+    const parts = [
+      d.onlySkim ? `${d.onlySkim} only in the .skim file` : '',
+      d.onlyJson ? `${d.onlyJson} only in the .json file` : '',
+      d.changed ? `${d.changed} edited differently (e.g. color or text)` : '',
+    ].filter(Boolean);
+    const body = h(
+      'div',
+      { class: 'anno-conflict' },
+      h('p', null, 'The annotations saved in the .skim file and in the .json file of this paper are different. Which ones should be used?'),
+      h(
+        'table',
+        null,
+        h('tr', null, h('th', null, '.skim file'), h('td', null, `${skim!.length} annotations`), h('td', { class: 'muted' }, `last change ${when(latest(skim!, src.skimMtime))}`)),
+        h('tr', null, h('th', null, '.json file'), h('td', null, `${json!.length} annotations`), h('td', { class: 'muted' }, `last change ${when(latest(json!, src.jsonMtime))}`)),
+      ),
+      parts.length ? h('p', { class: 'muted small' }, 'Differences: ' + parts.join(', ') + '.') : null,
+      h(
+        'p',
+        { class: 'muted small' },
+        'Merge keeps the annotations from both; when the same annotation was edited in both, the most recently modified version is kept. Both files are then updated.',
+      ),
+    );
+    const choice = await choiceDialog('Annotations differ', body, [
+      { label: 'Keep .skim', value: 'skim', hint: 'Use the .skim file and overwrite the copy in the .json file' },
+      { label: 'Keep .json', value: 'json', hint: 'Use the .json file and overwrite the .skim file' },
+      { label: 'Merge', value: 'merge', primary: true, hint: 'Combine both' },
+    ]);
+    const result = choice === 'merge' ? mergeAnnotations(skim!, json!) : choice === 'json' ? json! : skim!;
+    await sync(result);
+    if (choice === 'merge') toast(`Merged: ${result.length} annotations`);
+    return result;
+  }
+
   renderLeftTabs();
   renderRightTabs();
 
@@ -974,13 +1034,14 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
         api.readPdf(id),
         api.loadAnnotations(id).catch((e) => {
           toast('Could not read annotations: ' + errorMessage(e), 'error', 8000);
-          return [] as Annotation[];
+          return null;
         }),
       ]);
       if (disposed) return;
       paper = detail;
       cfg = config;
-      annotations = anns;
+      annotations = anns ? await resolveAnnotations(anns) : [];
+      if (disposed) return;
       userName = config.userName;
       titleEl.textContent = detail.title;
       titleEl.title = detail.title;

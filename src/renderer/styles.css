@@ -1781,3 +1781,18 @@ li.collapsed > .toc-item .toc-toggle {
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   }
 }
+
+/* Annotation conflict dialog */
+.anno-conflict table {
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: 13px;
+}
+.anno-conflict th {
+  text-align: left;
+  padding: 3px 14px 3px 0;
+  font-weight: 600;
+}
+.anno-conflict td {
+  padding: 3px 14px 3px 0;
+}

@@ -9,6 +9,7 @@ import type {
   AIDetectResult,
   AIProvider,
   Annotation,
+  AnnotationSources,
   ChatMessage,
   Config,
   IndexStatus,
@@ -30,7 +31,7 @@ import {
   skimPathOf,
   updateSidecar,
 } from './library';
-import { readSkimFile, writeSkimFile } from './skim';
+import { loadAnnotationSources, saveAnnotationsBoth } from './annostore';
 import { extractPdf } from './pdftext';
 import {
   askPrompt,
@@ -318,12 +319,14 @@ export class OmoebaService implements OmoebaAPI {
 
   // --- Annotations ----------------------------------------------------------
 
-  async loadAnnotations(id: string): Promise<Annotation[]> {
-    return readSkimFile(skimPathOf(this.checkId(id)));
+  /** Both copies of the annotations (.skim and .json); the reader resolves differences. */
+  async loadAnnotations(id: string): Promise<AnnotationSources> {
+    return loadAnnotationSources(this.checkId(id));
   }
 
+  /** Saves to the .skim file and to the .json sidecar. */
   async saveAnnotations(id: string, annotations: Annotation[]): Promise<void> {
-    await writeSkimFile(skimPathOf(this.checkId(id)), annotations);
+    await saveAnnotationsBoth(this.checkId(id), annotations);
   }
 
   // --- AI -------------------------------------------------------------------

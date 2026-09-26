@@ -34,7 +34,11 @@ Omoeba never moves or renames your PDFs. Next to each `paper.pdf` it may create:
 | File         | Content                                                                                   |
 | ------------ | ----------------------------------------------------------------------------------------- |
 | `paper.skim` | Annotations, in Skim's format (binary plist of note dictionaries). Readable/writable by Skim. |
-| `paper.json` | Title, authors, institutions, tags, notes, summaries (one per AI, images as base64), download location, Ask-AI chats. |
+| `paper.json` | Title, authors, institutions, tags, notes, summaries (one per AI, images as base64), download location, Ask-AI chats, and a copy of the annotations. |
+
+Annotations are saved in both the `.skim` file and the `.json` file. When a PDF is opened and the two copies
+differ (e.g. the PDF was annotated in Skim), Omoeba asks whether to merge them, keep the `.skim` version, or keep
+the `.json` version; both files are then updated. If only one copy exists, the other is filled in silently.
 
 A `.json` with `"omoeba": 1` and no PDF is shown as a paper whose PDF is missing; it can be downloaded again from
 its original location. Unknown keys in `.json` and `.skim` files are preserved.

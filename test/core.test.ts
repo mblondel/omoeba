@@ -238,3 +238,66 @@ test('download url normalization', () => {
   assert.equal(toPdfUrl('https://openreview.net/forum?id=abc'), 'https://openreview.net/pdf?id=abc');
   assert.equal(toPdfUrl('https://example.com/a.pdf'), 'https://example.com/a.pdf');
 });
+
+// ---------------------------------------------------------------------------
+// Annotations stored in both .skim and .json
+
+import { diffAnnotations, mergeAnnotations, sameAnnotations } from '../src/shared/annotations';
+import { loadAnnotationSources, saveAnnotationsBoth } from '../src/main/annostore';
+import type { Annotation } from '../src/shared/types';
+
+const ann = (over: Partial<Annotation>): Annotation => ({
+  id: Math.random().toString(36),
+  type: 'Highlight',
+  page: 0,
+  bounds: [10, 20, 100, 12],
+  color: [1, 1, 0, 1],
+  contents: 'text',
+  modificationDate: '2026-01-01T00:00:00.000Z',
+  ...over,
+});
+
+test('annotations: compare, diff and merge', () => {
+  const a = ann({});
+  const b = ann({ page: 2, bounds: [5, 5, 50, 10], contents: 'other' });
+  assert.ok(sameAnnotations([a, b], [{ ...b, id: 'x' }, { ...a, bounds: [10.0000001, 20, 100, 12], id: 'y' }]));
+  const aEdited = { ...a, color: [0, 1, 0, 1] as Annotation['color'], modificationDate: '2026-02-01T00:00:00.000Z' };
+  const c = ann({ page: 5 });
+  assert.ok(!sameAnnotations([a, b], [aEdited, b, c]));
+  assert.deepEqual(diffAnnotations([a, b], [aEdited, b, c]), { onlySkim: 0, onlyJson: 1, changed: 1 });
+  const merged = mergeAnnotations([a, b], [aEdited, b, c]);
+  assert.equal(merged.length, 3);
+  // The newer edit wins.
+  assert.deepEqual(merged.find((x) => x.page === 0)!.color, [0, 1, 0, 1]);
+  // Older edits in the .json do not override the .skim.
+  const older = { ...a, contents: 'old', modificationDate: '2025-01-01T00:00:00.000Z' };
+  assert.equal(mergeAnnotations([a], [older])[0].contents, 'text');
+});
+
+test('annotations: saved to both .skim and .json, conflicts detected', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'omoeba-anno-'));
+  const pdf = path.join(dir, 'paper.pdf');
+  await writeFile(pdf, '%PDF-1.4\n');
+  let src = await loadAnnotationSources(pdf);
+  assert.equal(src.skim, null);
+  assert.equal(src.json, null);
+  // No annotations and no sidecar: nothing is created.
+  await saveAnnotationsBoth(pdf, []);
+  await assert.rejects(readFile(path.join(dir, 'paper.json')));
+
+  await saveAnnotationsBoth(pdf, [ann({}), ann({ type: 'Note', page: 1, text: 'hello' })]);
+  src = await loadAnnotationSources(pdf);
+  assert.equal(src.skim!.length, 2);
+  assert.equal(src.json!.length, 2);
+  assert.ok(src.same);
+  const sc = JSON.parse(await readFile(path.join(dir, 'paper.json'), 'utf8'));
+  assert.equal(sc.annotations.length, 2);
+  assert.equal(sc.annotations[0].id, undefined);
+
+  // Simulate an edit made in Skim: the .skim file changes, the .json does not.
+  const { writeSkimFile } = await import('../src/main/skim');
+  await writeSkimFile(path.join(dir, 'paper.skim'), [ann({}), ann({ type: 'Note', page: 1, text: 'hello' }), ann({ page: 3 })]);
+  src = await loadAnnotationSources(pdf);
+  assert.ok(!src.same);
+  assert.deepEqual(src.diff, { onlySkim: 1, onlyJson: 0, changed: 0 });
+});

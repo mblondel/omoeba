@@ -155,6 +155,18 @@ export interface Annotation {
   raw?: string;
 }
 
+/** The two stored copies of a paper's annotations (null = that copy does not exist). */
+export interface AnnotationSources {
+  skim: Annotation[] | null;
+  json: Annotation[] | null;
+  skimMtime?: number;
+  jsonMtime?: number;
+  /** Both exist and contain the same annotations. */
+  same: boolean;
+  /** When both exist and differ. */
+  diff?: { onlySkim: number; onlyJson: number; changed: number };
+}
+
 export interface OutlineItem {
   title: string;
   dest: unknown;
@@ -216,7 +228,7 @@ export interface OmoebaAPI {
   revealInFolder(id: string): Promise<void>;
   openExternal(url: string): Promise<void>;
 
-  loadAnnotations(id: string): Promise<Annotation[]>;
+  loadAnnotations(id: string): Promise<AnnotationSources>;
   saveAnnotations(id: string, annotations: Annotation[]): Promise<void>;
 
   extractMetadata(id: string, aiId?: string, jobId?: string): Promise<PaperDetail>;
