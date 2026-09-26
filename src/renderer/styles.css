@@ -638,17 +638,63 @@ input.paper-institutions {
   line-height: 1.55;
 }
 .abstract {
-  margin-top: 22px;
   border-top: 1px solid var(--border);
-  padding-top: 14px;
+  padding-top: 18px;
+  margin: 8px 0 18px;
 }
-.abstract summary {
+.abstract h2 {
+  font-size: 16px;
+  margin: 0;
+}
+.abstract .section-head {
+  margin-bottom: 8px;
+}
+
+/* Collapsible sections (abstract, summary) */
+.section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   cursor: pointer;
-  font-weight: 600;
+  user-select: none;
+  border-radius: 5px;
+  padding: 1px 6px 1px 2px;
+  margin-left: -2px;
 }
-.abstract p {
+.section-toggle:hover {
+  background: var(--bg-soft);
+}
+.section-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+}
+.section-toggle .triangle {
+  display: inline-block;
+  width: 14px;
+  font-size: 14px;
+  line-height: 1;
+  text-align: center;
+  color: var(--muted);
+  transition: transform 0.12s;
+}
+.collapsible.collapsed .section-toggle .triangle {
+  transform: rotate(-90deg);
+}
+.collapsible.collapsed > :not(.section-head),
+.collapsible.collapsed .section-head .tabs {
+  display: none;
+}
+.collapsible.collapsed .section-head {
+  margin-bottom: 0;
+}
+.abstract-text {
   color: var(--fg-soft);
+  font-size: 14px;
   line-height: 1.6;
+  white-space: pre-wrap;
+}
+textarea.abstract-text {
+  width: 100%;
+  min-height: 140px;
 }
 .paper-actions {
   margin-top: 26px;

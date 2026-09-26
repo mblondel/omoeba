@@ -73,11 +73,53 @@ export async function materializeFigures(paperId: string, entry: SummaryEntry): 
   }
 }
 
+/** Collapsed state of the paper page's sections, remembered across papers and sessions. */
+function isCollapsed(section: string): boolean {
+  try {
+    return localStorage.getItem(`omoeba.collapsed.${section}`) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** A section heading with a triangle that expands/collapses its section. */
+function collapsibleHeading(section: string, title: string): HTMLElement {
+  const toggle = () => {
+    const el = heading.closest('section');
+    const collapsed = !el?.classList.contains('collapsed');
+    el?.classList.toggle('collapsed', collapsed);
+    heading.setAttribute('aria-expanded', String(!collapsed));
+    try {
+      localStorage.setItem(`omoeba.collapsed.${section}`, collapsed ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  };
+  const heading = h(
+    'h2',
+    { class: 'section-toggle', role: 'button', tabIndex: 0, 'aria-expanded': String(!isCollapsed(section)), onclick: toggle },
+    h('span', { class: 'triangle', 'aria-hidden': 'true' }, '▾'),
+    title,
+  );
+  heading.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggle();
+    }
+  });
+  return heading;
+}
+
+/** Key of the summary written by the user (the others are keyed by AI id). */
+const MY_SUMMARY = 'mine';
+
 export function mountPaper(root: HTMLElement, id: string): () => void {
   let paper: PaperDetail | null = null;
   let cfg: Config | null = null;
   let activeSummary: string | null = null;
   let editingSummary = false;
+  /** A summary written by the user, not yet saved. */
+  let draftMine: SummaryEntry | null = null;
   let disposed = false;
   const materializing = new Set<string>();
 
@@ -98,7 +140,8 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
   };
 
   const enabledAIs = (): AIProvider[] => (cfg?.ais ?? []).filter((a) => a.enabled);
-  const aiName = (aiId: string) => cfg?.ais.find((a) => a.id === aiId)?.name ?? aiId;
+  const aiName = (aiId: string) =>
+    aiId === MY_SUMMARY ? 'My summary' : cfg?.ais.find((a) => a.id === aiId)?.name ?? aiId;
 
   async function patch(p: Partial<Sidecar>) {
     try {
@@ -251,14 +294,20 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       tagEditor(p),
       sourceRow(p),
       jobBar ?? '',
+      h(
+        'section',
+        { class: `abstract collapsible ${isCollapsed('abstract') ? 'collapsed' : ''}` },
+        h('div', { class: 'section-head' }, collapsibleHeading('abstract', 'Abstract')),
+        editable({
+          value: sc.abstract ?? '',
+          placeholder: 'Add abstract',
+          cls: 'abstract-text',
+          multiline: true,
+          onSave: (v) => patch({ abstract: v || (null as unknown as undefined) }),
+        }),
+      ),
       summarySection(p),
     );
-
-    if (sc.abstract) {
-      content.append(
-        h('details', { class: 'abstract' }, h('summary', null, 'Abstract'), h('p', null, sc.abstract)),
-      );
-    }
     const ais = enabledAIs();
     content.append(
       h(
@@ -342,9 +391,12 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
   }
 
   function summarySection(p: PaperDetail): HTMLElement {
-    const summaries = p.sidecar.summaries ?? {};
-    const keys = Object.keys(summaries);
-    if (!activeSummary || !summaries[activeSummary]) activeSummary = keys.includes(cfg?.defaultAI ?? '') ? cfg!.defaultAI : keys[0] ?? null;
+    const summaries: Record<string, SummaryEntry> = { ...(p.sidecar.summaries ?? {}) };
+    if (draftMine && !summaries[MY_SUMMARY]) summaries[MY_SUMMARY] = draftMine;
+    // The user's own summary comes first.
+    const keys = Object.keys(summaries).sort((a, b) => Number(b === MY_SUMMARY) - Number(a === MY_SUMMARY));
+    if (!activeSummary || !summaries[activeSummary])
+      activeSummary = summaries[MY_SUMMARY] ? MY_SUMMARY : keys.includes(cfg?.defaultAI ?? '') ? cfg!.defaultAI : keys[0] ?? null;
     const jobs = jobsFor(id);
     const ais = enabledAIs();
 
@@ -359,6 +411,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
             onclick: () => {
               activeSummary = k;
               editingSummary = false;
+              if (draftMine && k !== MY_SUMMARY) draftMine = null;
               render();
             },
           },
@@ -369,17 +422,28 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
 
     const genMenu = h('select', {
       class: 'gen-select',
-      title: 'Generate a summary',
-      disabled: !p.hasPdf || !ais.length,
+      title: 'Add a summary',
       onchange: () => {
         const v = genMenu.value;
         genMenu.value = '';
-        if (v) runSummary(v);
+        if (v === MY_SUMMARY) {
+          if (!summaries[MY_SUMMARY]) draftMine = { markdown: '', images: {}, createdAt: new Date().toISOString() };
+          activeSummary = MY_SUMMARY;
+          editingSummary = true;
+          render();
+        } else if (v) runSummary(v);
       },
     });
-    genMenu.append(h('option', { value: '' }, keys.length ? 'Summarize with…' : 'Generate summary with…'));
-    for (const a of ais)
-      genMenu.append(h('option', { value: a.id, disabled: jobs.has('sum:' + a.id) }, (summaries[a.id] ? 'Regenerate with ' : '') + a.name));
+    genMenu.append(h('option', { value: '' }, 'Add summary…'));
+    genMenu.append(h('option', { value: MY_SUMMARY }, summaries[MY_SUMMARY] ? 'Edit my summary' : 'Write my own summary'));
+    if (ais.length) {
+      const group = h('optgroup', { label: 'Generate with AI' });
+      for (const a of ais)
+        group.append(
+          h('option', { value: a.id, disabled: !p.hasPdf || jobs.has('sum:' + a.id) }, (summaries[a.id] ? 'Regenerate with ' : '') + a.name),
+        );
+      genMenu.append(group);
+    }
 
     const body = h('div', { class: 'summary-body' });
     const entry = activeSummary ? summaries[activeSummary] : null;
@@ -415,14 +479,14 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       }
     } else if (![...jobs.keys()].some((k) => k.startsWith('sum:'))) {
       body.append(
-        h('p', { class: 'muted' }, ais.length ? 'No summary yet.' : 'No summary yet. Authorize an AI CLI in Settings to generate one.'),
+        h('p', { class: 'muted' }, 'No summary yet. Use “Add summary…” to write your own' + (ais.length ? ' or generate one with AI.' : '.')),
       );
     }
 
     return h(
       'section',
-      { class: 'summary' },
-      h('div', { class: 'summary-head' }, h('h2', null, 'Summary'), tabs, h('div', { class: 'spacer' }), genMenu),
+      { class: `summary collapsible ${isCollapsed('summary') ? 'collapsed' : ''}` },
+      h('div', { class: 'summary-head section-head' }, collapsibleHeading('summary', 'Summary'), tabs, h('div', { class: 'spacer' }), genMenu),
       body,
       entry && !editingSummary ? actions : null,
     );
@@ -446,6 +510,12 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     });
     const saveEdit = () => {
       editingSummary = false;
+      draftMine = null;
+      if (!ta.value.trim() && aiId === MY_SUMMARY) {
+        // Saving an empty summary of your own removes it.
+        patch({ summaries: { [aiId]: null as unknown as SummaryEntry } });
+        return;
+      }
       const used = Object.fromEntries(Object.entries(images).filter(([k]) => ta.value.includes(`img:${k}`)));
       patch({ summaries: { [aiId]: { ...entry, markdown: ta.value, images: used, updatedAt: new Date().toISOString() } } });
     };
@@ -458,7 +528,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       h(
         'div',
         { class: 'dialog-actions' },
-        h('button', { class: 'btn', onclick: () => ((editingSummary = false), render()) }, 'Cancel'),
+        h('button', { class: 'btn', onclick: () => ((editingSummary = false), (draftMine = null), render()) }, 'Cancel'),
         h('button', { class: 'btn primary', onclick: saveEdit }, 'Save'),
       ),
     );
