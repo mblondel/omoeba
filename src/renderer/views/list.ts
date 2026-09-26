@@ -3,6 +3,7 @@ import type { IndexStatus, PaperSummary } from '../../shared/types';
 import { api } from '../api';
 import { clear, debounce, errorMessage, formatAuthors, h, icon, iconButton, relTime, toast, tagColor, setTagPalette } from '../dom';
 import { navigate, state, addPaperFromUrl, isActiveView } from '../app';
+import { renderThumbnail } from '../thumbnail';
 
 type SortKey = 'title' | 'authors' | 'folder' | 'tags' | 'added';
 
@@ -22,6 +23,49 @@ const prefs = {
     }
   },
 };
+
+// --- First-page thumbnails, generated in the background and cached in each .json sidecar.
+
+const thumbQueue: { id: string; pdfMtime: number }[] = [];
+const thumbFailed = new Set<string>();
+let thumbRunning = false;
+let onThumbnail: ((id: string, png: string) => void) | null = null;
+
+function queueThumbnails(papers: PaperSummary[]) {
+  for (const p of papers) {
+    if (!p.hasPdf || p.thumbnail || thumbFailed.has(p.id) || thumbQueue.some((q) => q.id === p.id)) continue;
+    thumbQueue.push({ id: p.id, pdfMtime: p.pdfMtime });
+  }
+  if (!thumbRunning) void runThumbnails();
+}
+
+async function runThumbnails() {
+  thumbRunning = true;
+  while (thumbQueue.length) {
+    const { id, pdfMtime } = thumbQueue.shift()!;
+    try {
+      const png = await renderThumbnail(await api.readPdf(id));
+      await api.setThumbnail(id, png, pdfMtime);
+      onThumbnail?.(id, png);
+    } catch (e) {
+      console.warn('Thumbnail failed for', id, e);
+      thumbFailed.add(id);
+    }
+    // Let the UI breathe between papers.
+    await new Promise((r) => setTimeout(r, 30));
+  }
+  thumbRunning = false;
+}
+
+function thumbCell(p: PaperSummary): HTMLElement {
+  return h(
+    'td',
+    { class: 'c-thumb' },
+    p.thumbnail
+      ? h('img', { class: 'paper-thumb', src: p.thumbnail, alt: '', loading: 'lazy', decoding: 'async' })
+      : h('div', { class: `paper-thumb placeholder ${p.hasPdf ? '' : 'missing'}` }),
+  );
+}
 
 let savedScroll = 0;
 let savedSelected: string | null = null;
@@ -80,6 +124,7 @@ export function mountList(root: HTMLElement): () => void {
       h(
         'tr',
         null,
+        h('th', { class: 'c-thumb' }),
         columns.map((c) =>
           h(
             'th',
@@ -131,6 +176,7 @@ export function mountList(root: HTMLElement): () => void {
             open(p);
           },
         },
+        thumbCell(p),
         h(
           'td',
           { class: 'c-title', title: p.title },
@@ -308,7 +354,16 @@ export function mountList(root: HTMLElement): () => void {
       toast(errorMessage(e), 'error');
     }
     await applyFilter();
+    // Missing thumbnails: visible papers first, in display order.
+    queueThumbnails([...visible, ...papers]);
   }
+
+  onThumbnail = (id, png) => {
+    const p = papers.find((x) => x.id === id);
+    if (p) p.thumbnail = png;
+    const cell = tbody.querySelector(`tr[data-id="${CSS.escape(id)}"] td.c-thumb`);
+    if (p && cell) cell.replaceWith(thumbCell(p));
+  };
 
   const reload = debounce(load, 300);
   const offEvent = api.onEvent((e) => {
@@ -336,6 +391,7 @@ export function mountList(root: HTMLElement): () => void {
 
   return () => {
     savedScroll = wrap.scrollTop;
+    onThumbnail = null;
     offEvent();
     window.removeEventListener('keydown', onKey);
     window.removeEventListener('omoeba-menu', onMenu);

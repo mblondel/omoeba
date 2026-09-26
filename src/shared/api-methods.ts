@@ -28,4 +28,5 @@ export const API_METHODS: (keyof OmoebaAPI)[] = [
   'askAI',
   'cancelAI',
   'findSource',
+  'setThumbnail',
 ];

@@ -71,6 +71,8 @@ export interface Sidecar {
     sha256?: string;
     verifiedAt?: string;
   };
+  /** First-page thumbnail for the paper list (tiny PNG), valid for the PDF with this mtime. */
+  thumbnail?: { png: string; pdfMtime: number };
   /** Last automatic search for the download location (so it is not repeated on every open). */
   sourceSearch?: { at: string; found: boolean; checked: number };
   /** Who produced title/authors/institutions ("pdf", "user", "ai:<id>"). */
@@ -110,8 +112,11 @@ export interface PaperSummary {
   tags: string[];
   year?: number | string;
   mtime: number;
+  pdfMtime: number;
   addedAt: number;
   annotationCount?: number;
+  /** First-page thumbnail (data URL), if cached and up to date. */
+  thumbnail?: string;
 }
 
 export interface PaperDetail extends PaperSummary {
@@ -251,6 +256,8 @@ export interface OmoebaAPI {
   generateSummary(id: string, aiId: string, jobId?: string): Promise<PaperDetail>;
   askAI(id: string, aiId: string, question: string, context: { page?: number; selection?: string }, jobId?: string): Promise<PaperDetail>;
   cancelAI(jobId: string): Promise<void>;
+  /** Store the first-page thumbnail of a PDF (rendered by the UI) in its .json sidecar. */
+  setThumbnail(id: string, png: string, pdfMtime: number): Promise<void>;
   /** Find the original download location (AI + SHA-256 verification); saved only if identical. */
   findSource(id: string, aiId?: string, jobId?: string): Promise<{ paper: PaperDetail; result: SourceSearchSummary }>;
 }

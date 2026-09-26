@@ -205,6 +205,11 @@ export function buildSummary(f: ScannedFile, sc: Sidecar, pdfInfo?: PdfInfoLite)
     tags: Array.isArray(sc.tags) ? sc.tags.map(String) : [],
     year: sc.year ?? pdfInfo?.year,
     mtime: Math.max(f.pdfMtime, f.jsonMtime),
+    pdfMtime: f.pdfMtime,
     addedAt: f.pdfBirth || f.jsonMtime,
+    thumbnail:
+      f.hasPdf && sc.thumbnail && typeof sc.thumbnail.png === 'string' && sc.thumbnail.pdfMtime === f.pdfMtime
+        ? sc.thumbnail.png
+        : undefined,
   };
 }

@@ -117,6 +117,7 @@ export class OmoebaService implements OmoebaAPI {
         const w = watch(folder, { recursive: true }, (_ev, file) => {
           if (!file || /(^|[/\\])\.|\.tmp-|\.download-/.test(file)) return;
           if (!/\.(pdf|json|skim)$/i.test(file)) return;
+          if ((this.quietWrites.get(path.join(folder, file)) ?? 0) > Date.now()) return;
           this.platform.emit({ type: 'library-changed' });
           this.index.requestSync();
         });
@@ -413,6 +414,17 @@ export class OmoebaService implements OmoebaAPI {
   }
 
   private cancelled = new Set<string>();
+
+  /** Files written for bookkeeping only (e.g. thumbnails): their change events are ignored. */
+  private quietWrites = new Map<string, number>();
+
+  async setThumbnail(id: string, png: string, pdfMtime: number): Promise<void> {
+    const pdfPath = this.checkId(id);
+    if (!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(png) || png.length > 60_000) throw new Error('Invalid thumbnail');
+    const jsonPath = jsonPathOf(pdfPath);
+    this.quietWrites.set(jsonPath, Date.now() + 3000);
+    await updateSidecar(jsonPath, { thumbnail: { png, pdfMtime } });
+  }
 
   async cancelAI(jobId: string): Promise<void> {
     this.cancelled.add(jobId);

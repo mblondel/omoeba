@@ -73,6 +73,10 @@
   html:not(.pdf-light) .thumb-img {
     background: #000;
   }
+  html:not(.pdf-light) img.paper-thumb {
+    filter: invert(1) hue-rotate(180deg);
+    box-shadow: 0 0 0 1px var(--border);
+  }
 }
 
 * {
@@ -398,8 +402,31 @@ table.papers tbody tr:hover {
 table.papers tbody tr.selected {
   background: var(--row-selected);
 }
+.c-thumb {
+  width: 48px;
+}
+table.papers td.c-thumb {
+  padding: 5px 4px 5px 14px;
+}
+.paper-thumb {
+  display: block;
+  width: 28px;
+  height: 36px;
+  object-fit: cover;
+  object-position: top;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--border), 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.paper-thumb.placeholder {
+  background: var(--bg-sunken);
+  box-shadow: 0 0 0 1px var(--border);
+}
+.paper-thumb.placeholder.missing {
+  background: repeating-linear-gradient(135deg, var(--bg-sunken) 0 4px, transparent 4px 8px);
+}
 .c-title {
-  width: 44%;
+  width: 42%;
 }
 td.c-title {
   font-weight: 500;
