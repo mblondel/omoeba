@@ -4,7 +4,7 @@ import { api, newJobId } from '../api';
 import { clear, confirmDialog, errorMessage, h, icon, iconButton, toast, tagColor, setTagPalette } from '../dom';
 import { mountMarkdown } from '../markdown';
 import { navigate, refreshConfig, isActiveView, openSearchTab } from '../app';
-import { authorQuery, institutionQuery } from '../authors';
+import { authorQuery, institutionQuery, tagQuery } from '../authors';
 import { loadDocument } from '../pdfjs';
 import { renderFigure } from '../figures';
 
@@ -401,7 +401,19 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
         h(
           'span',
           { class: 'tag', dataset: { c: tagColor(t) } },
-          t,
+          h(
+            'a',
+            {
+              class: 'tag-link',
+              href: '#',
+              title: `Show all papers tagged “${t}”`,
+              onclick: (e: MouseEvent) => {
+                e.preventDefault();
+                openSearchTab(tagQuery(t), `Tag: ${t}`);
+              },
+            },
+            t,
+          ),
           h('button', { class: 'tag-x', title: `Remove ${t}`, onclick: () => patch({ tags: tags.filter((x) => x !== t) }) }, '×'),
         ),
       ),

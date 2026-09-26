@@ -55,3 +55,8 @@ export function sameInstitution(a: string, b: string): boolean {
 export function institutionQuery(name: string): string {
   return `inst:"${name.replace(/"/g, '')}"`;
 }
+
+/** Library search query selecting the papers with a tag (exact match, ignoring case). */
+export function tagQuery(tag: string): string {
+  return `tag:"${tag.replace(/"/g, '')}"`;
+}
