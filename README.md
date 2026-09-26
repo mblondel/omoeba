@@ -26,7 +26,7 @@ npm start        # builds into dist/ and launches Electron
 ```
 
 On first launch, choose one or more library folders and the AI command-line tools you authorize.
-Settings are saved in `~/omoeba/config.json`. More folders can be added later (Settings, or File → Add Library Folder…).
+Settings are saved in `~/omoeba/config.json`. More folders can be added later in Settings.
 
 ## AI
 

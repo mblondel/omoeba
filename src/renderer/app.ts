@@ -358,13 +358,6 @@ export async function addPaperFromUrl() {
   }
 }
 
-async function addFolder() {
-  const folders = await api.pickFolders();
-  if (!folders.length) return;
-  state.config = await api.addFolders(folders);
-  toast(`Added ${folders.length} folder${folders.length > 1 ? 's' : ''}`);
-  navigate('#/');
-}
 
 function startTabs() {
   setupCleanup?.();
@@ -394,7 +387,6 @@ api.onMenu((action) => {
   if (action === 'settings') navigate('#/settings');
   else if (action === 'library') navigate('#/');
   else if (action === 'add-url') addPaperFromUrl();
-  else if (action === 'add-folder') addFolder();
   else if (action === 'close-tab') active && closeTab(active);
   else if (action === 'next-tab') cycleTab(1);
   else if (action === 'prev-tab') cycleTab(-1);

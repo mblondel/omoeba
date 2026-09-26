@@ -140,7 +140,6 @@ function buildMenu() {
       label: 'File',
       submenu: [
         { label: 'Add Paper from URL…', accelerator: 'CmdOrCtrl+N', click: send('add-url') },
-        { label: 'Add Library Folder…', click: send('add-folder') },
         { type: 'separator' },
         ...(isMac ? [] : [{ label: 'Settings…', accelerator: 'Ctrl+,', click: send('settings') }]),
         { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: send('close-tab') },
