@@ -63,6 +63,14 @@ When a paper is opened and "automatically extract" is on, the default AI extract
 year, venue, abstract and keywords, and writes a summary, if these are missing. Results are cached in the `.json`.
 Summaries may include figures: the AI references a page (`![caption](page:N)`) which is rendered and embedded.
 
+### Finding the original download location
+
+When a paper's download location is unknown, Omoeba looks for it once (automatically when the paper is opened,
+or with **Find with AI** on the paper page): first from what the PDF says about itself (arXiv stamp, DOI), then
+from candidate URLs proposed by the AI. Each candidate is downloaded and its SHA-256 compared with the local
+file; a location is saved only when the files are identical, and is then shown as "✓ verified". For arXiv, every
+version (v1, v2, …) is tried, since only the exact version matches.
+
 ## Search
 
 The list's search box queries a reverse index (tags, authors, institutions, keywords, titles, summaries, notes and the

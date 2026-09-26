@@ -301,3 +301,62 @@ test('annotations: saved to both .skim and .json, conflicts detected', async () 
   assert.ok(!src.same);
   assert.deepEqual(src.diff, { onlySkim: 1, onlyJson: 0, changed: 0 });
 });
+
+// ---------------------------------------------------------------------------
+// Finding the original download location (SHA-256 verification)
+
+import http from 'node:http';
+import { arxivIdOf, displayUrl, expandCandidates, findIdenticalSource } from '../src/main/sourcefinder';
+
+test('source finder: candidates', () => {
+  assert.deepEqual(arxivIdOf('https://arxiv.org/abs/2507.19457v2'), { id: '2507.19457', version: 'v2' });
+  assert.deepEqual(arxivIdOf('10.48550/arXiv.2111.09266'), { id: '2111.09266', version: undefined });
+  assert.equal(arxivIdOf('https://openreview.net/forum?id=abc'), null);
+  const c = expandCandidates(['https://openreview.net/forum?id=xyz', 'https://arxiv.org/abs/2507.19457'], {
+    arxivId: 'https://arxiv.org/abs/2507.19457v2',
+  });
+  // The version named in the PDF first, then the AI's candidates in order, then other versions.
+  assert.deepEqual(c.slice(0, 5), [
+    'https://arxiv.org/pdf/2507.19457v2',
+    'https://openreview.net/pdf?id=xyz',
+    'https://arxiv.org/pdf/2507.19457',
+    'https://arxiv.org/pdf/2507.19457v1',
+    'https://arxiv.org/pdf/2507.19457v3',
+  ]);
+  assert.equal(new Set(c).size, c.length);
+  assert.equal(displayUrl('https://arxiv.org/pdf/2507.19457v2'), 'https://arxiv.org/abs/2507.19457v2');
+});
+
+test('source finder: only an identical file is accepted', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'omoeba-src-'));
+  const local = path.join(dir, 'paper.pdf');
+  const body = Buffer.from('%PDF-1.4\n' + 'x'.repeat(5000));
+  await writeFile(local, body);
+  const sameSizeOther = Buffer.from('%PDF-1.4\n' + 'y'.repeat(5000));
+  const server = http.createServer((req, res) => {
+    if (req.url === '/same.pdf') res.end(body);
+    else if (req.url === '/other.pdf') res.end(sameSizeOther);
+    else if (req.url === '/small.pdf') res.end(Buffer.from('%PDF-1.4\nsmall'));
+    else if (req.url === '/page.html') res.end('<html>' + 'z'.repeat(4996) + '</html>'); // same size as the PDF
+    else {
+      res.statusCode = 404;
+      res.end();
+    }
+  });
+  await new Promise<void>((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  try {
+    const r = await findIdenticalSource(local, [`${base}/missing.pdf`, `${base}/small.pdf`, `${base}/other.pdf`, `${base}/page.html`, `${base}/same.pdf`]);
+    assert.ok(r.found);
+    assert.equal(r.url, `${base}/same.pdf`);
+    assert.deepEqual(
+      r.checked.map((c) => c.status),
+      ['error', 'different', 'different', 'not-pdf', 'match'],
+    );
+    const none = await findIdenticalSource(local, [`${base}/other.pdf`]);
+    assert.ok(!none.found);
+    assert.match(none.sha256, /^[0-9a-f]{64}$/);
+  } finally {
+    server.close();
+  }
+});

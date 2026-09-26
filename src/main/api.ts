@@ -18,6 +18,7 @@ import type {
   PaperDetail,
   PaperSummary,
   Sidecar,
+  SourceSearchSummary,
   SummaryEntry,
 } from '../shared/types';
 import * as cfg from './config';
@@ -43,7 +44,8 @@ import {
   stripFences,
   summaryPrompt,
 } from './ai';
-import { arxivAbsUrl, downloadPdf, uniquePath, writeFileAtomic } from './download';
+import { downloadPdf, uniquePath, writeFileAtomic } from './download';
+import { expandCandidates, findIdenticalSource, sourcePrompt, type SourceCheck } from './sourcefinder';
 
 export interface Platform {
   pickFolders(): Promise<string[]>;
@@ -69,6 +71,7 @@ const WRITABLE_KEYS = new Set([
   'source',
   'chats',
   'metadataSource',
+  'sourceSearch',
 ]);
 
 export class OmoebaService implements OmoebaAPI {
@@ -254,10 +257,7 @@ export class OmoebaService implements OmoebaAPI {
     const sc = f.hasJson ? await readSidecar(base + '.json') : ({ omoeba: 1 } as Sidecar);
     const info = this.index.docInfo(pdfPath);
     const summary = buildSummary(f, sc, info);
-    // Suggest the arXiv page as download location when the PDF says where it came from.
-    const sidecar: Sidecar = { ...sc };
-    if (!sidecar.source && info?.arxivId) sidecar.source = { url: arxivAbsUrl(info.arxivId) };
-    return { ...summary, sidecar };
+    return { ...summary, sidecar: { ...sc } };
   }
 
   async updateSidecar(id: string, patch: Partial<Sidecar>): Promise<PaperDetail> {
@@ -374,10 +374,6 @@ export class OmoebaService implements OmoebaAPI {
     if (typeof meta.venue === 'string' && meta.venue.trim()) patch.venue = meta.venue.trim();
     if (typeof meta.abstract === 'string' && meta.abstract.trim()) patch.abstract = meta.abstract.trim();
     if (strList(meta.keywords)) patch.keywords = strList(meta.keywords);
-    // Persist the download location inferred from the PDF (e.g. arXiv id) if none is stored.
-    const cur = await this.getPaper(pdfPath);
-    const onDisk = await readSidecar(jsonPathOf(pdfPath));
-    if (!onDisk.source && cur.sidecar.source) patch.source = cur.sidecar.source;
     return this.updateSidecar(pdfPath, patch);
   }
 
@@ -416,7 +412,90 @@ export class OmoebaService implements OmoebaAPI {
     return this.updateSidecar(pdfPath, { chats: { [ai.id]: next } });
   }
 
+  private cancelled = new Set<string>();
+
   async cancelAI(jobId: string): Promise<void> {
+    this.cancelled.add(jobId);
     cancelAIJob(jobId);
+  }
+
+  /**
+   * Look for the original download location of a PDF: first from what the PDF itself says
+   * (arXiv id, DOI), then from candidates proposed by the AI. A location is saved only if the
+   * file it serves is identical (same SHA-256) to the local PDF.
+   */
+  async findSource(id: string, aiId?: string, jobId?: string): Promise<{ paper: PaperDetail; result: SourceSearchSummary }> {
+    const pdfPath = this.checkId(id);
+    if (!(await fs.stat(pdfPath).catch(() => null))) throw new Error('The PDF file is missing.');
+    const detail = await this.getPaper(pdfPath);
+    const ex = await extractPdf(pdfPath, 1);
+    const hints = { arxivId: ex.info.arxivId, doi: ex.info.doi };
+    const progress = this.progress(jobId);
+    const stopped = () => !!jobId && this.cancelled.has(jobId);
+    const opts = {
+      maxChecks: 16,
+      timeoutMs: 45_000,
+      shouldStop: stopped,
+      onCheck: (c: SourceCheck) => progress?.(`${c.status}: ${c.url}\n`),
+    };
+    const checked: SourceCheck[] = [];
+    let found: { url: string; sha256: string } | null = null;
+    let sha = '';
+
+    // 1. What the PDF says about itself (no AI needed).
+    const fromPdf = expandCandidates([], hints);
+    if (fromPdf.length) {
+      const r = await findIdenticalSource(pdfPath, fromPdf, opts);
+      checked.push(...r.checked);
+      sha = r.sha256;
+      if (r.found) found = { url: r.url!, sha256: r.sha256 };
+    }
+
+    // 2. Ask the AI for candidates.
+    let aiError: string | undefined;
+    if (!found && !stopped()) {
+      let ai: AIProvider | null = null;
+      try {
+        ai = this.aiFor(aiId);
+      } catch (e) {
+        aiError = String((e as Error).message);
+      }
+      if (ai) {
+        try {
+          const out = await runAI(
+            ai,
+            sourcePrompt({
+              title: detail.title,
+              authors: detail.authors,
+              year: detail.sidecar.year ?? detail.year,
+              fileName: path.basename(pdfPath),
+              arxivId: hints.arxivId,
+              doi: hints.doi,
+              firstPage: ex.pages[0] ?? '',
+            }),
+            { jobId, timeoutMs: 5 * 60_000 },
+          );
+          const urls = parseJsonObject(out).candidates;
+          const list = Array.isArray(urls) ? urls.map(String) : [];
+          const tried = new Set(checked.map((c) => c.url));
+          const more = expandCandidates(list, hints).filter((u) => !tried.has(u));
+          if (more.length && !stopped()) {
+            const r = await findIdenticalSource(pdfPath, more, { ...opts, maxChecks: opts.maxChecks - checked.length });
+            checked.push(...r.checked);
+            sha = r.sha256;
+            if (r.found) found = { url: r.url!, sha256: r.sha256 };
+          }
+        } catch (e) {
+          aiError = String((e as Error).message);
+        }
+      }
+    }
+    if (jobId) this.cancelled.delete(jobId);
+
+    const now = new Date().toISOString();
+    const patch: Partial<Sidecar> = { sourceSearch: { at: now, found: !!found, checked: checked.length } };
+    if (found) patch.source = { url: found.url, sha256: found.sha256 || sha, verifiedAt: now };
+    const paper = await this.updateSidecar(pdfPath, patch);
+    return { paper, result: { found: !!found, url: found?.url, checked, aiError } };
   }
 }

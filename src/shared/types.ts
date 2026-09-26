@@ -64,7 +64,15 @@ export interface Sidecar {
   /** AI id -> summary. */
   summaries?: Record<string, SummaryEntry>;
   /** Where the PDF was downloaded from. */
-  source?: { url: string; downloadedAt?: string };
+  source?: {
+    url: string;
+    downloadedAt?: string;
+    /** SHA-256 of the local PDF, when the location was verified to serve the identical file. */
+    sha256?: string;
+    verifiedAt?: string;
+  };
+  /** Last automatic search for the download location (so it is not repeated on every open). */
+  sourceSearch?: { at: string; found: boolean; checked: number };
   /** Who produced title/authors/institutions ("pdf", "user", "ai:<id>"). */
   metadataSource?: string;
   /** Ask-AI chat history per AI. */
@@ -167,6 +175,14 @@ export interface AnnotationSources {
   diff?: { onlySkim: number; onlyJson: number; changed: number };
 }
 
+export interface SourceSearchSummary {
+  found: boolean;
+  url?: string;
+  checked: { url: string; status: 'match' | 'different' | 'not-pdf' | 'error'; detail?: string }[];
+  /** Set when the AI could not be asked (the PDF's own hints were still tried). */
+  aiError?: string;
+}
+
 export interface OutlineItem {
   title: string;
   dest: unknown;
@@ -235,4 +251,6 @@ export interface OmoebaAPI {
   generateSummary(id: string, aiId: string, jobId?: string): Promise<PaperDetail>;
   askAI(id: string, aiId: string, question: string, context: { page?: number; selection?: string }, jobId?: string): Promise<PaperDetail>;
   cancelAI(jobId: string): Promise<void>;
+  /** Find the original download location (AI + SHA-256 verification); saved only if identical. */
+  findSource(id: string, aiId?: string, jobId?: string): Promise<{ paper: PaperDetail; result: SourceSearchSummary }>;
 }

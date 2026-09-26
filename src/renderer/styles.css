@@ -1796,3 +1796,13 @@ li.collapsed > .toc-item .toc-toggle {
 .anno-conflict td {
   padding: 3px 14px 3px 0;
 }
+
+.source-row .verified {
+  color: var(--ok);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: help;
+}
+.source-row .btn.small {
+  margin-left: 4px;
+}

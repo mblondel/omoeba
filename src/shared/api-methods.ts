@@ -27,4 +27,5 @@ export const API_METHODS: (keyof OmoebaAPI)[] = [
   'generateSummary',
   'askAI',
   'cancelAI',
+  'findSource',
 ];

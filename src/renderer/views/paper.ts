@@ -381,6 +381,29 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       url
         ? h('a', { href: url, onclick: (e: Event) => (e.preventDefault(), api.openExternal(url).catch((er) => toast(errorMessage(er), 'error'))) }, url)
         : h('span', { class: 'muted' }, 'unknown'),
+      url && p.sidecar.source?.sha256
+        ? h(
+            'span',
+            {
+              class: 'verified',
+              title: `The file at this address is identical to your PDF (SHA-256 ${p.sidecar.source.sha256.slice(0, 12)}…, checked ${new Date(p.sidecar.source.verifiedAt ?? '').toLocaleDateString()})`,
+            },
+            '✓ verified',
+          )
+        : null,
+      !url && p.hasPdf
+        ? h(
+            'button',
+            {
+              class: 'btn small',
+              disabled: jobsFor(id).has('source'),
+              title: 'Ask the AI where this PDF comes from, download the candidates and keep the one whose SHA-256 matches your file',
+              onclick: () => runFindSource(),
+            },
+            icon('sparkle', 13),
+            'Find with AI',
+          )
+        : null,
       iconButton('edit', 'Edit download location', async () => {
         const { promptDialog } = await import('../dom');
         const v = await promptDialog({ title: 'Original download location', value: url ?? '', placeholder: 'https://…' });
@@ -565,6 +588,26 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     );
   }
 
+  function runFindSource() {
+    const aiId = cfg?.defaultAI ?? undefined;
+    const who = aiId ? aiName(aiId) : 'the PDF metadata';
+    return track('source', `Looking for the original download location with ${who} and checking SHA-256 sums…`, async (jobId) => {
+      const { paper: d, result } = await api.findSource(id, aiId, jobId);
+      if (result.found) toast(`Found the original file: ${result.url}`);
+      else {
+        const n = result.checked.length;
+        toast(
+          n
+            ? `No identical copy found online (checked ${n} location${n > 1 ? 's' : ''}).`
+            : `Could not find candidate locations${result.aiError ? ': ' + result.aiError : '.'}`,
+          'info',
+          7000,
+        );
+      }
+      return d;
+    });
+  }
+
   function runSummary(aiId: string) {
     activeSummary = aiId;
     editingSummary = false;
@@ -591,6 +634,8 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     const needsMeta = !sc.metadataSource?.startsWith('ai:') && (!sc.title || !sc.authors?.length || !sc.institutions?.length);
     if (needsMeta) await runMetadata(def);
     if (disposed || !paper) return;
+    // Look for the download location once (not on every open).
+    if (!paper.sidecar.source && !paper.sidecar.sourceSearch && !jobsFor(id).has('source')) runFindSource();
     if (!Object.keys(paper.sidecar.summaries ?? {}).length && !jobsFor(id).has('sum:' + def)) runSummary(def);
   }
 
