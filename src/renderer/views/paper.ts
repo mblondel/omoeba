@@ -292,14 +292,24 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       );
     }
 
+    const ais = enabledAIs();
+    const reextract = ais.length
+      ? iconButton('sparkle', 'Re-extract information with AI', () => runMetadata(cfg?.defaultAI ?? ais[0].id), 'reextract-btn')
+      : null;
+    if (reextract) reextract.disabled = !p.hasPdf || jobs.has('meta');
     content.append(
-      editable({
-        tag: 'h1',
-        value: sc.title ?? (p.titleIsFallback ? '' : p.title),
-        placeholder: p.title,
-        cls: 'paper-title',
-        onSave: (v) => patch({ title: v || null, metadataSource: 'user' } as Partial<Sidecar>),
-      }),
+      h(
+        'div',
+        { class: 'title-row' },
+        editable({
+          tag: 'h1',
+          value: sc.title ?? (p.titleIsFallback ? '' : p.title),
+          placeholder: p.title,
+          cls: 'paper-title',
+          onSave: (v) => patch({ title: v || null, metadataSource: 'user' } as Partial<Sidecar>),
+        }),
+        reextract,
+      ),
       editable({
         value: p.authors.join(', '),
         placeholder: 'Add authors',
@@ -347,25 +357,14 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       ),
       summarySection(p),
     );
-    const ais = enabledAIs();
-    content.append(
-      h(
-        'div',
-        { class: 'paper-actions' },
-        ais.length
-          ? h(
-              'button',
-              {
-                class: 'btn',
-                disabled: !p.hasPdf || jobs.has('meta'),
-                onclick: () => runMetadata(cfg?.defaultAI ?? ais[0].id),
-              },
-              icon('sparkle'),
-              'Re-extract information with AI',
-            )
-          : h('span', { class: 'muted small' }, 'Authorize an AI CLI in Settings to extract information and summaries.'),
-      ),
-    );
+    if (!ais.length)
+      content.append(
+        h(
+          'div',
+          { class: 'paper-actions' },
+          h('span', { class: 'muted small' }, 'Authorize an AI CLI in Settings to extract information and summaries.'),
+        ),
+      );
   }
 
   function tagEditor(p: PaperDetail): HTMLElement {

@@ -606,6 +606,20 @@ tr.missing td {
   color: var(--muted);
   font-style: italic;
 }
+.title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.title-row > .paper-title,
+.title-row > input {
+  flex: 1;
+  min-width: 0;
+}
+.title-row > .reextract-btn {
+  flex: none;
+  margin-top: 4px;
+}
 .paper-title {
   font-size: 24px;
   line-height: 1.25;
