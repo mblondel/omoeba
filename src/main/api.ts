@@ -456,7 +456,12 @@ export class OmoebaService implements OmoebaAPI {
     const pdfPath = this.checkId(id);
     const ai = this.aiFor(aiId);
     const pages = (await this.paperPages(pdfPath)).slice(0, 3);
-    const out = await runAI(ai, metadataPrompt(pages, path.basename(pdfPath)), {
+    // Papers without tags also get up to 5 suggested tags (reusing the library's tags if possible).
+    const hasTags = (sc: Sidecar) => Array.isArray(sc.tags) && sc.tags.length > 0;
+    const wantTags = !hasTags(await readSidecar(jsonPathOf(pdfPath)));
+    const existing = wantTags ? (await this.allTags()).sort((a, b) => b.count - a.count).slice(0, 150).map((t) => t.tag) : [];
+    const prompt = metadataPrompt(pages, path.basename(pdfPath), wantTags ? { existing } : undefined);
+    const out = await runAI(ai, prompt, {
       jobId,
       onChunk: this.progress(jobId),
       timeoutMs: 5 * 60_000,
@@ -472,6 +477,13 @@ export class OmoebaService implements OmoebaAPI {
     if (typeof meta.venue === 'string' && meta.venue.trim()) patch.venue = meta.venue.trim();
     if (typeof meta.abstract === 'string' && meta.abstract.trim()) patch.abstract = meta.abstract.trim();
     if (strList(meta.keywords)) patch.keywords = strList(meta.keywords);
+    if (wantTags && strList(meta.tags)) {
+      const tags = [...new Set(strList(meta.tags)!.map((t) => t.toLowerCase().replace(/\s+/g, ' ')))]
+        .filter((t) => t.length <= 40)
+        .slice(0, 5);
+      // Not if the user added tags while the AI was running.
+      if (tags.length && !hasTags(await readSidecar(jsonPathOf(pdfPath)))) patch.tags = tags;
+    }
     return this.updateSidecar(pdfPath, patch);
   }
 

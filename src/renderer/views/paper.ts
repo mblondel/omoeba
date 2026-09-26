@@ -622,7 +622,8 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
   }
 
   function runMetadata(aiId: string) {
-    return track('meta', `Extracting title, authors and institutions with ${aiName(aiId)}…`, (jobId) =>
+    const what = paper?.sidecar.tags?.length ? 'title, authors and institutions' : 'title, authors, institutions and tags';
+    return track('meta', `Extracting ${what} with ${aiName(aiId)}…`, (jobId) =>
       api.extractMetadata(id, aiId, jobId),
     );
   }

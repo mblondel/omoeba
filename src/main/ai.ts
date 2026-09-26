@@ -90,7 +90,28 @@ export function paperTextBlock(pages: string[], maxChars = MAX_FULL_TEXT): strin
   return out.trim();
 }
 
-export function metadataPrompt(pages: string[], fileName: string): string {
+/**
+ * `tags`: when set, also ask for up to 5 tags (the paper has none yet), preferring the tags
+ * already used in the library (given here).
+ */
+export function metadataPrompt(pages: string[], fileName: string, tags?: { existing: string[] }): string {
+  const tagKey = tags
+    ? `
+  "tags": string[]                // 1 to 5 short lowercase tags, acronyms preferred (see below)`
+    : '';
+  const tagRules = tags
+    ? `
+Tags: broad topics a researcher would use to organize a library, not paper-specific details.
+Tags must be short: use the usual acronym whenever the field has one (e.g. "rl" rather than
+"reinforcement learning", "llm", "nlp", "cv", "gnn", "mcmc"), otherwise one or two words
+(e.g. "diffusion", "optimization"). At most 5.${
+        tags.existing.length
+          ? ` Prefer reusing these tags, already used in the library, when they fit:
+${tags.existing.map((t) => JSON.stringify(t)).join(', ')}`
+          : ''
+      }
+`
+    : '';
   return `You are extracting bibliographic metadata from a research paper (PDF file "${fileName}").
 The text of its first pages is given below.
 
@@ -102,9 +123,9 @@ Return ONLY a JSON object, with no commentary and no code fences, with these key
   "year": number | null,
   "venue": string | null,         // conference/journal if stated, else null
   "abstract": string,             // the abstract, verbatim if present
-  "keywords": string[]            // 5 to 10 lowercase topical keywords
+  "keywords": string[]${tags ? ',' : ' '}           // 5 to 10 lowercase topical keywords${tagKey}
 }
-
+${tagRules}
 PAPER TEXT:
 ${paperTextBlock(pages, 24_000)}`;
 }
