@@ -171,6 +171,11 @@ Write in Markdown, with these sections:
 Guidelines:
 - Be precise and technical; keep it under ~600 words.
 - Use LaTeX for math: $...$ inline and $$...$$ for display equations.
+- Reference the paper so the reader can jump to the source: after a claim, result, equation or
+  definition, cite the page it comes from in parentheses, as a Markdown link: ([p. N](#page=N)),
+  where N is the page number given by the "=== Page N ===" markers in the paper text (e.g.
+  "… improves accuracy by 10% ([p. 7](#page=7))."). Cite pages generously, especially in Method
+  and Key results.
 - You may include at most 2 of the paper's most informative figures (e.g. the method
   overview or the main result). To include one, write ![Figure N: short caption](figure:N)
   on its own line, where N is the figure number as printed in the paper's caption
@@ -200,7 +205,7 @@ export function askPrompt(
     .join('\n');
   return `You are a helpful research assistant answering questions about the paper "${title}".
 Answer in Markdown. Use LaTeX for math ($...$ inline, $$...$$ display). When you refer to a
-specific place in the paper, cite it as [p. N](#page=N). Be concise unless asked otherwise.
+specific place in the paper, cite it in parentheses as ([p. N](#page=N)). Be concise unless asked otherwise.
 
 PAPER TEXT:
 ${paperTextBlock(pages)}

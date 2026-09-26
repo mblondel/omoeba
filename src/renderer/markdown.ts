@@ -120,6 +120,42 @@ export function renderMarkdown(src: string, opts: RenderOptions = {}): string {
   return html;
 }
 
+/**
+ * Page references ([p. 7](#page=7)) are shown in parentheses so that they read as citations:
+ * "improves accuracy (p. 7)". Consecutive references share one pair: "(p. 3, p. 5)". References
+ * already in parentheses are left as they are.
+ */
+function parenthesizePageRefs(root: DocumentFragment) {
+  const isRef = (n: Node | null): n is HTMLAnchorElement =>
+    n instanceof HTMLAnchorElement && /^#page=\d+/.test(n.getAttribute('href') ?? '');
+  const done = new Set<Node>();
+  for (const first of root.querySelectorAll<HTMLAnchorElement>('a[href^="#page="]')) {
+    if (done.has(first)) continue;
+    // Extend the run over references separated only by spaces, commas, semicolons or "and".
+    let last: HTMLAnchorElement = first;
+    done.add(first);
+    for (;;) {
+      const sep = last.nextSibling;
+      const next = sep && sep.nodeType === Node.TEXT_NODE && /^[\s,;]*(and\s+)?$/.test(sep.textContent ?? '') ? sep.nextSibling : sep;
+      if (!isRef(next)) break;
+      last = next;
+      done.add(next);
+    }
+    first.classList.add('page-ref');
+    const before = first.previousSibling;
+    const after = last.nextSibling;
+    // Already inside parentheses, e.g. "(p. 7)" or "(see p. 7)".
+    const openedBefore = before?.nodeType === Node.TEXT_NODE && /\([^()]{0,40}$/.test(before.textContent ?? '');
+    const closedAfter = after?.nodeType === Node.TEXT_NODE && /^\s*\)/.test(after.textContent ?? '');
+    if (openedBefore && closedAfter) continue;
+    first.before('(');
+    last.after(')');
+    // No space-less gluing to the previous word: "accuracy(p. 7)" → "accuracy (p. 7)".
+    const prev = first.previousSibling?.previousSibling;
+    if (prev?.nodeType === Node.TEXT_NODE && /\S$/.test(prev.textContent ?? '')) prev.textContent += ' ';
+  }
+}
+
 /** Render into an element and wire up in-app links (#page=N). */
 export function mountMarkdown(
   el: HTMLElement,
@@ -147,6 +183,7 @@ export function mountMarkdown(
     holder.replaceWith(fig);
     fig.append(img, cap);
   }
+  parenthesizePageRefs(tpl.content);
   el.replaceChildren(tpl.content);
   for (const a of el.querySelectorAll<HTMLAnchorElement>('a[href]')) {
     const href = a.getAttribute('href')!;
