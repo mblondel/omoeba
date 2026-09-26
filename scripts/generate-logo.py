@@ -2,7 +2,7 @@
 """Generates the Omoeba logo SVGs (assets/).
 
 The "O" of Omoeba is an ammonite shell: a logarithmic spiral (the "knowledge spiral").
-  assets/icon.svg      app icon: a cute ammonite on an ocean-blue rounded square
+  assets/icon.svg      app icon: an ammonite on an ocean-blue rounded square
   assets/logo-mark.svg the ammonite alone (transparent background)
   assets/logo.svg      wordmark: ammonite "O" followed by "moeba"
 
@@ -22,11 +22,8 @@ SHELL_LIGHT = '#FFC58A'
 SHELL_DARK = '#FF8A5C'
 LINE = '#7A3524'
 RIB = '#D9653F'
-BODY = '#FF9EB0'
-BODY_DARK = '#E86F8B'
 SEA_TOP = '#5CD0D6'
 SEA_BOTTOM = '#2C7FC2'
-INK = '#2B2F3A'
 
 G = 1.85  # growth of the radius per turn (lower = rounder, more whorls)
 K = math.log(G) / (2 * math.pi)
@@ -125,66 +122,6 @@ def ammonite(c, a, theta_end, stroke, detail=True, uid='a'):
     return '\n'.join(parts), outline
 
 
-def creature(c, a, theta_end, stroke):
-    """A cute little body with eyes and tentacles peeking out of the aperture."""
-    a = a / math.exp(K * theta_end)
-    p_out = pt(c, theta_end, a)
-    p_in = pt(c, theta_end - 2 * math.pi, a)
-    mx, my = (p_out[0] + p_in[0]) / 2, (p_out[1] + p_in[1]) / 2
-    width = math.dist(p_out, p_in)
-    # Tangent (direction of growth) at the aperture.
-    tx, ty = -math.sin(theta_end), math.cos(theta_end)
-    rx, ry = math.cos(theta_end), math.sin(theta_end)  # radial (outward)
-    # Head: ellipse just outside the aperture.
-    hc = (mx + tx * width * 0.30 + rx * width * 0.04, my + ty * width * 0.30 + ry * width * 0.04)
-    ang = math.degrees(math.atan2(ry, rx))
-    head_rx, head_ry = width * 0.56, width * 0.48
-    parts = []
-    # Tentacles (drawn first, under the head): hanging from the head's outer side, curling.
-    for i, off in enumerate([-0.5, -0.17, 0.17, 0.5]):
-        base = (
-            hc[0] + tx * off * head_ry * 1.3 + rx * head_rx * 0.55,
-            hc[1] + ty * off * head_ry * 1.3 + ry * head_rx * 0.55,
-        )
-        length = width * (0.40 if i in (1, 2) else 0.32)
-        curl = off * 0.9
-        end = (base[0] + rx * length + tx * curl * width * 0.35, base[1] + ry * length + ty * curl * width * 0.35)
-        ctrl = (base[0] + rx * length * 0.7 - tx * curl * width * 0.1, base[1] + ry * length * 0.7 - ty * curl * width * 0.1)
-        for col, extra in ((LINE, stroke), (BODY, 0)):
-            parts.append(
-                f'<path d="M{base[0]:.2f} {base[1]:.2f} Q{ctrl[0]:.2f} {ctrl[1]:.2f} {end[0]:.2f} {end[1]:.2f}" '
-                f'fill="none" stroke="{col}" stroke-width="{width * 0.15 + extra:.2f}" stroke-linecap="round"/>'
-            )
-    parts.append(
-        f'<ellipse cx="{hc[0]:.2f}" cy="{hc[1]:.2f}" rx="{head_rx:.2f}" ry="{head_ry:.2f}" '
-        f'transform="rotate({ang:.2f} {hc[0]:.2f} {hc[1]:.2f})" fill="{BODY}" stroke="{LINE}" stroke-width="{stroke}"/>'
-    )
-    # Face: eyes side by side along the tangent, smile towards the tentacles.
-    eye_r = width * 0.1
-    for sgn in (-1, 1):
-        ex = hc[0] + tx * sgn * head_ry * 0.42 - rx * head_rx * 0.12
-        ey = hc[1] + ty * sgn * head_ry * 0.42 - ry * head_rx * 0.12
-        parts.append(f'<circle cx="{ex:.2f}" cy="{ey:.2f}" r="{eye_r:.2f}" fill="{INK}"/>')
-        parts.append(
-            f'<circle cx="{ex - eye_r * 0.35:.2f}" cy="{ey - eye_r * 0.4:.2f}" r="{eye_r * 0.4:.2f}" fill="#FFFFFF"/>'
-        )
-        bx = hc[0] + tx * sgn * head_ry * 0.72 + rx * head_rx * 0.18
-        by = hc[1] + ty * sgn * head_ry * 0.72 + ry * head_rx * 0.18
-        parts.append(
-            f'<ellipse cx="{bx:.2f}" cy="{by:.2f}" rx="{eye_r * 0.85:.2f}" ry="{eye_r * 0.55:.2f}" fill="{BODY_DARK}" opacity="0.6"/>'
-        )
-    sm = (hc[0] + rx * head_rx * 0.2, hc[1] + ry * head_rx * 0.2)
-    w2 = head_ry * 0.22
-    p1 = (sm[0] - tx * w2, sm[1] - ty * w2)
-    p2 = (sm[0] + tx * w2, sm[1] + ty * w2)
-    q = (sm[0] + rx * w2 * 1.1, sm[1] + ry * w2 * 1.1)
-    parts.append(
-        f'<path d="M{p1[0]:.2f} {p1[1]:.2f} Q{q[0]:.2f} {q[1]:.2f} {p2[0]:.2f} {p2[1]:.2f}" fill="none" '
-        f'stroke="{INK}" stroke-width="{stroke * 0.85:.2f}" stroke-linecap="round"/>'
-    )
-    return '\n'.join(parts)
-
-
 def bbox(points):
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
@@ -201,12 +138,11 @@ def icon_svg():
     c0 = (0, 0)
     shell, outline = ammonite(c0, a, theta_end, stroke, uid='icon')
     bx0, by0, bx1, by1 = bbox(outline)
-    # Shift so the whole creature is visually centered (the body sticks out at the lower left).
-    dx = size / 2 - (bx0 + bx1) / 2 + 22
-    dy = size / 2 - (by0 + by1) / 2 - 18
+    # Center the shell in the tile.
+    dx = size / 2 - (bx0 + bx1) / 2
+    dy = size / 2 - (by0 + by1) / 2
     c = (dx, dy)
     shell, outline = ammonite(c, a, theta_end, stroke, uid='icon')
-    body = creature(c, a, theta_end, stroke)
     bubbles = ''.join(
         f'<circle cx="{x}" cy="{y}" r="{r}" fill="#FFFFFF" opacity="{o}"/>'
         f'<circle cx="{x - r * 0.3:.1f}" cy="{y - r * 0.3:.1f}" r="{r * 0.28:.1f}" fill="#FFFFFF" opacity="0.8"/>'
@@ -232,7 +168,6 @@ def icon_svg():
   {bubbles}
 </g>
 <g filter="url(#soft)">
-{body}
 {shell}
 </g>
 </svg>
