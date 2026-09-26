@@ -16,7 +16,7 @@ export function joinArgs(a: string[]): string {
   return a.map((x) => (/[\s"']/.test(x) || x === '' ? `"${x.replace(/(["\\])/g, '\\$1')}"` : x)).join(' ');
 }
 
-export function mountSettings(root: HTMLElement, opts: { firstRun: boolean }): () => void {
+export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDone?: () => void }): () => void {
   let cfg: Config | null = null;
   let dirty = false;
   const body = h('div', { class: 'settings-body' });
@@ -26,7 +26,7 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean }): (
     { class: 'topbar' },
     opts.firstRun
       ? h('div', { class: 'brand' }, h('span', { class: 'logo' }, '◉'), 'Omoeba')
-      : h('div', { class: 'topbar-left' }, iconButton('back', 'Back to library', () => navigate('#/')), h('h1', null, 'Settings')),
+      : h('div', { class: 'topbar-left' }, h('h1', null, 'Settings')),
     h('div', { class: 'spacer' }),
     saveBtn,
   );
@@ -294,7 +294,7 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean }): (
       state.config = cfg;
       dirty = false;
       saveBtn.disabled = !opts.firstRun;
-      if (opts.firstRun) navigate('#/');
+      if (opts.firstRun) opts.onDone?.();
       else {
         toast('Settings saved');
         render();

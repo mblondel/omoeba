@@ -114,7 +114,9 @@ function buildMenu() {
         { label: 'Add Library Folder…', click: send('add-folder') },
         { type: 'separator' },
         ...(isMac ? [] : [{ label: 'Settings…', accelerator: 'Ctrl+,', click: send('settings') }]),
-        isMac ? { role: 'close' } : { role: 'quit' },
+        { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: send('close-tab') },
+        { label: 'Close Window', accelerator: 'CmdOrCtrl+Shift+W', role: 'close' },
+        ...(isMac ? [] : [{ role: 'quit' }]),
       ] as Electron.MenuItemConstructorOptions[],
     },
     { role: 'editMenu' },
@@ -135,7 +137,17 @@ function buildMenu() {
         { role: 'togglefullscreen' },
       ],
     },
-    { role: 'windowMenu' },
+    {
+      role: 'windowMenu',
+      submenu: [
+        { label: 'Next Tab', accelerator: 'CmdOrCtrl+Shift+]', click: send('next-tab') },
+        { label: 'Previous Tab', accelerator: 'CmdOrCtrl+Shift+[', click: send('prev-tab') },
+        { type: 'separator' },
+        { role: 'minimize' },
+        { role: 'zoom' },
+        ...(isMac ? [{ type: 'separator' }, { role: 'front' }] : []),
+      ] as Electron.MenuItemConstructorOptions[],
+    },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }

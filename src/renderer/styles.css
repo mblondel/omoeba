@@ -133,7 +133,8 @@ a:hover {
   -webkit-app-region: drag;
   user-select: none;
 }
-.platform-darwin .topbar {
+/* First-run setup is shown without tabs: leave room for the macOS traffic lights. */
+.platform-darwin #app > .view > .topbar {
   padding-left: 80px;
 }
 .topbar button,
@@ -1541,4 +1542,115 @@ li.collapsed > .toc-item .toc-toggle {
   font-size: 12px;
   color: var(--muted);
   margin-top: 4px;
+}
+
+/* ---------------------------------------------------------------- tabs */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.tabbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 38px;
+  min-height: 38px;
+  padding: 0 8px;
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.tabbar::-webkit-scrollbar {
+  display: none;
+}
+.platform-darwin .tabbar {
+  padding-left: 80px;
+}
+.apptab {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 220px;
+  min-width: 90px;
+  height: 31px;
+  padding: 0 6px 0 10px;
+  margin-bottom: -1px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  color: var(--fg-soft);
+  font-size: 12.5px;
+  cursor: default;
+  position: relative;
+}
+.apptab:hover {
+  background: color-mix(in srgb, var(--bg-soft) 70%, transparent);
+}
+.apptab.active {
+  background: var(--bg-soft);
+  border-color: var(--border);
+  color: var(--fg);
+}
+.apptab-library {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding-right: 12px;
+  font-weight: 600;
+}
+.apptab .icon {
+  flex: none;
+  color: var(--muted);
+}
+.apptab.active .icon {
+  color: var(--accent);
+}
+.apptab-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.apptab-close {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--muted);
+  opacity: 0;
+}
+.apptab:hover .apptab-close,
+.apptab.active .apptab-close {
+  opacity: 1;
+}
+.apptab-close:hover {
+  background: var(--bg-sunken);
+  color: var(--fg);
+}
+.tab-panels {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.tab-panel {
+  position: absolute;
+  inset: 0;
+}
+.tab-panel[hidden] {
+  display: none;
+}
+/* Inside tabs, view toolbars are not window drag regions. */
+.tab-panel .topbar {
+  -webkit-app-region: no-drag;
 }

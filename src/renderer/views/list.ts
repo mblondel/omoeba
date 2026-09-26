@@ -2,7 +2,7 @@
 import type { IndexStatus, PaperSummary } from '../../shared/types';
 import { api } from '../api';
 import { clear, debounce, errorMessage, formatAuthors, h, icon, iconButton, relTime, toast } from '../dom';
-import { navigate, state, addPaperFromUrl } from '../app';
+import { navigate, state, addPaperFromUrl, isActiveView } from '../app';
 
 type SortKey = 'title' | 'authors' | 'folder' | 'tags' | 'added';
 
@@ -52,7 +52,6 @@ export function mountList(root: HTMLElement): () => void {
   const header = h(
     'header',
     { class: 'topbar' },
-    h('div', { class: 'brand' }, h('span', { class: 'logo' }, '◉'), 'Omoeba'),
     h('div', { class: 'search-wrap' }, icon('search'), search),
     h(
       'div',
@@ -267,6 +266,7 @@ export function mountList(root: HTMLElement): () => void {
   }
 
   const onKey = (e: KeyboardEvent) => {
+    if (!isActiveView(root)) return;
     if (document.activeElement && document.activeElement !== document.body && document.activeElement !== search) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -315,7 +315,7 @@ export function mountList(root: HTMLElement): () => void {
     }
   });
   const onMenu = (e: Event) => {
-    if ((e as CustomEvent).detail === 'find') search.focus();
+    if ((e as CustomEvent).detail === 'find' && isActiveView(root)) search.focus();
   };
   window.addEventListener('omoeba-menu', onMenu);
   const statusTimer = window.setInterval(renderIndexStatus, 30_000);

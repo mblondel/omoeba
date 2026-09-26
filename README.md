@@ -61,6 +61,18 @@ folder:gflow         folder name
 -tag:read            exclude
 ```
 
+## Tabs
+
+The Library is the first, permanent tab. Opening a paper, its PDF, or Settings opens a new tab (or switches
+to it if already open). Open tabs are restored at the next launch.
+
+| Key                          | Action                         |
+| ---------------------------- | ------------------------------ |
+| ⌘W                           | Close tab (⇧⌘W closes the window) |
+| ⇧⌘] / ⇧⌘[, ⌃Tab / ⌃⇧Tab       | Next / previous tab            |
+| ⌘1 … ⌘8, ⌘9                  | Go to tab n (⌘1 = Library), last tab |
+| Middle-click                 | Close tab                      |
+
 ## Reader shortcuts
 
 | Key                     | Action                                |
@@ -70,7 +82,7 @@ folder:gflow         folder name
 | ⌘+ / ⌘- / ⌘0, pinch     | Zoom                                  |
 | h, u, n, t              | Highlight, underline, note, text tool |
 | Delete                  | Delete the selected annotation        |
-| Esc                     | Close find / tool / back to paper     |
+| Esc                     | Close find / tool / deselect          |
 
 Selecting text shows a popup to highlight (5 colors), underline, strike out, or ask the AI about the passage.
 

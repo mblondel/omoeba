@@ -6,7 +6,7 @@ import type { Annotation, AnnotationType, Config, PaperDetail, RGBA } from '../.
 import { api, newJobId } from '../api';
 import { clear, confirmDialog, debounce, errorMessage, h, icon, iconButton, toast } from '../dom';
 import { mountMarkdown } from '../markdown';
-import { navigate, refreshConfig } from '../app';
+import { navigate, refreshConfig, isActiveView, type ViewHandle } from '../app';
 import { loadDocument } from '../pdfjs';
 import {
   DEFAULT_COLORS,
@@ -89,7 +89,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   const header = h(
     'header',
     { class: 'topbar reader-bar' },
-    h('div', { class: 'topbar-left' }, iconButton('back', 'Back to paper', () => navigate(`#/paper/${encodeURIComponent(id)}`)), leftToggle),
+    h('div', { class: 'topbar-left' }, leftToggle),
     titleEl,
     h('div', { class: 'spacer' }),
     h('div', { class: 'group' }, pageInput, pageCount),
@@ -891,6 +891,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   // Keyboard & menu
 
   const onKey = (e: KeyboardEvent) => {
+    if (!isActiveView(root)) return;
     const t = e.target as HTMLElement;
     const typing = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable;
     const mod = e.metaKey || e.ctrlKey;
@@ -902,7 +903,6 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
       else if (!findBar.classList.contains('hidden')) closeFind();
       else if (tool !== 'select') setTool('select');
       else if (selectedAnno) selectAnnotation(null);
-      else if (!typing) navigate(`#/paper/${encodeURIComponent(id)}`);
     } else if (!typing && (e.key === 'Delete' || e.key === 'Backspace') && selectedAnno) {
       e.preventDefault();
       commit(annotations.filter((a) => a.id !== selectedAnno), null);
@@ -919,6 +919,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   cleanups.push(() => window.removeEventListener('keydown', onKey));
 
   const onMenu = (e: Event) => {
+    if (!isActiveView(root)) return;
     const a = (e as CustomEvent).detail as string;
     if (a === 'find') openFind();
     else if (a === 'toggle-left') toggleLeft();
@@ -960,7 +961,6 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
       userName = config.userName;
       titleEl.textContent = detail.title;
       titleEl.title = detail.title;
-      document.title = `${detail.title} — Omoeba`;
       const doc = await loadDocument(data);
       if (disposed) {
         doc.destroy();
@@ -988,9 +988,8 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     }
   })();
 
-  return () => {
+  const dispose: ViewHandle = () => {
     disposed = true;
-    document.title = 'Omoeba';
     saveAnnotations.flush();
     notesCleanup?.();
     thumbObserver?.disconnect();
@@ -1002,4 +1001,11 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     }
     pdfDoc?.destroy();
   };
+  dispose.goToPage = (n: number) => {
+    if (pdfDoc && n >= 1 && n <= pdfDoc.numPages) viewer.currentPageNumber = n;
+    else initialPage = n;
+  };
+  // Pages are not rendered while the tab is hidden; refresh when it is shown again.
+  dispose.onShow = () => viewer.update();
+  return dispose;
 }

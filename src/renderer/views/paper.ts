@@ -3,7 +3,7 @@ import type { AIProvider, Config, PaperDetail, Sidecar, SummaryEntry } from '../
 import { api, newJobId } from '../api';
 import { clear, confirmDialog, errorMessage, h, icon, iconButton, toast } from '../dom';
 import { mountMarkdown } from '../markdown';
-import { navigate, refreshConfig } from '../app';
+import { navigate, refreshConfig, isActiveView } from '../app';
 import { loadDocument } from '../pdfjs';
 import { renderFigure } from '../figures';
 
@@ -128,7 +128,6 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
   const header = h(
     'header',
     { class: 'topbar' },
-    h('div', { class: 'topbar-left' }, iconButton('back', 'Back to library', () => navigate('#/'))),
     h('div', { class: 'spacer' }),
     iconButton('folder', 'Show in Finder', () => api.revealInFolder(id).catch((e) => toast(errorMessage(e), 'error'))),
     readBtn,
@@ -626,9 +625,9 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
 
   const onKey = (e: KeyboardEvent) => {
     const t = e.target as HTMLElement;
-    if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') return;
-    if (e.key === 'Escape' || (e.key === 'Backspace' && !e.metaKey)) navigate('#/');
-    else if (e.key === 'Enter' || e.key === 'o') openReader();
+    if (!isActiveView(root) || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return;
+    if (t.closest('.editable, .section-toggle, button, select, a')) return;
+    if (e.key === 'Enter' || e.key === 'o') openReader();
   };
   window.addEventListener('keydown', onKey);
 
