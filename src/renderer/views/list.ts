@@ -1,8 +1,22 @@
 /** Paper list: the Library tab, and search tabs (e.g. all papers by an author). */
 import type { IndexStatus, PaperSummary } from '../../shared/types';
 import { api } from '../api';
-import { clear, debounce, errorMessage, formatAuthors, h, icon, iconButton, relTime, toast, tagColor, setTagPalette } from '../dom';
-import { navigate, state, addPaperFromUrl, isActiveView } from '../app';
+import {
+  clear,
+  confirmDialog,
+  debounce,
+  errorMessage,
+  formatAuthors,
+  h,
+  icon,
+  iconButton,
+  promptDialog,
+  relTime,
+  toast,
+  tagColor,
+  setTagPalette,
+} from '../dom';
+import { navigate, state, addPaperFromUrl, isActiveView, retargetSearchTab } from '../app';
 import { renderThumbnail } from '../thumbnail';
 import { sameAuthor, sameInstitution, tagQuery } from '../authors';
 
@@ -97,6 +111,57 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
   const wrap = h('div', { class: 'list-wrap' });
   const empty = h('div', { class: 'empty' });
 
+  // When the list shows one tag (a "Tag: …" tab, or a search for tag:"…" / tag:x), that tag can
+  // be renamed in all papers.
+  const shownTag = () => /^(?:tag|tags|t):(?:"([^"]+)"|([^\s"]+))$/i.exec(search.value.trim())?.slice(1).find(Boolean) ?? null;
+  const renameBtn = h(
+    'button',
+    { class: 'btn', title: 'Rename this tag in all papers', hidden: true, onclick: () => renameTag() },
+    icon('edit'),
+    'Rename tag…',
+  );
+  const updateRenameBtn = () => {
+    const t = shownTag();
+    renameBtn.hidden = !t;
+    if (t) renameBtn.title = `Rename the tag “${t}” in all papers`;
+  };
+
+  async function renameTag() {
+    const from = shownTag();
+    if (!from) return;
+    const counts = await api.allTags().catch(() => []);
+    const n = counts.find((t) => t.tag.toLowerCase() === from.toLowerCase())?.count ?? 0;
+    const to = await promptDialog({
+      title: `Rename tag “${from}”`,
+      label: `New name (changes ${n} paper${n === 1 ? '' : 's'})`,
+      value: from,
+      okLabel: 'Rename',
+    });
+    if (!to || to.trim() === from) return;
+    const target = counts.find((t) => t.tag.toLowerCase() === to.trim().toLowerCase() && t.tag.toLowerCase() !== from.toLowerCase());
+    if (
+      target &&
+      !(await confirmDialog(
+        'Merge tags',
+        `The tag “${target.tag}” already exists (${target.count} paper${target.count === 1 ? '' : 's'}). Merge “${from}” into it?`,
+        'Merge',
+      ))
+    )
+      return;
+    try {
+      const { changed } = await api.renameTag(from, to.trim());
+      const name = target?.tag ?? to.trim().replace(/\s+/g, ' ');
+      toast(`${target ? 'Merged' : 'Renamed'} “${from}” → “${name}” in ${changed} paper${changed === 1 ? '' : 's'}`);
+      const query = tagQuery(name);
+      if (!isSearchTab || retargetSearchTab(root, query, `Tag: ${name}`)) {
+        search.value = query;
+        await load();
+      }
+    } catch (e) {
+      toast(errorMessage(e), 'error', 8000);
+    }
+  }
+
   const header = h(
     'header',
     { class: 'topbar' },
@@ -104,6 +169,7 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
     h(
       'div',
       { class: 'topbar-actions' },
+      renameBtn,
       iconButton('plus', 'Add paper from URL…', () => addPaperFromUrl()),
       iconButton('settings', 'Settings', () => navigate('#/settings')),
     ),
@@ -289,6 +355,7 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
     const seq = ++searchSeq;
     const q = search.value.trim();
     if (!isSearchTab) state.listQuery = q;
+    updateRenameBtn();
     const { rest, folders, authors, insts, tags } = splitQuery(q);
     let list = papers;
     if (folders.length) list = list.filter((p) => folders.every((f) => p.folder.toLowerCase().includes(f)));

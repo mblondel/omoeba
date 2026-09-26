@@ -255,6 +255,30 @@ export function openSearchTab(query: string, title?: string) {
   openTab('search', undefined, { query, title });
 }
 
+/**
+ * Point the search tab containing `el` at a new query (e.g. after renaming its tag). If a tab
+ * with that query is already open, this one is closed and the other shown instead.
+ * Returns false when the tab was closed.
+ */
+export function retargetSearchTab(el: Element, query: string, title: string): boolean {
+  const tab = tabs.find((t) => t.kind === 'search' && t.panel.contains(el));
+  if (!tab) return true;
+  const key = keyFor('search', query);
+  const other = tabs.find((t) => t.key === key && t !== tab);
+  if (other) {
+    closeTab(tab);
+    activate(other);
+    return false;
+  }
+  tab.key = key;
+  tab.query = query;
+  tab.title = title;
+  renderTabButton(tab);
+  if (active === tab) document.title = `${title} — Omoeba`;
+  saveSession();
+  return true;
+}
+
 function cycleTab(delta: number) {
   if (!active || tabs.length < 2) return;
   const i = tabs.indexOf(active);

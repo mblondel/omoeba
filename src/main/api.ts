@@ -298,6 +298,39 @@ export class OmoebaService implements OmoebaAPI {
     return [...counts.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b) => a.tag.localeCompare(b.tag));
   }
 
+  /**
+   * Rename a tag in every paper that has it (matched ignoring case). Renaming to a tag that
+   * already exists merges the two. Returns the number of papers changed.
+   */
+  async renameTag(from: string, to: string): Promise<{ changed: number }> {
+    const old = from.trim().toLowerCase();
+    let next = to.trim().replace(/\s+/g, ' ');
+    if (!old) throw new Error('No tag to rename.');
+    if (!next) throw new Error('The new tag name is empty.');
+    if (/[,"]/.test(next)) throw new Error('A tag cannot contain commas or quotes.');
+    const papers = await this.listPapers();
+    // Merging into an existing tag keeps that tag's spelling.
+    const existing = papers.flatMap((p) => p.tags).find((t) => t.trim().toLowerCase() === next.toLowerCase() && t.trim().toLowerCase() !== old);
+    if (existing) next = existing.trim();
+    let changed = 0;
+    for (const p of papers) {
+      if (!p.tags.some((t) => t.trim().toLowerCase() === old)) continue;
+      const tags: string[] = [];
+      for (const t of p.tags) {
+        const v = t.trim().toLowerCase() === old ? next : t;
+        if (!tags.some((x) => x.toLowerCase() === v.toLowerCase())) tags.push(v);
+      }
+      await updateSidecar(p.jsonPath, { tags });
+      this.platform.emit({ type: 'paper-updated', id: p.id });
+      changed++;
+    }
+    if (changed) {
+      this.index.requestSync(200);
+      this.platform.emit({ type: 'library-changed' });
+    }
+    return { changed };
+  }
+
   /** Validate that an id (PDF path) belongs to a tracked folder. */
   private checkId(id: string): string {
     const abs = path.resolve(id);

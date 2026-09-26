@@ -268,6 +268,8 @@ export interface OmoebaAPI {
   /** Native folder dialog (starting at `start` or the library folder) to choose where to save a PDF. */
   pickSaveFolder(start?: string): Promise<string | null>;
   addFromUrl(url: string, folder: string): Promise<PaperDetail>;
+  /** Rename a tag in all papers (merging it into `to` if that tag exists); returns how many papers changed. */
+  renameTag(from: string, to: string): Promise<{ changed: number }>;
   revealInFolder(id: string): Promise<void>;
   openExternal(url: string): Promise<void>;
 

@@ -20,6 +20,7 @@ export const API_METHODS: (keyof OmoebaAPI)[] = [
   'redownload',
   'pickSaveFolder',
   'addFromUrl',
+  'renameTag',
   'revealInFolder',
   'openExternal',
   'loadAnnotations',

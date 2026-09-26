@@ -176,6 +176,12 @@ a:hover {
   font-weight: 600;
   margin: 0 0 0 4px;
 }
+.topbar-actions > .btn {
+  margin-right: 6px;
+}
+.topbar-actions > .btn[hidden] {
+  display: none;
+}
 .topbar-left,
 .topbar-actions,
 .topbar .group {
