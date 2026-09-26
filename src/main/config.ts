@@ -47,6 +47,8 @@ export function defaultConfig(): Config {
     defaultAI: null,
     autoExtract: true,
     indexIntervalMinutes: 10,
+    theme: 'system',
+    darkPdf: true,
   };
 }
 
@@ -62,6 +64,8 @@ function normalize(raw: Partial<Config>): Config {
     defaultAI: typeof raw.defaultAI === 'string' ? raw.defaultAI : null,
     autoExtract: raw.autoExtract ?? d.autoExtract,
     indexIntervalMinutes: Math.max(1, Number(raw.indexIntervalMinutes) || d.indexIntervalMinutes),
+    theme: raw.theme === 'light' || raw.theme === 'dark' ? raw.theme : 'system',
+    darkPdf: raw.darkPdf ?? d.darkPdf,
   };
   if (typeof raw.userName === 'string' && raw.userName.trim()) cfg.userName = raw.userName.trim();
   const enabled = cfg.ais.filter((a) => a.enabled);

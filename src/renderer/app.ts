@@ -14,7 +14,16 @@ export const state = {
 
 export async function refreshConfig(): Promise<Config> {
   state.config = await api.getConfig();
+  applyAppearance(state.config);
   return state.config;
+}
+
+/**
+ * Light/dark itself is applied by the main process (Electron's native theme drives
+ * prefers-color-scheme); here we only toggle whether PDF pages are inverted in dark mode.
+ */
+export function applyAppearance(cfg: Config) {
+  document.documentElement.classList.toggle('pdf-light', cfg.darkPdf === false);
 }
 
 /**
@@ -313,6 +322,7 @@ api.onMenu((action) => {
 // Keep tab titles in sync when a paper's title is edited or extracted.
 api.onEvent((e) => {
   if (e.type === 'paper-updated') for (const t of tabs) if (t.paperId === e.id) refreshTitle(t);
+  if (e.type === 'config-changed') refreshConfig();
 });
 
 // Ctrl+Tab / Ctrl+Shift+Tab and ⌘1…⌘9.

@@ -1,10 +1,10 @@
 /** Electron main process entry point. */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, shell } from 'electron';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { OmoebaService } from './api';
 import { API_METHODS } from '../shared/api-methods';
-import type { OmoebaEvent } from '../shared/types';
+import type { Config, OmoebaEvent, Theme } from '../shared/types';
 
 // Shown in the menu bar ("About Omoeba", "Quit Omoeba", …) instead of "Electron".
 app.setName('Omoeba');
@@ -50,6 +50,22 @@ function registerAppProtocol() {
   });
 }
 let service: OmoebaService;
+let theme: Theme = 'system';
+
+/** Light/dark appearance for native UI and the page (prefers-color-scheme follows it). */
+function applyTheme(t: Theme | undefined) {
+  theme = t ?? 'system';
+  nativeTheme.themeSource = theme;
+  if (win) win.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1e1f22' : '#ffffff');
+}
+
+async function setTheme(t: Theme) {
+  const cfg = await service.getConfig();
+  await service.saveConfig({ ...cfg, theme: t });
+  applyTheme(t);
+  buildMenu();
+  emit({ type: 'config-changed' });
+}
 
 function emit(e: OmoebaEvent) {
   for (const w of BrowserWindow.getAllWindows()) w.webContents.send('omoeba:event', e);
@@ -64,7 +80,7 @@ function createWindow() {
     title: 'Omoeba',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     icon: ICON, // Windows/Linux (the macOS Dock icon is set below)
-    backgroundColor: '#1e1f22',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1f22' : '#ffffff',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -137,6 +153,16 @@ function buildMenu() {
         { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: send('zoom-out') },
         { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: send('zoom-reset') },
         { type: 'separator' },
+        {
+          label: 'Appearance',
+          submenu: (['system', 'light', 'dark'] as Theme[]).map((t) => ({
+            label: t === 'system' ? 'Use System Setting' : t === 'light' ? 'Light' : 'Dark',
+            type: 'radio',
+            checked: theme === t,
+            click: () => setTheme(t),
+          })),
+        },
+        { type: 'separator' },
         { role: 'reload' },
         { role: 'toggleDevTools' },
         { role: 'togglefullscreen' },
@@ -184,11 +210,17 @@ app.whenReady().then(async () => {
     },
   });
   await service.init();
+  applyTheme((await service.getConfig()).theme);
 
   for (const m of API_METHODS) {
     ipcMain.handle(`omoeba:${m}`, async (_e: unknown, ...args: unknown[]) => {
       const fn = service[m] as (...a: unknown[]) => Promise<unknown>;
-      return fn.apply(service, args);
+      const result = await fn.apply(service, args);
+      if (m === 'saveConfig' && (result as Config).theme !== theme) {
+        applyTheme((result as Config).theme);
+        buildMenu();
+      }
+      return result;
     });
   }
 

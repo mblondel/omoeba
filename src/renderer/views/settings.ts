@@ -1,8 +1,8 @@
 /** Settings (and first-run setup). */
-import type { AIProvider, Config } from '../../shared/types';
+import type { AIProvider, Config, Theme } from '../../shared/types';
 import { api } from '../api';
 import { clear, errorMessage, h, icon, iconButton, relTime, toast } from '../dom';
-import { navigate, refreshConfig, state } from '../app';
+import { navigate, refreshConfig, state, applyAppearance } from '../app';
 
 export function splitArgs(s: string): string[] {
   const out: string[] = [];
@@ -164,6 +164,37 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
         markDirty();
       },
     });
+    // --- Appearance (applied immediately)
+    const themeBtns = (['system', 'light', 'dark'] as Theme[]).map((t) =>
+      h(
+        'button',
+        {
+          class: `seg ${c.theme === t ? 'active' : ''}`,
+          onclick: () => {
+            c.theme = t;
+            applyNow();
+          },
+        },
+        t === 'system' ? 'Match macOS' : t === 'light' ? 'Light' : 'Dark',
+      ),
+    );
+    const darkPdf = h('input', {
+      type: 'checkbox',
+      checked: c.darkPdf,
+      onchange: () => {
+        c.darkPdf = darkPdf.checked;
+        applyNow();
+      },
+    });
+    body.append(
+      section(
+        'Appearance',
+        null,
+        h('div', { class: 'theme-row' }, h('span', null, 'Theme'), h('div', { class: 'segmented' }, themeBtns)),
+        h('label', { class: 'check' }, darkPdf, 'In dark mode, show PDF pages in dark too (black background, white text).'),
+      ),
+    );
+
     body.append(
       section(
         'Behaviour',
@@ -293,6 +324,7 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
       const { ais, ...rest } = cfg;
       cfg = await api.saveConfig({ ...rest, ais: ais.map(({ resolvedPath: _r, ...a }) => a) });
       state.config = cfg;
+      applyAppearance(cfg);
       dirty = false;
       saveBtn.disabled = !opts.firstRun;
       if (opts.firstRun) opts.onDone?.();
@@ -305,6 +337,24 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
     }
   }
 
+  /** Appearance changes take effect right away (saved with the rest of the settings). */
+  function applyNow() {
+    markDirty();
+    render();
+    if (!opts.firstRun) void save();
+  }
+
+  // The theme can also be changed from the View › Appearance menu.
+  const offEvent = api.onEvent((e) => {
+    if (e.type !== 'config-changed' || !cfg) return;
+    api.getConfig().then((fresh) => {
+      if (!cfg) return;
+      cfg.theme = fresh.theme;
+      cfg.darkPdf = fresh.darkPdf;
+      render();
+    });
+  });
+
   refreshConfig().then((c) => {
     cfg = structuredClone(c);
     if (opts.firstRun) {
@@ -316,6 +366,7 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
   });
 
   const onBeforeLeave = () => {
+    offEvent();
     if (dirty && !opts.firstRun) void save();
   };
   return onBeforeLeave;

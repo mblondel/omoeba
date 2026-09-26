@@ -48,7 +48,30 @@
     --tag-bg: #2f3440;
     --tag-fg: #c9d4ea;
     --shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
-    --viewer-bg: #141416;
+    --viewer-bg: #2a2b2f;
+  }
+}
+
+/* Dark PDF pages: invert the rendered page image (black background, white text), then
+   rotate hues back so figure colors stay recognizable. Annotations are not inverted;
+   highlights are blended with "screen" so they read as a colored wash behind white text.
+   Opt out with html.pdf-light (Settings › Appearance). */
+@media (prefers-color-scheme: dark) {
+  html:not(.pdf-light) .pdfViewer .page .canvasWrapper,
+  html:not(.pdf-light) .thumb-img canvas {
+    filter: invert(1) hue-rotate(180deg);
+  }
+  html:not(.pdf-light) .pdfViewer .page {
+    --page-bg-color: #000;
+    background-color: #000;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+  html:not(.pdf-light) .omo-highlight {
+    mix-blend-mode: screen;
+    opacity: 0.5;
+  }
+  html:not(.pdf-light) .thumb-img {
+    background: #000;
   }
 }
 
@@ -1735,5 +1758,26 @@ li.collapsed > .toc-item .toc-toggle {
     background: hsl(var(--tag-h) 35% 26%);
     color: hsl(var(--tag-h) 80% 86%);
     box-shadow: inset 0 0 0 1px hsl(var(--tag-h) 30% 34%);
+  }
+}
+
+/* Settings › Appearance */
+.theme-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 10px;
+}
+.theme-row .segmented {
+  display: inline-flex;
+}
+.theme-row .seg {
+  padding: 4px 14px;
+  font-size: 12.5px;
+}
+@media (prefers-color-scheme: dark) {
+  .seg.active {
+    background: #3b3c42;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   }
 }

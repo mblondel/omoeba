@@ -84,6 +84,11 @@ On macOS, `npm install` / `npm start` run `scripts/brand-electron-mac.mjs`, whic
 `Electron.app` to "Omoeba" and gives it the Omoeba icon (the menu-bar title and Dock label come from the app
 bundle, not from code), then re-signs it ad hoc. The original files are kept as `*.orig`.
 
+## Appearance
+
+Light, dark, or matching macOS: Settings › Appearance or View › Appearance. In dark mode PDF pages are shown
+in dark too (black background, white text, figure colors preserved); this can be turned off in Settings.
+
 ## Tabs
 
 The Library is the first, permanent tab. Opening a paper, its PDF, or Settings opens a new tab (or switches

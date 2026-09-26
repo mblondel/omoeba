@@ -31,7 +31,13 @@ export interface Config {
   indexIntervalMinutes: number;
   /** Author name stored in new annotations (like Skim's userName). Defaults to the system user's name. */
   userName?: string;
+  /** Appearance: follow macOS, or force light/dark. */
+  theme: Theme;
+  /** In dark mode, show PDF pages inverted (black background, white text). */
+  darkPdf: boolean;
 }
+
+export type Theme = 'system' | 'light' | 'dark';
 
 export interface SummaryEntry {
   /** Markdown. Images are referenced as ![alt](img:<id>) and stored in `images`. */
@@ -183,7 +189,8 @@ export type OmoebaEvent =
   | { type: 'library-changed' }
   | { type: 'index-status'; status: IndexStatus }
   | { type: 'ai-progress'; jobId: string; chunk: string }
-  | { type: 'paper-updated'; id: string };
+  | { type: 'paper-updated'; id: string }
+  | { type: 'config-changed' };
 
 /** The API exposed to the renderer (window.omoeba). Every method is async. */
 export interface OmoebaAPI {
