@@ -179,7 +179,65 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
   wrap.append(table, empty);
   const footer = h('footer', { class: 'statusbar' }, count, h('span', { class: 'spacer' }), indexInfo,
     h('button', { class: 'link-btn', title: 'Re-synchronize the search index now', onclick: () => api.reindex().catch((e) => toast(errorMessage(e), 'error')) }, 'Sync'));
-  root.append(h('div', { class: 'view list-view' }, header, wrap, footer));
+  // Library: all tags (alphabetical) below the search box; clicking one filters the list.
+  const tagBar = h('div', { class: 'tag-bar' });
+  const tagChips = h('div', { class: 'tag-bar-chips' });
+  const tagMore = h('button', { class: 'link-btn tag-bar-more', hidden: true, onclick: () => toggleTagBar() });
+  let tagBarOpen = false;
+  tagBar.append(tagChips, tagMore);
+  const toggleTagBar = () => {
+    tagBarOpen = !tagBarOpen;
+    tagBar.classList.toggle('open', tagBarOpen);
+    updateTagMore();
+  };
+  const updateTagMore = () => {
+    // Shown only when the chips do not fit on the collapsed rows.
+    const overflowing = tagChips.scrollHeight > tagChips.clientHeight + 2;
+    tagMore.hidden = !tagBarOpen && !overflowing;
+    tagMore.textContent = tagBarOpen ? 'Less' : `All ${tagChips.childElementCount} tags`;
+  };
+
+  const tagBarObserver = new ResizeObserver(() => updateTagMore());
+  if (!isSearchTab) tagBarObserver.observe(tagChips);
+
+  function renderTagBar() {
+    if (isSearchTab) return;
+    const counts = new Map<string, { tag: string; count: number }>();
+    for (const p of papers)
+      for (const t of p.tags) {
+        const k = t.trim().toLowerCase();
+        const e = counts.get(k) ?? { tag: t.trim(), count: 0 };
+        e.count++;
+        counts.set(k, e);
+      }
+    const tags = [...counts.values()].sort((a, b) => collator.compare(a.tag, b.tag));
+    const active = shownTag()?.toLowerCase();
+    clear(tagChips);
+    tagBar.hidden = !tags.length;
+    for (const { tag, count } of tags) {
+      const on = tag.toLowerCase() === active;
+      tagChips.append(
+        h(
+          'span',
+          {
+            class: `tag ${on ? 'active' : ''}`,
+            dataset: { c: tagColor(tag) },
+            title: on ? 'Show all papers' : `Show the ${count} paper${count === 1 ? '' : 's'} tagged “${tag}”`,
+            onclick: () => {
+              search.value = on ? '' : tagQuery(tag);
+              wrap.scrollTop = 0;
+              applyFilter();
+            },
+          },
+          tag,
+          h('span', { class: 'tag-count' }, String(count)),
+        ),
+      );
+    }
+    requestAnimationFrame(updateTagMore);
+  }
+
+  root.append(h('div', { class: 'view list-view' }, header, isSearchTab ? null : tagBar, wrap, footer));
 
   const columns: { key: SortKey; label: string; cls: string }[] = [
     { key: 'title', label: 'Title', cls: 'c-title' },
@@ -356,6 +414,7 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
     const q = search.value.trim();
     if (!isSearchTab) state.listQuery = q;
     updateRenameBtn();
+    renderTagBar();
     const { rest, folders, authors, insts, tags } = splitQuery(q);
     let list = papers;
     if (folders.length) list = list.filter((p) => folders.every((f) => p.folder.toLowerCase().includes(f)));
@@ -488,6 +547,7 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
   return () => {
     if (!isSearchTab) savedScroll = wrap.scrollTop;
     thumbListeners.delete(onThumbnail);
+    tagBarObserver.disconnect();
     offEvent();
     window.removeEventListener('keydown', onKey);
     window.removeEventListener('omoeba-menu', onMenu);
