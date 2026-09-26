@@ -32,13 +32,18 @@ export const AI_PRESETS: AIProvider[] = [
     enabled: false,
   },
   {
-    id: 'gemini',
-    name: 'Gemini CLI',
-    command: 'gemini',
-    args: [],
+    // Google's Antigravity CLI (successor of the Gemini CLI). The prompt is passed as the value
+    // of -p; its own response timeout (5 minutes by default) is raised to match ours.
+    id: 'antigravity',
+    name: 'Gemini Antigravity',
+    command: 'agy',
+    args: ['-p', '{prompt}', '--output-format', 'text', '--print-timeout', '15m'],
     enabled: false,
   },
 ];
+
+/** Former presets, dropped from the settings unless the user had enabled them. */
+const RETIRED_PRESETS = ['gemini'];
 
 export function defaultConfig(): Config {
   return {
@@ -55,7 +60,11 @@ export function defaultConfig(): Config {
 
 function normalize(raw: Partial<Config>): Config {
   const d = defaultConfig();
-  const ais: AIProvider[] = Array.isArray(raw.ais) ? raw.ais.filter((a) => a && a.id && a.command) : [];
+  const ais: AIProvider[] = Array.isArray(raw.ais)
+    ? raw.ais.filter((a) => a && a.id && a.command && !(RETIRED_PRESETS.includes(a.id) && !a.enabled))
+    : [];
+  // Presets renamed since: follow the new name.
+  for (const a of ais) if (a.id === 'antigravity' && a.name === 'Gemini (Antigravity CLI)') a.name = 'Gemini Antigravity';
   // Make sure presets are always listed (so they can be enabled later).
   for (const p of d.ais) if (!ais.some((a) => a.id === p.id)) ais.push(p);
   const cfg: Config = {

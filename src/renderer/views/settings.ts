@@ -291,7 +291,7 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
         markDirty();
       },
     });
-    const isPreset = ['claude', 'codex', 'gemini'].includes(ai.id);
+    const isPreset = ['claude', 'codex', 'antigravity'].includes(ai.id);
     return h(
       'tr',
       { class: ai.enabled ? '' : 'disabled' },

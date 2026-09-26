@@ -1,6 +1,7 @@
-/** Running AI command-line tools (Claude Code, Codex, Gemini CLI, ...). */
+/** Running AI command-line tools (Claude Code, Codex, Antigravity CLI, ...). */
 import { spawn, ChildProcess } from 'node:child_process';
 import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import type { AIProvider, ChatMessage } from '../shared/types';
 import { childEnv, which } from './shellenv';
 import { aiWorkDir } from './config';
@@ -17,14 +18,38 @@ export async function resolveAI(ai: AIProvider): Promise<string | null> {
   return which(ai.command);
 }
 
-export async function runAI(ai: AIProvider, prompt: string, opts: RunOptions = {}): Promise<string> {
+/**
+ * Control characters other than tab and newlines (text extracted from PDFs can contain NUL bytes,
+ * which cannot be passed as a command-line argument).
+ */
+export function cleanPrompt(prompt: string): string {
+  // eslint-disable-next-line no-control-regex
+  return prompt.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
+}
+
+export async function runAI(ai: AIProvider, rawPrompt: string, opts: RunOptions = {}): Promise<string> {
+  const prompt = cleanPrompt(rawPrompt);
   if (!ai.enabled) throw new Error(`${ai.name} is not authorized. Enable it in Settings.`);
   const exe = await resolveAI(ai);
   if (!exe) throw new Error(`Could not find "${ai.command}" on your PATH. Check Settings → AI.`);
   const cwd = aiWorkDir();
   await fs.mkdir(cwd, { recursive: true });
   const usesArg = ai.args.some((a) => a.includes('{prompt}'));
-  const args = ai.args.map((a) => a.replace('{prompt}', prompt).replace('{cwd}', cwd));
+  // A prompt passed as an argument must fit the system's limits (a single argument is limited
+  // to 128 KB on Linux; all arguments together to 1 MB on macOS). Larger prompts are written to
+  // a file in the working directory, and the AI is asked to read it.
+  let promptFile: string | null = null;
+  let argPrompt = prompt;
+  if (usesArg && Buffer.byteLength(prompt) > (process.platform === 'darwin' ? 600_000 : 100_000)) {
+    const name = `prompt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.md`;
+    promptFile = path.join(cwd, name);
+    await fs.writeFile(promptFile, prompt);
+    argPrompt = `Your full instructions are in the file ${name} in the current directory. Read that file and follow the instructions in it exactly.`;
+  }
+  const removePromptFile = () => {
+    if (promptFile) fs.rm(promptFile, { force: true }).catch(() => undefined);
+  };
+  const args = ai.args.map((a) => a.replace('{prompt}', () => argPrompt).replace('{cwd}', () => cwd));
 
   return new Promise<string>((resolve, reject) => {
     const child = spawn(exe, args, { cwd, env: childEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
@@ -48,11 +73,13 @@ export async function runAI(ai: AIProvider, prompt: string, opts: RunOptions = {
     });
     child.on('error', (e) => {
       clearTimeout(timer);
+      removePromptFile();
       if (opts.jobId) running.delete(opts.jobId);
       reject(e);
     });
     child.on('close', (code, signal) => {
       clearTimeout(timer);
+      removePromptFile();
       if (opts.jobId) running.delete(opts.jobId);
       if (code === 0 && out.trim()) resolve(out.trim());
       else if (killedByTimeout) reject(new Error(`${ai.name} timed out.`));

@@ -32,11 +32,13 @@ Settings are saved in `~/omoeba/config.json`. More folders can be added later in
 
 Only AIs with a command-line interface are used, and only those authorized in Settings. Presets:
 
-| AI           | Command                                                   |
-| ------------ | --------------------------------------------------------- |
-| Claude Code  | `claude -p --output-format text`                          |
-| OpenAI Codex | `codex exec --skip-git-repo-check --sandbox read-only -`  |
-| Gemini CLI   | `gemini`                                                  |
+| AI                 | Command                                                    |
+| ------------------ | ---------------------------------------------------------- |
+| Claude Code        | `claude -p --output-format text`                           |
+| OpenAI Codex       | `codex exec --skip-git-repo-check --sandbox read-only -`   |
+| Gemini Antigravity | `agy -p {prompt} --output-format text --print-timeout 15m` |
+
+The prompt is sent on standard input, or in place of `{prompt}` when an argument contains it.
 
 
 ## Development
