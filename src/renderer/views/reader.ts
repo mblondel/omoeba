@@ -566,7 +566,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     }
     if (tool === 'FreeText') {
       setTool('select');
-      createTextBox(pv, pt);
+      createTextBox(pv, pt, e.clientX, e.clientY);
       return;
     }
     const noteEl = target.closest('.omo-note, .omo-freetext') as HTMLElement | null;
@@ -581,14 +581,15 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   let editing: { el: HTMLElement; pv: PageViewLike; id: string | null; anno: Annotation } | null = null;
 
   /** New text box at a point (top-left corner), edited right away; kept only if text is typed. */
-  function createTextBox(pv: PageViewLike, pt: number[]) {
+  function createTextBox(pv: PageViewLike, pt: number[], clientX?: number, clientY?: number) {
     const fontSize = 11;
     const height = Math.round(fontSize * 1.2 + 4);
+    const [x, width] = clientX !== undefined && clientY !== undefined ? freeSpan(pv, pt, clientX, clientY, height) : [pt[0], 180];
     const a: Annotation = {
       id: newAnnotationId(),
       type: 'FreeText',
       page: pv.id - 1,
-      bounds: [pt[0], pt[1] - height, 180, height],
+      bounds: [x, pt[1] - height, width, height],
       color: [1, 1, 1, 1],
       fontColor: toolColors.FreeText ?? DEFAULT_COLORS.FreeText,
       fontName: 'Helvetica',
@@ -598,6 +599,37 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
       modificationDate: new Date().toISOString(),
     };
     startEdit(pv, a, true);
+  }
+
+  /**
+   * The free horizontal space around a point, as [x, width] in PDF units: from the nearest text,
+   * text box or note on the box's first line on the left (or the page's left edge) to the nearest
+   * one on the right (or the page's right edge). A double-click in a margin fills the margin.
+   */
+  function freeSpan(pv: PageViewLike, pt: number[], clientX: number, clientY: number, height: number): [number, number] {
+    const page = pv.div.getBoundingClientRect();
+    const pxPerUnit = page.width / Math.abs(pv.viewport.convertToPdfPoint(pv.viewport.width, 0)[0] - pv.viewport.convertToPdfPoint(0, 0)[0]);
+    const bandTop = clientY;
+    const bandBottom = clientY + height * pxPerUnit;
+    const gap = 4 * pxPerUnit;
+    let left = page.left + 8 * pxPerUnit;
+    let right = page.right - 8 * pxPerUnit;
+    const obstacles = pv.div.querySelectorAll<HTMLElement>('.textLayer span, .omo-freetext:not(.omo-editing), .omo-note');
+    for (const el of obstacles) {
+      if (el.matches('.textLayer span') && !el.textContent?.trim()) continue;
+      for (const r of el.getClientRects()) {
+        if (r.width < 1 || r.bottom <= bandTop || r.top >= bandBottom) continue;
+        if (r.left >= clientX) right = Math.min(right, r.left - gap);
+        else if (r.right <= clientX) left = Math.max(left, r.right + gap);
+      }
+    }
+    if (right - left < 40 * pxPerUnit) {
+      // Too little room: a minimal box starting at the point.
+      return [pt[0], 40];
+    }
+    const l = clientToPdf(pv, left, clientY)[0];
+    const r = clientToPdf(pv, right, clientY)[0];
+    return [Math.round(l * 10) / 10, Math.round(r - l)];
   }
 
   /** Edit a text box's text directly on the page (Esc or clicking elsewhere ends editing). */
@@ -731,7 +763,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
       }
       return;
     }
-    createTextBox(pv, clientToPdf(pv, e.clientX, e.clientY));
+    createTextBox(pv, clientToPdf(pv, e.clientX, e.clientY), e.clientX, e.clientY);
   });
 
   // ---------------------------------------------------------------------------
