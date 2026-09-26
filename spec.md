@@ -70,3 +70,10 @@ The top bar shows buttons to toggle the left side pane and the right side pane.
 - Typescript
 - pdf.js
 - KaTeX
+
+## Logo
+
+The letter O in Omoeba will be a spiral, potentially an ammonite shell.
+This symbolizes the knowledge spiral.
+Make the icon look cartoonish / cute.
+Implement the logi in SVG and convert it to PNG too.

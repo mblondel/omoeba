@@ -1,10 +1,14 @@
 /** Electron main process entry point. */
-import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from 'electron';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { OmoebaService } from './api';
 import { API_METHODS } from '../shared/api-methods';
 import type { OmoebaEvent } from '../shared/types';
+
+// Shown in the menu bar ("About Omoeba", "Quit Omoeba", …) instead of "Electron".
+app.setName('Omoeba');
+const ICON = path.join(__dirname, '..', 'assets', 'icon.png');
 
 let win: BrowserWindow | null = null;
 
@@ -59,6 +63,7 @@ function createWindow() {
     minHeight: 600,
     title: 'Omoeba',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    icon: ICON, // Windows/Linux (the macOS Dock icon is set below)
     backgroundColor: '#1e1f22',
     show: false,
     webPreferences: {
@@ -153,6 +158,13 @@ function buildMenu() {
 }
 
 app.whenReady().then(async () => {
+  if (process.platform === 'darwin') app.dock?.setIcon(nativeImage.createFromPath(ICON));
+  app.setAboutPanelOptions({
+    applicationName: 'Omoeba',
+    applicationVersion: app.getVersion(),
+    iconPath: ICON,
+    credits: 'A spiral of knowledge — your library of papers.',
+  });
   registerAppProtocol();
   service = new OmoebaService({
     workerScript: path.join(__dirname, 'index-worker.js'),

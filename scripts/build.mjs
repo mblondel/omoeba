@@ -73,6 +73,7 @@ async function copyAssets() {
   const r = path.join(dist, 'renderer');
   await mkdir(r, { recursive: true });
   await cp(path.join(root, 'src/renderer/index.html'), path.join(r, 'index.html'));
+  for (const f of ['logo-mark.svg', 'logo.svg']) await cp(path.join(root, 'assets', f), path.join(r, f));
   await cp(path.join(pdfjsDir, 'legacy/build/pdf.worker.min.mjs'), path.join(r, 'pdf.worker.mjs'));
   for (const d of ['cmaps', 'standard_fonts', 'wasm', 'iccs']) {
     await cp(path.join(pdfjsDir, d), path.join(r, 'pdfjs', d), { recursive: true }).catch(() => undefined);

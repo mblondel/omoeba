@@ -1,5 +1,6 @@
 {
   "name": "omoeba",
+  "productName": "Omoeba",
   "version": "0.1.0",
   "description": "Manage a local library of PDFs with annotations, notes, tags and AI summaries.",
   "main": "dist/main.js",
@@ -8,9 +9,11 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch",
-    "start": "node scripts/build.mjs && electron .",
+    "start": "node scripts/build.mjs && node scripts/brand-electron-mac.mjs && electron .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node scripts/build.mjs --tests && node --test dist-test/*.test.js"
+    "test": "node scripts/build.mjs --tests && node --test dist-test/*.test.js",
+    "postinstall": "node scripts/brand-electron-mac.mjs",
+    "logo": "python3 scripts/generate-logo.py"
   },
   "dependencies": {
     "katex": "^0.16.45",

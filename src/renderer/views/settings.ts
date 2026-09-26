@@ -25,7 +25,7 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
     'header',
     { class: 'topbar' },
     opts.firstRun
-      ? h('div', { class: 'brand' }, h('span', { class: 'logo' }, '◉'), 'Omoeba')
+      ? h('div', { class: 'brand' }, h('img', { class: 'logo', src: 'logo-mark.svg', alt: '' }), 'Omoeba')
       : h('div', { class: 'topbar-left' }, h('h1', null, 'Settings')),
     h('div', { class: 'spacer' }),
     saveBtn,
@@ -50,7 +50,8 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
         h(
           'div',
           { class: 'welcome' },
-          h('h1', null, 'Welcome to Omoeba'),
+          h('img', { class: 'welcome-logo', src: 'logo.svg', alt: 'Omoeba' }),
+          h('h1', null, 'Welcome!'),
           h(
             'p',
             null,

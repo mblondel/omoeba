@@ -73,7 +73,8 @@ function mountTab(tab: Tab) {
 function renderTabButton(tab: Tab) {
   clear(tab.button);
   tab.button.title = tab.title;
-  tab.button.append(icon(TAB_ICON[tab.kind], 13), h('span', { class: 'apptab-title' }, tab.kind === 'library' ? 'Library' : tab.title));
+  const tabIcon = tab.kind === 'library' ? h('img', { class: 'apptab-logo', src: 'logo-mark.svg', alt: '' }) : icon(TAB_ICON[tab.kind], 13);
+  tab.button.append(tabIcon, h('span', { class: 'apptab-title' }, tab.kind === 'library' ? 'Library' : tab.title));
   if (tab.kind !== 'library') {
     tab.button.append(
       h(
