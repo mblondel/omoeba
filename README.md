@@ -2,15 +2,13 @@
   <img src="assets/icon.png" alt="Omoeba app icon" width="160">
 </p>
 
-<h1 align="center">
+<p align="center">
   <img src="assets/logo.svg" alt="Omoeba" height="64">
-</h1>
+</p>
 
 <p align="center">
   <em>A spiral of knowledge for your PDF library.</em><br>
 </p>
-
----
 
 ## Features
 
@@ -23,7 +21,7 @@
 ## Getting started
 
 ```sh
-npm install
+npm install      # requires node.js
 npm start        # builds into dist/ and launches Electron
 ```
 
