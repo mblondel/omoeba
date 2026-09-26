@@ -1,4 +1,17 @@
-# Omoeba
+<p align="center">
+  <img src="assets/icon.png" alt="Omoeba app icon" width="160">
+</p>
+
+<h1 align="center">
+  <img src="assets/logo.svg" alt="Omoeba" height="64">
+</h1>
+
+<p align="center">
+  <em>A spiral of knowledge for your PDF library.</em><br>
+  Annotations compatible with Skim · Markdown &amp; LaTeX notes · tags · AI summaries and Q&amp;A
+</p>
+
+---
 
 Manage a local library of PDFs. PDFs can have inline annotations, Markdown notes, tags and AI summaries.
 
