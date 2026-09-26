@@ -384,6 +384,13 @@ async function start() {
   }
 }
 
+/** Whether an element is a text field (whose own undo/redo applies). */
+function isTextField(el: Element | null): boolean {
+  if (!el) return false;
+  const t = el as HTMLElement;
+  return t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !['button', 'checkbox', 'radio'].includes((t as HTMLInputElement).type)) || t.isContentEditable;
+}
+
 api.onMenu((action) => {
   if (action === 'settings') navigate('#/settings');
   else if (action === 'library') navigate('#/');
@@ -391,6 +398,7 @@ api.onMenu((action) => {
   else if (action === 'close-tab') active && closeTab(active);
   else if (action === 'next-tab') cycleTab(1);
   else if (action === 'prev-tab') cycleTab(-1);
+  else if ((action === 'undo' || action === 'redo') && isTextField(document.activeElement)) document.execCommand(action);
   else window.dispatchEvent(new CustomEvent('omoeba-menu', { detail: action }));
 });
 

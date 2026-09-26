@@ -73,6 +73,9 @@
   html:not(.pdf-light) .thumb-img {
     background: #000;
   }
+  html:not(.pdf-light) .omo-freetext.omo-editing {
+    background: rgba(0, 0, 0, 0.55);
+  }
   html:not(.pdf-light) img.paper-thumb {
     filter: invert(1) hue-rotate(180deg);
     box-shadow: 0 0 0 1px var(--border);
@@ -1418,6 +1421,29 @@ li.collapsed > .toc-item .toc-toggle {
   white-space: pre-wrap;
   overflow: hidden;
   padding: 1px 2px;
+}
+.omo-freetext.omo-editing {
+  z-index: 6;
+  height: auto;
+  overflow: visible;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+  outline: 2px dashed var(--accent);
+  outline-offset: 1px;
+  background: rgba(255, 255, 255, 0.55);
+}
+.omo-freetext.omo-hidden {
+  visibility: hidden;
+}
+.reader-view[data-tool='select'] .omo-freetext:not(.omo-editing),
+.reader-view[data-tool='select'] .omo-note {
+  cursor: move;
+}
+.omo-freetext.dragging,
+.omo-note.dragging {
+  opacity: 0.8;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 .omo-note.selected,
 .omo-freetext.selected {

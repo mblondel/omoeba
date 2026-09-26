@@ -149,7 +149,22 @@ function buildMenu() {
         ...(isMac ? [] : [{ role: 'quit' }]),
       ] as Electron.MenuItemConstructorOptions[],
     },
-    { role: 'editMenu' },
+    {
+      label: 'Edit',
+      submenu: [
+        // Undo/redo go to the renderer: text fields use the native undo, the PDF reader its own
+        // annotation history.
+        { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: send('undo') },
+        { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', click: send('redo') },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'pasteAndMatchStyle' },
+        { role: 'delete' },
+        { role: 'selectAll' },
+      ],
+    },
     {
       label: 'View',
       submenu: [

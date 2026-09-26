@@ -18,6 +18,7 @@ import {
   drawPageAnnotations,
   hitTest,
   newAnnotationId,
+  pctBox,
   renderAnnotationPane,
   selectionToMarkup,
 } from './annotations';
@@ -126,7 +127,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
       mkTool('Underline', 'underline', 'Underline — text you select is underlined (U)'),
       mkTool('StrikeOut', 'strike', 'Strike out — text you select is struck out'),
       mkTool('Note', 'note', 'Note — click on the page to add a note (N)'),
-      mkTool('FreeText', 'text', 'Text box — click on the page to add text (T)'),
+      mkTool('FreeText', 'text', 'Text box — click on the page to add text (T). You can also double-click an empty spot of a page'),
       colorBtn,
     ),
     iconButton('search', `Find in document (${M}F)`, () => openFind()),
@@ -236,7 +237,13 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
 
   const redrawPage = (pageNumber: number) => {
     const pv = viewer.getPageView(pageNumber - 1) as unknown as PageViewLike | undefined;
-    if (pv?.div && pv.viewport) drawPageAnnotations(pv, annotations, selectedAnno);
+    if (!pv?.div || !pv.viewport) return;
+    drawPageAnnotations(pv, annotations, selectedAnno);
+    // A text box being edited in place: its drawn copy stays hidden behind the editor.
+    if (editing && editing.pv === pv) {
+      if (!editing.el.isConnected) pv.div.appendChild(editing.el);
+      if (editing.id) pv.div.querySelector<HTMLElement>(`.omo-freetext[data-id="${CSS.escape(editing.id)}"]`)?.classList.add('omo-hidden');
+    }
   };
   const redrawAll = () => {
     for (let i = 1; i <= viewer.pagesCount; i++) {
@@ -246,6 +253,8 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   };
 
   eventBus.on('pagerendered', (e: { pageNumber: number }) => redrawPage(e.pageNumber));
+  // Zooming re-creates the page contents: finish an in-place edit first.
+  eventBus.on('scalechanging', () => finishEdit(true));
   eventBus.on('textlayerrendered', (e: { pageNumber: number }) => redrawPage(e.pageNumber));
   eventBus.on('pagechanging', (e: { pageNumber: number }) => {
     pageInput.value = String(e.pageNumber);
@@ -374,7 +383,53 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     }
   }, 400);
 
-  function commit(next: Annotation[], select?: string | null, rerenderPane = true) {
+  // Undo / redo: snapshots of the annotation list (annotation objects are never mutated).
+  // Consecutive edits with the same group key (typing in one annotation) form one step.
+  type Snapshot = { anns: Annotation[]; sel: string | null };
+  const undoStack: Snapshot[] = [];
+  const redoStack: Snapshot[] = [];
+  let lastGroup: { key: string; at: number } | null = null;
+
+  function record(group?: string) {
+    const now = Date.now();
+    if (group && lastGroup?.key === group && now - lastGroup.at < 2000) {
+      lastGroup.at = now;
+      return;
+    }
+    undoStack.push({ anns: annotations, sel: selectedAnno });
+    if (undoStack.length > 300) undoStack.shift();
+    redoStack.length = 0;
+    lastGroup = group ? { key: group, at: now } : null;
+  }
+
+  function restore(s: Snapshot) {
+    annotations = s.anns;
+    selectedAnno = s.sel && annotations.some((a) => a.id === s.sel) ? s.sel : null;
+    annotationsDirty = true;
+    lastGroup = null;
+    redrawAll();
+    if (rightTab === 'annotations') renderRight();
+    saveAnnotations();
+  }
+
+  function undo() {
+    finishEdit(true);
+    const s = undoStack.pop();
+    if (!s) return;
+    redoStack.push({ anns: annotations, sel: selectedAnno });
+    restore(s);
+  }
+
+  function redo() {
+    finishEdit(true);
+    const s = redoStack.pop();
+    if (!s) return;
+    undoStack.push({ anns: annotations, sel: selectedAnno });
+    restore(s);
+  }
+
+  function commit(next: Annotation[], select?: string | null, rerenderPane = true, group?: string) {
+    record(group);
     annotations = next;
     if (select !== undefined) selectedAnno = select;
     annotationsDirty = true;
@@ -402,7 +457,8 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
 
   const paneOpts = {
     onSelect: (a: Annotation) => selectAnnotation(a, true),
-    onChange: (a: Annotation, textOnly?: boolean) => commit(annotations.map((x) => (x.id === a.id ? a : x)), undefined, !textOnly),
+    onChange: (a: Annotation, textOnly?: boolean) =>
+      commit(annotations.map((x) => (x.id === a.id ? a : x)), undefined, !textOnly, textOnly ? `text:${a.id}` : undefined),
     onDelete: (a: Annotation) => commit(annotations.filter((x) => x.id !== a.id), null),
   };
 
@@ -501,7 +557,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   };
 
   container.addEventListener('mouseup', (e) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || (e.target as HTMLElement).closest('.omo-editing')) return;
     setTimeout(() => {
       const sel = window.getSelection();
       const hasSel = sel && !sel.isCollapsed && sel.toString().trim() && container.contains(sel.anchorNode);
@@ -520,6 +576,11 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
 
   container.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
+    if (target.closest('.omo-editing')) return;
+    if (dragJustEnded) {
+      dragJustEnded = false;
+      return;
+    }
     if (target.closest('.annotationLayer a, .annotationLayer section[data-annotation-id] a')) return;
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed && sel.toString().trim()) return;
@@ -544,27 +605,173 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
       return;
     }
     if (tool === 'FreeText') {
-      const a: Annotation = {
-        id: newAnnotationId(),
-        type: 'FreeText',
-        page: pv.id - 1,
-        bounds: [pt[0], pt[1] - 24, 180, 24],
-        color: [1, 1, 1, 1],
-        fontColor: toolColors.FreeText ?? [0.95, 0.15, 0, 1],
-        fontName: 'Helvetica',
-        fontSize: 11,
-        contents: 'Text',
-        userName,
-        modificationDate: new Date().toISOString(),
-      };
-      addAnnotations([a]);
       setTool('select');
-      selectAnnotation(a);
+      createTextBox(pv, pt);
       return;
     }
     const noteEl = target.closest('.omo-note, .omo-freetext') as HTMLElement | null;
     const hit = noteEl ? annotations.find((a) => a.id === noteEl.dataset.id) ?? null : hitTest(annotations, pv.id - 1, pt);
-    if (hit || selectedAnno) selectAnnotation(hit);
+    // Re-selecting the selected annotation would redraw it under the pointer (breaking double-clicks).
+    if ((hit || selectedAnno) && hit?.id !== selectedAnno) selectAnnotation(hit);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Text boxes: editing in place, moving, creating by double-click
+
+  let editing: { el: HTMLElement; pv: PageViewLike; id: string | null; anno: Annotation } | null = null;
+
+  /** New text box at a point (top-left corner), edited right away; kept only if text is typed. */
+  function createTextBox(pv: PageViewLike, pt: number[]) {
+    const fontSize = 11;
+    const height = Math.round(fontSize * 1.2 + 4);
+    const a: Annotation = {
+      id: newAnnotationId(),
+      type: 'FreeText',
+      page: pv.id - 1,
+      bounds: [pt[0], pt[1] - height, 180, height],
+      color: [1, 1, 1, 1],
+      fontColor: toolColors.FreeText ?? DEFAULT_COLORS.FreeText,
+      fontName: 'Helvetica',
+      fontSize,
+      contents: '',
+      userName,
+      modificationDate: new Date().toISOString(),
+    };
+    startEdit(pv, a, true);
+  }
+
+  /** Edit a text box's text directly on the page (Esc or clicking elsewhere ends editing). */
+  function startEdit(pv: PageViewLike, a: Annotation, isNew = false) {
+    finishEdit(true);
+    const box = pctBox(pv, a.bounds);
+    const el = h('div', { class: 'omo-freetext omo-editing', spellcheck: false });
+    el.contentEditable = 'plaintext-only';
+    Object.assign(el.style, { left: box.left, top: box.top, width: box.width, minHeight: box.height });
+    el.style.color = css(a.fontColor ?? [0, 0, 0, 1]);
+    el.style.fontSize = `calc(var(--total-scale-factor, var(--scale-factor, 1)) * ${a.fontSize ?? 12}px)`;
+    el.textContent = a.contents;
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' || (e.key === 'Enter' && (e.metaKey || e.ctrlKey))) {
+        e.preventDefault();
+        e.stopPropagation();
+        finishEdit(true);
+      }
+    });
+    el.addEventListener('blur', () => {
+      if (editing?.el === el) finishEdit(true);
+    });
+    pv.div.appendChild(el);
+    editing = { el, pv, id: isNew ? null : a.id, anno: a };
+    if (!isNew) pv.div.querySelector<HTMLElement>(`.omo-freetext[data-id="${CSS.escape(a.id)}"]`)?.classList.add('omo-hidden');
+    // After the annotation pane (which focuses its own text field) has rendered.
+    setTimeout(() => {
+      if (editing?.el !== el) return;
+      el.focus();
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      if (!isNew) r.collapse(false);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(r);
+    });
+  }
+
+  /** End in-place editing; with `save`, the text (and the box height, which grows with it) is kept. */
+  function finishEdit(save: boolean) {
+    if (!editing) return;
+    const { el, pv, id: editId, anno } = editing;
+    editing = null;
+    const text = (el.innerText ?? '').replace(/\n$/, '');
+    const r = el.getBoundingClientRect();
+    const measured = el.isConnected && r.height > 0;
+    const p1 = measured ? clientToPdf(pv, r.left, r.top) : null;
+    const p2 = measured ? clientToPdf(pv, r.left, r.bottom) : null;
+    el.remove();
+    const top = anno.bounds[1] + anno.bounds[3];
+    const height = p1 && p2 ? Math.max(anno.bounds[3], Math.abs(p1[1] - p2[1])) : anno.bounds[3];
+    const bounds: Annotation['bounds'] = [anno.bounds[0], top - height, anno.bounds[2], height];
+    const now = new Date().toISOString();
+    if (!save) return redrawPage(pv.id);
+    if (!editId) {
+      if (text.trim()) commit([...annotations, { ...anno, contents: text, bounds, modificationDate: now }], anno.id);
+      else redrawPage(pv.id);
+      return;
+    }
+    const cur = annotations.find((x) => x.id === editId);
+    if (!cur) return redrawPage(pv.id);
+    if (!text.trim()) commit(annotations.filter((x) => x.id !== editId), null);
+    else if (text !== cur.contents || height !== cur.bounds[3])
+      commit(annotations.map((x) => (x.id === editId ? { ...x, contents: text, bounds, modificationDate: now } : x)));
+    else redrawPage(pv.id);
+  }
+
+  // Moving text boxes and notes: drag them with the selection tool.
+  let dragJustEnded = false;
+  container.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || tool !== 'select') return;
+    const el = (e.target as HTMLElement).closest<HTMLElement>('.omo-freetext:not(.omo-editing), .omo-note');
+    const a = el ? annotations.find((x) => x.id === el.dataset.id) : undefined;
+    const pv = el ? pageViewAt(el) : undefined;
+    if (!el || !a || !pv) return;
+    e.preventDefault(); // no text selection while dragging
+    const start = clientToPdf(pv, e.clientX, e.clientY);
+    const [x0, y0] = [e.clientX, e.clientY];
+    const vp = pv.viewport;
+    const c1 = vp.convertToPdfPoint(0, 0);
+    const c2 = vp.convertToPdfPoint(vp.width, vp.height);
+    const [minX, maxX] = [Math.min(c1[0], c2[0]), Math.max(c1[0], c2[0])];
+    const [minY, maxY] = [Math.min(c1[1], c2[1]), Math.max(c1[1], c2[1])];
+    let moved = false;
+    let delta = [0, 0];
+    const onMove = (ev: MouseEvent) => {
+      if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 3) return;
+      moved = true;
+      el.classList.add('dragging');
+      const p = clientToPdf(pv, ev.clientX, ev.clientY);
+      const [bx, by, bw, bh] = a.bounds;
+      const nx = Math.min(Math.max(bx + p[0] - start[0], minX), maxX - bw);
+      const ny = Math.min(Math.max(by + p[1] - start[1], minY), maxY - bh);
+      delta = [nx - bx, ny - by];
+      const box = pctBox(pv, [nx, ny, bw, bh]);
+      el.style.left = box.left;
+      el.style.top = box.top;
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      if (!moved) return;
+      dragJustEnded = true;
+      setTimeout(() => (dragJustEnded = false), 0);
+      const [bx, by, bw, bh] = a.bounds;
+      const moved2: Annotation = { ...a, bounds: [bx + delta[0], by + delta[1], bw, bh], modificationDate: new Date().toISOString() };
+      commit(annotations.map((x) => (x.id === a.id ? moved2 : x)), a.id);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  });
+
+  // Double-click: on a text box, edit it; on an empty spot of a page, add a text box there.
+  // (Double-clicking a word still selects it.)
+  container.addEventListener('dblclick', (e) => {
+    if (tool !== 'select' && tool !== 'FreeText') return;
+    // The first click may have redrawn the element that was clicked: look at what is there now.
+    const target = (document.elementFromPoint(e.clientX, e.clientY) ?? e.target) as HTMLElement;
+    if (!container.contains(target)) return;
+    if (target.closest('.omo-editing, .omo-note, .annotationLayer a, .textLayer span')) return;
+    const pv = pageViewAt(target);
+    if (!pv) return;
+    const boxEl = target.closest<HTMLElement>('.omo-freetext');
+    e.preventDefault();
+    window.getSelection()?.removeAllRanges();
+    if (boxEl) {
+      const a = annotations.find((x) => x.id === boxEl.dataset.id);
+      if (a) {
+        selectAnnotation(a);
+        startEdit(pv, a);
+      }
+      return;
+    }
+    createTextBox(pv, clientToPdf(pv, e.clientX, e.clientY));
   });
 
   // ---------------------------------------------------------------------------
@@ -922,6 +1129,11 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     if (mod && e.key.toLowerCase() === 'f') {
       e.preventDefault();
       openFind();
+    } else if (mod && !typing && !api.setMenuState && (e.key.toLowerCase() === 'z' || e.key.toLowerCase() === 'y')) {
+      // Outside Electron (no app menu): undo/redo annotation changes.
+      e.preventDefault();
+      if (e.key.toLowerCase() === 'y' || e.shiftKey) redo();
+      else undo();
     } else if (e.key === 'Escape') {
       if (!popup.classList.contains('hidden')) hidePopup();
       else if (!findBar.classList.contains('hidden')) closeFind();
@@ -951,6 +1163,8 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     else if (a === 'zoom-in') zoomBy(1.15);
     else if (a === 'zoom-out') zoomBy(1 / 1.15);
     else if (a === 'zoom-reset') viewer.currentScaleValue = '1';
+    else if (a === 'undo') undo();
+    else if (a === 'redo') redo();
   };
   window.addEventListener('omoeba-menu', onMenu);
   cleanups.push(() => window.removeEventListener('omoeba-menu', onMenu));
@@ -1073,6 +1287,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   })();
 
   const dispose: ViewHandle = () => {
+    finishEdit(true);
     disposed = true;
     saveAnnotations.flush();
     notesCleanup?.();

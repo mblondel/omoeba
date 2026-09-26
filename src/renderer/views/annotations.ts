@@ -66,7 +66,7 @@ const TYPE_ICON: Record<string, string> = {
 export const isMarkup = (t: AnnotationType) => t === 'Highlight' || t === 'Underline' || t === 'StrikeOut';
 
 /** Percent-based box inside the page for a PDF rect (so it survives zoom transitions). */
-function pctBox(pv: PageViewLike, r: [number, number, number, number]) {
+export function pctBox(pv: PageViewLike, r: [number, number, number, number]) {
   const vp = pv.viewport;
   const [x1, y1, x2, y2] = vp.convertToViewportRectangle([r[0], r[1], r[0] + r[2], r[1] + r[3]]);
   const left = Math.min(x1, x2);
