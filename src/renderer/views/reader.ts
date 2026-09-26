@@ -425,9 +425,12 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   function selectAnnotation(a: Annotation | null, scroll = false) {
     selectedAnno = a?.id ?? null;
     redrawAll();
-    if (a && rightTab !== 'annotations') setRightTab('annotations');
+    // Notes are read and written in the side pane, so selecting one shows it there; other
+    // annotations (highlights, text boxes…) leave the pane as it is.
+    const showPane = a?.type === 'Note';
+    if (showPane && rightTab !== 'annotations') setRightTab('annotations');
     else if (rightTab === 'annotations') renderRight();
-    if (a && !rightOpen) toggleRight();
+    if (showPane && !rightOpen) toggleRight();
     if (a && scroll) {
       const [x, y, , hgt] = a.bounds;
       viewer.scrollPageIntoView({ pageNumber: a.page + 1, destArray: [null, { name: 'XYZ' }, Math.max(0, x - 40), y + hgt + 60, null] });

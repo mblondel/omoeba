@@ -407,8 +407,6 @@ function annotationItem(a: Annotation, selected: boolean, opts: AnnotationPaneOp
     text.addEventListener('input', () => edit({ text: text.value }, true));
     item.append(h('label', { class: 'small muted' }, 'Note'), text);
     setTimeout(() => (a.contents ? text : contents).focus());
-  } else if (a.type === 'FreeText') {
-    setTimeout(() => contents.focus());
   }
   const colors = h(
     'div',
