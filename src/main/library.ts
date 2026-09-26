@@ -183,7 +183,8 @@ export interface PdfInfoLite {
   year?: string;
 }
 
-export function buildSummary(f: ScannedFile, sc: Sidecar, pdfInfo?: PdfInfoLite): PaperSummary {
+/** `thumbnail`: URL of the cached first-page thumbnail, when there is an up-to-date one. */
+export function buildSummary(f: ScannedFile, sc: Sidecar, pdfInfo?: PdfInfoLite, thumbnail?: string): PaperSummary {
   const pdfPath = pdfPathOf(f.base);
   const fileName = path.basename(pdfPath);
   const title = (sc.title && String(sc.title)) || pdfInfo?.title;
@@ -207,9 +208,6 @@ export function buildSummary(f: ScannedFile, sc: Sidecar, pdfInfo?: PdfInfoLite)
     mtime: Math.max(f.pdfMtime, f.jsonMtime),
     pdfMtime: f.pdfMtime,
     addedAt: f.pdfBirth || f.jsonMtime,
-    thumbnail:
-      f.hasPdf && sc.thumbnail && typeof sc.thumbnail.png === 'string' && sc.thumbnail.pdfMtime === f.pdfMtime
-        ? sc.thumbnail.png
-        : undefined,
+    thumbnail,
   };
 }

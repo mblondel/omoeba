@@ -11,6 +11,7 @@ export function appDir(): string {
 
 export const configPath = () => path.join(appDir(), 'config.json');
 export const indexPath = () => path.join(appDir(), 'index.json');
+export const thumbnailsPath = () => path.join(appDir(), 'thumbnails.cache');
 /** Empty working directory in which AI CLIs are run. */
 export const aiWorkDir = () => path.join(appDir(), 'ai-workdir');
 

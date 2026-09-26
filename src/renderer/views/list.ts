@@ -25,7 +25,7 @@ const prefs = {
   },
 };
 
-// --- First-page thumbnails, generated in the background and cached in each .json sidecar.
+// --- First-page thumbnails, generated in the background and cached in ~/omoeba/thumbnails.cache.
 
 const thumbQueue: { id: string; pdfMtime: number }[] = [];
 const thumbFailed = new Set<string>();

@@ -43,7 +43,9 @@ the `.json` version; both files are then updated. If only one copy exists, the o
 A `.json` with `"omoeba": 1` and no PDF is shown as a paper whose PDF is missing; it can be downloaded again from
 its original location. Unknown keys in `.json` and `.skim` files are preserved.
 
-In `~/omoeba/`: `config.json` (settings), `index.json` (search index cache), `ai-workdir/` (empty directory in which AI CLIs run).
+In `~/omoeba/`: `config.json` (settings), `index.json` (search index cache), `thumbnails.cache` (first-page thumbnails
+of the paper list: 16-color PNGs of ~1 KB in an append-only file, regenerated when a PDF changes; safe to delete),
+`ai-workdir/` (empty directory in which AI CLIs run).
 
 ## AI
 

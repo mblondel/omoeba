@@ -17,6 +17,7 @@ import { SearchIndex, docFields, parseQuery } from '../src/main/searchindex';
 import { scanFolders, readSidecar, updateSidecar, buildSummary } from '../src/main/library';
 import { parseJsonObject, stripFences } from '../src/main/ai';
 import { toPdfUrl } from '../src/main/download';
+import { ThumbCache } from '../src/main/thumbcache';
 
 // A note dictionary shaped like the ones Skim writes.
 const skimHighlight = {
@@ -359,4 +360,42 @@ test('source finder: only an identical file is accepted', async () => {
   } finally {
     server.close();
   }
+});
+
+test('thumbnail cache: put, replace, delete, reopen, compaction, truncated tail', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'omoeba-thumbs-'));
+  const file = path.join(dir, 'thumbnails.cache');
+  const png = (n: number, len = 1000) => Buffer.alloc(len, n);
+  let c = new ThumbCache(file);
+  for (let i = 0; i < 300; i++) await c.put(`/lib/p${i}.pdf`, i, png(i % 256));
+  await c.put('/lib/p1.pdf', 42, png(7, 500));
+  await c.delete(['/lib/p2.pdf', '/lib/unknown.pdf']);
+  assert.equal(c.count, 299);
+  assert.deepEqual(await c.get('/lib/p1.pdf'), png(7, 500));
+  assert.equal(await c.get('/lib/p1.pdf', 1), null); // stale mtime
+  await c.close();
+
+  c = new ThumbCache(file);
+  await c.open();
+  assert.equal(c.count, 299);
+  assert.equal(c.mtimeOf('/lib/p1.pdf'), 42);
+  assert.equal(await c.get('/lib/p2.pdf'), null);
+  assert.deepEqual(await c.get('/lib/p299.pdf', 299), png(299 % 256));
+  // Replacing most entries triggers compaction; contents survive it.
+  for (let round = 0; round < 2; round++)
+    for (let i = 0; i < 300; i++) await c.put(`/lib/p${i}.pdf`, i + 1000, png((i + 1) % 256, 1200));
+  const size = (await readFile(file)).length;
+  assert.ok(size < 800_000, `compacted (${size} bytes, 1.04 MB without compaction)`);
+  assert.deepEqual(await c.get('/lib/p10.pdf', 1010), png(11, 1200));
+  await c.close();
+
+  // A partially written last record is ignored.
+  const data = await readFile(file);
+  await writeFile(file, Buffer.concat([data, Buffer.from([0, 0, 9, 0, 1, 0])]));
+  c = new ThumbCache(file);
+  await c.open();
+  assert.equal(c.count, 300);
+  assert.deepEqual(await c.get('/lib/p0.pdf', 1000), png(1, 1200));
+  assert.equal((await readFile(file)).length, data.length);
+  await c.close();
 });

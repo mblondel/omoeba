@@ -37,7 +37,15 @@ const MIME: Record<string, string> = {
 function registerAppProtocol() {
   const rendererDir = path.join(__dirname, 'renderer');
   protocol.handle('app', async (request: Request) => {
-    const { pathname } = new URL(request.url);
+    const url = new URL(request.url);
+    const { pathname } = url;
+    if (pathname === '/thumb') {
+      // First-page thumbnails from ~/omoeba/thumbnails.cache (see thumbcache.ts).
+      const png = await service?.thumbnailPng(url.searchParams.get('id') ?? '').catch(() => null);
+      return png
+        ? new Response(new Uint8Array(png), { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'max-age=31536000, immutable' } })
+        : new Response('Not found', { status: 404 });
+    }
     const file = path.normalize(path.join(rendererDir, decodeURIComponent(pathname)));
     if (!file.startsWith(rendererDir + path.sep)) return new Response('Forbidden', { status: 403 });
     try {
