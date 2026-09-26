@@ -162,12 +162,15 @@ export function drawPageAnnotations(pv: PageViewLike, anns: Annotation[], select
       top.appendChild(el);
     } else {
       // Note (anchored) and anything unknown: an icon at the note's position.
-      const el = h('div', { class: `omo-note${sel}`, dataset: { id: a.id }, title: [a.contents, a.text].filter(Boolean).join('\n\n') });
+      // A note with a title shows the title in its colored rectangle; otherwise an icon.
+      const title = a.type === 'Note' ? a.contents.trim().split('\n')[0] : '';
+      const el = h('div', { class: `omo-note${title ? ' titled' : ''}${sel}`, dataset: { id: a.id }, title: [a.contents, a.text].filter(Boolean).join('\n\n') });
       const box = pctBox(pv, a.bounds);
       el.style.left = box.left;
       el.style.top = box.top;
       el.style.background = css(a.color);
-      el.appendChild(icon('note', 12));
+      if (title) el.textContent = title;
+      else el.appendChild(icon('note', 12));
       top.appendChild(el);
     }
   }

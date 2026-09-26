@@ -1425,6 +1425,20 @@ li.collapsed > .toc-item .toc-toggle {
   pointer-events: auto;
   cursor: pointer;
 }
+.omo-note.titled {
+  width: auto;
+  max-width: calc(var(--scale-factor, 1) * 220px);
+  height: auto;
+  padding: 0 calc(var(--scale-factor, 1) * 4px);
+  font-family: 'Lucida Grande', Helvetica, Arial, sans-serif;
+  font-size: calc(var(--scale-factor, 1) * 10px);
+  line-height: calc(var(--scale-factor, 1) * 16px);
+  color: rgba(0, 0, 0, 0.8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
 .omo-freetext {
   position: absolute;
   pointer-events: auto;
