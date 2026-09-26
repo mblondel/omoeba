@@ -97,6 +97,8 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     toolButtons.set(t, b);
     return b;
   };
+  const backBtn = iconButton('back', `Back — return to where you were before following a link (${M}[)`, () => navHistory.back());
+  const forwardBtn = iconButton('forward', `Forward (${M}])`, () => navHistory.forward());
   const leftToggle = iconButton('left', `Show/hide page thumbnails and table of contents (${A}${M}1)`, () => toggleLeft());
   const rightToggle = iconButton('right', `Show/hide Ask AI, annotations and notes (${A}${M}2)`, () => toggleRight());
 
@@ -106,6 +108,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     h('div', { class: 'topbar-left' }, leftToggle),
     titleEl,
     h('div', { class: 'spacer' }),
+    h('div', { class: 'group nav-history' }, backBtn, forwardBtn),
     h('div', { class: 'group' }, pageInput, pageCount),
     h(
       'div',
@@ -216,6 +219,60 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   });
   linkService.setViewer(viewer);
 
+  // Back / forward through jumps in the document (links, table of contents, page numbers…).
+  // The link service calls pushCurrentPosition() before following a link; positions are
+  // pdf.js view locations (page, and top-left point in PDF coordinates).
+  type Place = { pageNumber: number; top: number; left: number };
+  let here: Place | null = null;
+  eventBus.on('updateviewarea', (e: { location?: { pageNumber: number; top: number; left: number } }) => {
+    if (e.location) here = { pageNumber: e.location.pageNumber, top: e.location.top, left: e.location.left };
+  });
+  const current = (): Place => here ?? { pageNumber: viewer.currentPageNumber, top: 0, left: 0 };
+  const samePlace = (a: Place, b: Place) => a.pageNumber === b.pageNumber && Math.abs(a.top - b.top) < 5 && Math.abs(a.left - b.left) < 5;
+  const backStack: Place[] = [];
+  const forwardStack: Place[] = [];
+  const updateHistoryButtons = () => {
+    backBtn.disabled = !backStack.length;
+    forwardBtn.disabled = !forwardStack.length;
+  };
+  const goTo = (p: Place) => {
+    viewer.scrollPageIntoView({ pageNumber: p.pageNumber, destArray: [null, { name: 'XYZ' }, p.left, p.top, null], allowNegativeOffset: true });
+  };
+  const navHistory = {
+    pushCurrentPosition() {
+      if (!pdfDoc) return;
+      const p = current();
+      if (!backStack.length || !samePlace(backStack[backStack.length - 1], p)) backStack.push(p);
+      if (backStack.length > 100) backStack.shift();
+      forwardStack.length = 0;
+      updateHistoryButtons();
+    },
+    push() {},
+    pushPage() {},
+    back() {
+      const p = backStack.pop();
+      if (!p) return;
+      forwardStack.push(current());
+      goTo(p);
+      updateHistoryButtons();
+    },
+    forward() {
+      const p = forwardStack.pop();
+      if (!p) return;
+      backStack.push(current());
+      goTo(p);
+      updateHistoryButtons();
+    },
+  };
+  linkService.setHistory(navHistory as unknown as Parameters<typeof linkService.setHistory>[0]);
+  updateHistoryButtons();
+  /** A jump made by the user (not by scrolling): the current place can be returned to. */
+  const jumpToPage = (n: number) => {
+    if (n === viewer.currentPageNumber) return;
+    navHistory.pushCurrentPosition();
+    viewer.currentPageNumber = n;
+  };
+
   const pageViews = (): PageViewLike[] => {
     const out: PageViewLike[] = [];
     for (let i = 0; i < viewer.pagesCount; i++) {
@@ -276,7 +333,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
 
   pageInput.addEventListener('change', () => {
     const n = parseInt(pageInput.value, 10);
-    if (n >= 1 && n <= viewer.pagesCount) viewer.currentPageNumber = n;
+    if (n >= 1 && n <= viewer.pagesCount) jumpToPage(n);
     else pageInput.value = String(viewer.currentPageNumber);
   });
   pageInput.addEventListener('focus', () => pageInput.select());
@@ -433,6 +490,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     if (showPane && !rightOpen) toggleRight();
     if (a && scroll) {
       const [x, y, , hgt] = a.bounds;
+      navHistory.pushCurrentPosition();
       viewer.scrollPageIntoView({ pageNumber: a.page + 1, destArray: [null, { name: 'XYZ' }, Math.max(0, x - 40), y + hgt + 60, null] });
     }
   }
@@ -742,6 +800,12 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     window.addEventListener('mouseup', onUp);
   });
 
+  // Mouse back / forward buttons.
+  container.addEventListener('mouseup', (e) => {
+    if (e.button === 3) navHistory.back();
+    else if (e.button === 4) navHistory.forward();
+  });
+
   // Double-click: on a text box, edit it; on an empty spot of a page, add a text box there.
   // (Double-clicking a word still selects it.)
   container.addEventListener('dblclick', (e) => {
@@ -817,7 +881,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
           class: `thumb ${i === viewer.currentPageNumber ? 'current' : ''}`,
           dataset: { page: String(i) },
           title: `Go to page ${i}`,
-          onclick: () => (viewer.currentPageNumber = i),
+          onclick: () => jumpToPage(i),
         },
         box,
         h('div', { class: 'thumb-label' }, String(i)),
@@ -983,7 +1047,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
       if (mode === 'preview') {
         if (ta.value.trim())
           mountMarkdown(preview, ta.value, {
-            onPageLink: (n) => (viewer.currentPageNumber = n),
+            onPageLink: (n) => jumpToPage(n),
             onExternal: (u) => api.openExternal(u),
           });
         else preview.innerHTML = '<p class="muted">No notes yet. Click Edit to start writing.</p>';
@@ -1029,7 +1093,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     for (const m of history) {
       const b = h('div', { class: `msg ${m.role}` });
       if (m.role === 'assistant')
-        mountMarkdown(b, m.content, { onPageLink: (n) => (viewer.currentPageNumber = n), onExternal: (u) => api.openExternal(u) });
+        mountMarkdown(b, m.content, { onPageLink: (n) => jumpToPage(n), onExternal: (u) => api.openExternal(u) });
       else b.textContent = m.content;
       msgs.append(b);
     }
@@ -1121,6 +1185,11 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     if (mod && e.key.toLowerCase() === 'f') {
       e.preventDefault();
       openFind();
+    } else if (mod && !e.shiftKey && !e.altKey && (e.key === '[' || e.key === ']') && !api.setMenuState) {
+      // Outside Electron (no app menu): back / forward.
+      e.preventDefault();
+      if (e.key === '[') navHistory.back();
+      else navHistory.forward();
     } else if (mod && !typing && !api.setMenuState && (e.key.toLowerCase() === 'z' || e.key.toLowerCase() === 'y')) {
       // Outside Electron (no app menu): undo/redo annotation changes.
       e.preventDefault();
@@ -1153,6 +1222,8 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     else if (a === 'zoom-in') zoomBy(1.15);
     else if (a === 'zoom-out') zoomBy(1 / 1.15);
     else if (a === 'zoom-reset') viewer.currentScaleValue = '1';
+    else if (a === 'back') navHistory.back();
+    else if (a === 'forward') navHistory.forward();
     else if (a === 'undo') undo();
     else if (a === 'redo') redo();
   };
@@ -1291,7 +1362,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     pdfDoc?.destroy();
   };
   dispose.goToPage = (n: number) => {
-    if (pdfDoc && n >= 1 && n <= pdfDoc.numPages) viewer.currentPageNumber = n;
+    if (pdfDoc && n >= 1 && n <= pdfDoc.numPages) jumpToPage(n);
     else initialPage = n;
   };
   // Pages are not rendered while the tab is hidden; refresh when it is shown again.

@@ -240,6 +240,11 @@ a:hover {
   background: var(--bg-sunken);
   color: var(--fg);
 }
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  background: none;
+}
 .icon-btn.active {
   background: var(--accent-soft);
   color: var(--accent);

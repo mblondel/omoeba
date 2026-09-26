@@ -48,6 +48,7 @@ export function clear(el: Element) {
 /** Inline SVG icons (stroke-based, 16px). */
 const ICONS: Record<string, string> = {
   back: '<path d="M10 3 5 8l5 5"/>',
+  forward: '<path d="m6 3 5 5-5 5"/>',
   left: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 3v10"/>',
   right: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M10 3v10"/>',
   search: '<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/>',

@@ -170,6 +170,8 @@ function buildMenu() {
       submenu: [
         { label: 'Library', accelerator: 'CmdOrCtrl+L', click: send('library') },
         { label: 'Find', accelerator: 'CmdOrCtrl+F', click: send('find') },
+        { label: 'Back', accelerator: 'CmdOrCtrl+[', click: send('back') },
+        { label: 'Forward', accelerator: 'CmdOrCtrl+]', click: send('forward') },
         { label: 'Toggle Left Pane', accelerator: 'CmdOrCtrl+Alt+1', click: send('toggle-left') },
         { label: 'Toggle Right Pane', accelerator: 'CmdOrCtrl+Alt+2', click: send('toggle-right') },
         { type: 'separator' },
