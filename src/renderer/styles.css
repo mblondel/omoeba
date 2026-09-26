@@ -362,11 +362,16 @@ textarea {
   overflow: auto;
 }
 .tag-bar {
+  position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 8px;
   padding: 7px 14px 6px;
   border-bottom: 1px solid var(--border);
+}
+/* Room for the "All N tags" link on the right, mirrored on the left so the tags stay centered. */
+.tag-bar.has-more {
+  padding-left: 96px;
+  padding-right: 96px;
 }
 .tag-bar[hidden] {
   display: none;
@@ -376,6 +381,7 @@ textarea {
   min-width: 0;
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   row-gap: 5px;
   /* Two rows unless expanded. */
   max-height: 46px;
@@ -383,6 +389,9 @@ textarea {
 }
 .tag-bar.open .tag-bar-chips {
   max-height: none;
+}
+.tag-bar .tag {
+  margin: 0 2px;
 }
 .tag-bar .tag.active {
   box-shadow: 0 0 0 1.5px var(--tag-fg);
@@ -393,7 +402,9 @@ textarea {
   font-size: 10.5px;
 }
 .tag-bar-more {
-  flex: none;
+  position: absolute;
+  top: 7px;
+  right: 14px;
   white-space: nowrap;
   font-size: 12px;
   line-height: 20px;

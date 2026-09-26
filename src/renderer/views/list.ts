@@ -194,6 +194,7 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
     // Shown only when the chips do not fit on the collapsed rows.
     const overflowing = tagChips.scrollHeight > tagChips.clientHeight + 2;
     tagMore.hidden = !tagBarOpen && !overflowing;
+    tagBar.classList.toggle('has-more', !tagMore.hidden);
     tagMore.textContent = tagBarOpen ? 'Less' : `All ${tagChips.childElementCount} tags`;
   };
 
