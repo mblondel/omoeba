@@ -3,7 +3,8 @@ import type { AIProvider, Config, PaperDetail, Sidecar, SummaryEntry } from '../
 import { api, newJobId } from '../api';
 import { clear, confirmDialog, errorMessage, h, icon, iconButton, toast, tagColor, setTagPalette } from '../dom';
 import { mountMarkdown } from '../markdown';
-import { navigate, refreshConfig, isActiveView } from '../app';
+import { navigate, refreshConfig, isActiveView, openSearchTab } from '../app';
+import { authorQuery } from '../authors';
 import { loadDocument } from '../pdfjs';
 import { renderFigure } from '../figures';
 
@@ -129,7 +130,12 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     'header',
     { class: 'topbar' },
     h('div', { class: 'spacer' }),
-    iconButton('folder', 'Show in Finder', () => api.revealInFolder(id).catch((e) => toast(errorMessage(e), 'error'))),
+    h(
+      'button',
+      { class: 'btn', onclick: () => api.revealInFolder(id).catch((e) => toast(errorMessage(e), 'error')) },
+      icon('folder'),
+      'Show in Finder',
+    ),
     readBtn,
   );
   root.append(h('div', { class: 'view paper-view' }, header, h('div', { class: 'paper-scroll' }, content)));
@@ -162,13 +168,17 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     tag?: 'h1' | 'div';
     multiline?: boolean;
     onSave: (v: string) => void;
+    /** Custom content for the non-editing display (default: the value as text). */
+    renderValue?: (el: HTMLElement) => void;
+    title?: string;
   }): HTMLElement {
     const display = h(opts.tag ?? 'div', {
       class: `editable ${opts.cls} ${opts.value ? '' : 'placeholder'}`,
-      title: 'Click to edit',
+      title: opts.title ?? 'Click to edit',
       tabIndex: 0,
     });
-    display.textContent = opts.value || opts.placeholder;
+    if (opts.value && opts.renderValue) opts.renderValue(display);
+    else display.textContent = opts.value || opts.placeholder;
     const startEdit = () => {
       const input = opts.multiline
         ? h('textarea', { class: `edit-input ${opts.cls}`, rows: 4 })
@@ -277,6 +287,27 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
         value: p.authors.join(', '),
         placeholder: 'Add authors',
         cls: 'paper-authors',
+        title: 'Click a name to see all papers by this author; click elsewhere to edit',
+        renderValue: (el) =>
+          p.authors.forEach((a, i) => {
+            if (i) el.append(', ');
+            el.append(
+              h(
+                'a',
+                {
+                  class: 'author-link',
+                  href: '#',
+                  title: `Show all papers by ${a}`,
+                  onclick: (e: MouseEvent) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    openSearchTab(authorQuery(a), a);
+                  },
+                },
+                a,
+              ),
+            );
+          }),
         onSave: (v) => patch({ authors: splitList(v) }),
       }),
       editable({

@@ -1,9 +1,10 @@
-/** Paper list (main page). */
+/** Paper list: the Library tab, and search tabs (e.g. all papers by an author). */
 import type { IndexStatus, PaperSummary } from '../../shared/types';
 import { api } from '../api';
 import { clear, debounce, errorMessage, formatAuthors, h, icon, iconButton, relTime, toast, tagColor, setTagPalette } from '../dom';
 import { navigate, state, addPaperFromUrl, isActiveView } from '../app';
 import { renderThumbnail } from '../thumbnail';
+import { sameAuthor } from '../authors';
 
 type SortKey = 'title' | 'authors' | 'folder' | 'tags' | 'added';
 
@@ -29,7 +30,8 @@ const prefs = {
 const thumbQueue: { id: string; pdfMtime: number }[] = [];
 const thumbFailed = new Set<string>();
 let thumbRunning = false;
-let onThumbnail: ((id: string, png: string) => void) | null = null;
+/** Mounted lists (the Library and search tabs) waiting for new thumbnails. */
+const thumbListeners = new Set<(id: string, png: string) => void>();
 
 function queueThumbnails(papers: PaperSummary[]) {
   for (const p of papers) {
@@ -46,7 +48,7 @@ async function runThumbnails() {
     try {
       const png = await renderThumbnail(await api.readPdf(id));
       await api.setThumbnail(id, png, pdfMtime);
-      onThumbnail?.(id, png);
+      for (const f of thumbListeners) f(id, png);
     } catch (e) {
       console.warn('Thumbnail failed for', id, e);
       thumbFailed.add(id);
@@ -70,11 +72,13 @@ function thumbCell(p: PaperSummary): HTMLElement {
 let savedScroll = 0;
 let savedSelected: string | null = null;
 
-export function mountList(root: HTMLElement): () => void {
+export function mountList(root: HTMLElement, opts: { query?: string } = {}): () => void {
+  /** A search tab: starts from its own query and leaves the Library's query/scroll alone. */
+  const isSearchTab = opts.query !== undefined;
   let papers: PaperSummary[] = [];
   let visible: PaperSummary[] = [];
   let sort = prefs.sort;
-  let selected: string | null = savedSelected;
+  let selected: string | null = isSearchTab ? null : savedSelected;
   let searchSeq = 0;
   let indexStatus: IndexStatus | null = null;
 
@@ -83,7 +87,7 @@ export function mountList(root: HTMLElement): () => void {
     class: 'search',
     placeholder: 'Search…  (tag:  author:  inst:  kw:  folder:)',
     title: 'Search titles, authors, institutions, tags, keywords and text. Prefix with tag:, author:, inst:, kw:, title: or folder: to search one field; -term excludes.',
-    value: state.listQuery,
+    value: isSearchTab ? opts.query : state.listQuery,
     spellcheck: false,
   });
   const count = h('span', { class: 'muted' });
@@ -232,23 +236,32 @@ export function mountList(root: HTMLElement): () => void {
 
   function select(id: string | null) {
     selected = id;
-    savedSelected = id;
+    if (!isSearchTab) savedSelected = id;
     for (const tr of tbody.querySelectorAll('tr')) tr.classList.toggle('selected', (tr as HTMLElement).dataset.id === id);
   }
 
   function open(p: PaperSummary) {
-    savedScroll = wrap.scrollTop;
+    if (!isSearchTab) savedScroll = wrap.scrollTop;
     navigate(`#/paper/${encodeURIComponent(p.id)}`);
   }
 
-  /** Client-side part of the query (folder:), and a fallback when the index is not ready. */
-  function splitQuery(q: string): { rest: string; folders: string[] } {
+  /**
+   * Client-side part of the query: folder:, and exact author names (author:"First Last", as
+   * set by clicking an author in a paper) — the index would match the name's words separately.
+   */
+  function splitQuery(q: string): { rest: string; folders: string[]; authors: string[] } {
     const folders: string[] = [];
-    const rest = q.replace(/(?:^|\s)folder:(?:"([^"]*)"|(\S+))/gi, (_, a, b) => {
-      folders.push((a ?? b).toLowerCase());
-      return ' ';
-    });
-    return { rest: rest.trim(), folders };
+    const authors: string[] = [];
+    const rest = q
+      .replace(/(?:^|\s)folder:(?:"([^"]*)"|(\S+))/gi, (_, a, b) => {
+        folders.push((a ?? b).toLowerCase());
+        return ' ';
+      })
+      .replace(/(?:^|\s)(?:author|authors|a):"([^"]*)"/gi, (_, a) => {
+        if (a.trim()) authors.push(a);
+        return ' ';
+      });
+    return { rest: rest.trim(), folders, authors };
   }
 
   function fallbackMatch(p: PaperSummary, q: string): boolean {
@@ -264,10 +277,11 @@ export function mountList(root: HTMLElement): () => void {
   async function applyFilter() {
     const seq = ++searchSeq;
     const q = search.value.trim();
-    state.listQuery = q;
-    const { rest, folders } = splitQuery(q);
+    if (!isSearchTab) state.listQuery = q;
+    const { rest, folders, authors } = splitQuery(q);
     let list = papers;
     if (folders.length) list = list.filter((p) => folders.every((f) => p.folder.toLowerCase().includes(f)));
+    if (authors.length) list = list.filter((p) => authors.every((a) => p.authors.some((b) => sameAuthor(a, b))));
     if (rest) {
       let ids: string[] | null = null;
       try {
@@ -358,12 +372,13 @@ export function mountList(root: HTMLElement): () => void {
     queueThumbnails([...visible, ...papers]);
   }
 
-  onThumbnail = (id, png) => {
+  const onThumbnail = (id: string, png: string) => {
     const p = papers.find((x) => x.id === id);
     if (p) p.thumbnail = png;
     const cell = tbody.querySelector(`tr[data-id="${CSS.escape(id)}"] td.c-thumb`);
     if (p && cell) cell.replaceWith(thumbCell(p));
   };
+  thumbListeners.add(onThumbnail);
 
   const reload = debounce(load, 300);
   const offEvent = api.onEvent((e) => {
@@ -385,13 +400,14 @@ export function mountList(root: HTMLElement): () => void {
     renderIndexStatus();
   });
   load().then(() => {
+    if (isSearchTab) return;
     wrap.scrollTop = savedScroll;
     if (!state.listQuery) search.focus();
   });
 
   return () => {
-    savedScroll = wrap.scrollTop;
-    onThumbnail = null;
+    if (!isSearchTab) savedScroll = wrap.scrollTop;
+    thumbListeners.delete(onThumbnail);
     offEvent();
     window.removeEventListener('keydown', onKey);
     window.removeEventListener('omoeba-menu', onMenu);
