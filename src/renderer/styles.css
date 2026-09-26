@@ -379,10 +379,12 @@ td.c-title {
 .c-tags {
   width: 18%;
 }
-td.c-title .fallback {
-  color: var(--fg-soft);
-  font-style: italic;
-  font-weight: 400;
+td.c-title .unknown-title {
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-left: 6px;
+  color: var(--muted);
+  cursor: help;
 }
 td.c-title .year {
   margin-left: 8px;

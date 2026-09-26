@@ -136,7 +136,14 @@ export function mountList(root: HTMLElement): () => void {
           'td',
           { class: 'c-title', title: p.title },
           !p.hasPdf ? h('span', { class: 'warn', title: 'PDF missing' }, icon('warn', 14)) : null,
-          h('span', { class: p.titleIsFallback ? 'fallback' : '' }, p.title),
+          h('span', null, p.title),
+          p.titleIsFallback
+            ? h(
+                'span',
+                { class: 'unknown-title', title: 'Title not extracted yet — showing the file name. Open the paper to extract it.' },
+                icon('help', 13),
+              )
+            : null,
           p.year ? h('span', { class: 'year' }, String(p.year)) : null,
         ),
         h('td', { class: 'c-authors', title: p.authors.join(', ') }, formatAuthors(p.authors)),

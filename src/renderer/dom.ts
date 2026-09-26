@@ -75,6 +75,7 @@ const ICONS: Record<string, string> = {
   toc: '<path d="M2.5 3.5h11M4.5 6.5h9M4.5 9.5h9M2.5 12.5h11"/>',
   send: '<path d="M2.5 8 13.5 2.5 11 13.5 8 9z"/><path d="M8 9 13.5 2.5"/>',
   warn: '<path d="M8 2.5 14 13H2z"/><path d="M8 6.5v3M8 11.2v.01"/>',
+  help: '<circle cx="8" cy="8" r="6"/><path d="M6.3 6.3a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.6-.7 1.1v.3M8 11.3v.01"/>',
   stop: '<rect x="4" y="4" width="8" height="8" rx="1"/>',
   fit: '<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/>',
   up: '<path d="m4 10 4-4 4 4"/>',
