@@ -1,0 +1,26 @@
+{
+  "name": "omoeba",
+  "version": "0.1.0",
+  "description": "Manage a local library of PDFs with annotations, notes, tags and AI summaries.",
+  "main": "dist/main.js",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "start": "node scripts/build.mjs && electron .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node scripts/build.mjs --tests && node --test dist-test/*.test.js"
+  },
+  "dependencies": {
+    "katex": "^0.16.45",
+    "marked": "^18.0.3",
+    "pdfjs-dist": "^5.7.284"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "electron": "^38.2.0",
+    "esbuild": "^0.27.7",
+    "typescript": "^6.0.3"
+  }
+}

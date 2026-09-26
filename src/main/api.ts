@@ -1,0 +1,419 @@
+/**
+ * Implementation of the API exposed to the renderer. It is independent from Electron:
+ * platform-specific operations are injected through `Platform`, so the same code can be
+ * driven by Electron IPC (main.ts) or by the development bridge used in tests.
+ */
+import { promises as fs, watch } from 'node:fs';
+import path from 'node:path';
+import type {
+  AIDetectResult,
+  AIProvider,
+  Annotation,
+  ChatMessage,
+  Config,
+  IndexStatus,
+  OmoebaAPI,
+  OmoebaEvent,
+  PaperDetail,
+  PaperSummary,
+  Sidecar,
+  SummaryEntry,
+} from '../shared/types';
+import * as cfg from './config';
+import { IndexManager } from './indexer';
+import {
+  ScannedFile,
+  buildSummary,
+  jsonPathOf,
+  readSidecar,
+  scanFolders,
+  skimPathOf,
+  updateSidecar,
+} from './library';
+import { readSkimFile, writeSkimFile } from './skim';
+import { extractPdf } from './pdftext';
+import {
+  askPrompt,
+  cancelAI as cancelAIJob,
+  metadataPrompt,
+  parseJsonObject,
+  resolveAI,
+  runAI,
+  stripFences,
+  summaryPrompt,
+} from './ai';
+import { arxivAbsUrl, downloadPdf, uniquePath, writeFileAtomic } from './download';
+
+export interface Platform {
+  pickFolders(): Promise<string[]>;
+  revealInFolder(p: string): Promise<void>;
+  openExternal(url: string): Promise<void>;
+  emit(e: OmoebaEvent): void;
+  /** Absolute path of the compiled index worker script. */
+  workerScript: string;
+}
+
+/** Sidecar keys the renderer may write directly. */
+const WRITABLE_KEYS = new Set([
+  'title',
+  'authors',
+  'institutions',
+  'year',
+  'venue',
+  'abstract',
+  'keywords',
+  'tags',
+  'notes',
+  'summaries',
+  'source',
+  'chats',
+  'metadataSource',
+]);
+
+export class OmoebaService implements OmoebaAPI {
+  private config!: Config;
+  private firstRun = false;
+  readonly index: IndexManager;
+  private sidecarCache = new Map<string, { mtime: number; sc: Sidecar }>();
+  private textCache = new Map<string, { mtime: number; pages: string[] }>();
+  private watchers: { close(): void }[] = [];
+
+  constructor(private platform: Platform) {
+    this.index = new IndexManager(
+      platform.workerScript,
+      cfg.indexPath(),
+      () => this.config.folders,
+      (status, changed) => {
+        platform.emit({ type: 'index-status', status });
+        if (changed) platform.emit({ type: 'library-changed' });
+      },
+    );
+  }
+
+  async init(): Promise<void> {
+    this.firstRun = !(await cfg.configExists());
+    this.config = await cfg.loadConfig();
+    await this.index.loadFromDisk();
+    this.index.startPeriodic(this.config.indexIntervalMinutes);
+    this.watchFolders();
+    if (this.config.folders.length) this.index.requestSync(500);
+  }
+
+  dispose() {
+    this.index.stop();
+    this.watchers.forEach((w) => w.close());
+  }
+
+  private watchFolders() {
+    this.watchers.forEach((w) => w.close());
+    this.watchers = [];
+    for (const folder of this.config.folders) {
+      try {
+        // Recursive watching is supported on macOS and Windows (and Linux on recent Node).
+        const w = watch(folder, { recursive: true }, (_ev, file) => {
+          if (!file || /(^|[/\\])\.|\.tmp-|\.download-/.test(file)) return;
+          if (!/\.(pdf|json|skim)$/i.test(file)) return;
+          this.platform.emit({ type: 'library-changed' });
+          this.index.requestSync();
+        });
+        w.on('error', () => undefined);
+        this.watchers.push(w);
+      } catch (e) {
+        console.warn('Cannot watch', folder, e);
+      }
+    }
+  }
+
+  // --- Settings -------------------------------------------------------------
+
+  async getConfig(): Promise<Config> {
+    const ais = await Promise.all(this.config.ais.map(async (a) => ({ ...a, resolvedPath: await resolveAI(a) })));
+    return { ...this.config, ais, userName: this.config.userName || cfg.systemUserName() || undefined };
+  }
+
+  async saveConfig(next: Config): Promise<Config> {
+    const foldersChanged = JSON.stringify(next.folders) !== JSON.stringify(this.config.folders);
+    this.config = await cfg.saveConfig(next);
+    this.firstRun = false;
+    this.index.startPeriodic(this.config.indexIntervalMinutes);
+    if (foldersChanged) {
+      this.watchFolders();
+      this.platform.emit({ type: 'library-changed' });
+      this.index.requestSync(200);
+    }
+    return this.getConfig();
+  }
+
+  async isFirstRun(): Promise<boolean> {
+    return this.firstRun || this.config.folders.length === 0;
+  }
+
+  pickFolders(): Promise<string[]> {
+    return this.platform.pickFolders();
+  }
+
+  async addFolders(folders: string[]): Promise<Config> {
+    const valid: string[] = [];
+    for (const f of folders) {
+      const abs = path.resolve(f);
+      const st = await fs.stat(abs).catch(() => null);
+      if (st?.isDirectory()) valid.push(abs);
+    }
+    return this.saveConfig({ ...this.config, folders: [...new Set([...this.config.folders, ...valid])] });
+  }
+
+  async removeFolder(folder: string): Promise<Config> {
+    return this.saveConfig({ ...this.config, folders: this.config.folders.filter((f) => f !== folder) });
+  }
+
+  async detectAIs(): Promise<AIDetectResult[]> {
+    return Promise.all(this.config.ais.map(async (a) => ({ id: a.id, resolvedPath: await resolveAI(a) })));
+  }
+
+  // --- Library --------------------------------------------------------------
+
+  private async sidecarFor(f: ScannedFile): Promise<Sidecar> {
+    if (!f.hasJson) return { omoeba: 1 };
+    const p = f.base + '.json';
+    const c = this.sidecarCache.get(p);
+    if (c && c.mtime === f.jsonMtime) return c.sc;
+    const sc = await readSidecar(p);
+    this.sidecarCache.set(p, { mtime: f.jsonMtime, sc });
+    return sc;
+  }
+
+  async listPapers(): Promise<PaperSummary[]> {
+    const files = await scanFolders(this.config.folders);
+    const out = await Promise.all(
+      files.map(async (f) => {
+        const sc = await this.sidecarFor(f);
+        const info = this.index.docInfo(f.base + '.pdf');
+        return buildSummary(f, sc, info);
+      }),
+    );
+    return out.sort((a, b) => a.title.localeCompare(b.title));
+  }
+
+  async search(query: string): Promise<string[] | null> {
+    return this.index.search(query);
+  }
+
+  async indexStatus(): Promise<IndexStatus> {
+    return this.index.status;
+  }
+
+  async reindex(): Promise<IndexStatus> {
+    await this.index.sync();
+    return this.index.status;
+  }
+
+  async allTags(): Promise<{ tag: string; count: number }[]> {
+    const counts = new Map<string, number>();
+    for (const p of await this.listPapers()) for (const t of p.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
+    return [...counts.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b) => a.tag.localeCompare(b.tag));
+  }
+
+  /** Validate that an id (PDF path) belongs to a tracked folder. */
+  private checkId(id: string): string {
+    const abs = path.resolve(id);
+    if (!/\.pdf$/i.test(abs)) throw new Error('Invalid paper id');
+    const inside = this.config.folders.some((root) => {
+      const rel = path.relative(root, abs);
+      return rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+    });
+    if (!inside) throw new Error('Paper is not in a tracked folder');
+    return abs;
+  }
+
+  private rootOf(abs: string): string {
+    return (
+      this.config.folders
+        .filter((r) => !path.relative(r, abs).startsWith('..'))
+        .sort((a, b) => b.length - a.length)[0] ?? path.dirname(abs)
+    );
+  }
+
+  async getPaper(id: string): Promise<PaperDetail> {
+    const pdfPath = this.checkId(id);
+    const base = pdfPath.slice(0, -4);
+    const [pdfSt, jsonSt, skimSt] = await Promise.all(
+      [pdfPath, base + '.json', base + '.skim'].map((p) => fs.stat(p).catch(() => null)),
+    );
+    const f: ScannedFile = {
+      base,
+      root: this.rootOf(pdfPath),
+      hasPdf: !!pdfSt,
+      hasJson: !!jsonSt,
+      hasSkim: !!skimSt,
+      pdfMtime: pdfSt?.mtimeMs ?? 0,
+      pdfBirth: pdfSt?.birthtimeMs ?? 0,
+      jsonMtime: jsonSt?.mtimeMs ?? 0,
+    };
+    if (!f.hasPdf && !f.hasJson) throw new Error('Paper not found: ' + pdfPath);
+    const sc = f.hasJson ? await readSidecar(base + '.json') : ({ omoeba: 1 } as Sidecar);
+    const info = this.index.docInfo(pdfPath);
+    const summary = buildSummary(f, sc, info);
+    // Suggest the arXiv page as download location when the PDF says where it came from.
+    const sidecar: Sidecar = { ...sc };
+    if (!sidecar.source && info?.arxivId) sidecar.source = { url: arxivAbsUrl(info.arxivId) };
+    return { ...summary, sidecar };
+  }
+
+  async updateSidecar(id: string, patch: Partial<Sidecar>): Promise<PaperDetail> {
+    const pdfPath = this.checkId(id);
+    const clean: Partial<Sidecar> = {};
+    for (const [k, v] of Object.entries(patch)) if (WRITABLE_KEYS.has(k)) clean[k] = v;
+    if (Array.isArray(clean.tags)) {
+      clean.tags = [...new Set(clean.tags.map((t) => String(t).trim()).filter(Boolean))];
+    }
+    await updateSidecar(jsonPathOf(pdfPath), clean);
+    this.index.requestSync();
+    this.platform.emit({ type: 'paper-updated', id: pdfPath });
+    return this.getPaper(pdfPath);
+  }
+
+  async readPdf(id: string): Promise<Uint8Array> {
+    const p = this.checkId(id);
+    return new Uint8Array(await fs.readFile(p));
+  }
+
+  async redownload(id: string): Promise<PaperDetail> {
+    const pdfPath = this.checkId(id);
+    const detail = await this.getPaper(pdfPath);
+    const url = detail.sidecar.source?.url;
+    if (!url) throw new Error('No original download location is known for this paper.');
+    const { data } = await downloadPdf(url);
+    await writeFileAtomic(pdfPath, data);
+    await updateSidecar(jsonPathOf(pdfPath), {
+      source: { url, downloadedAt: new Date().toISOString() },
+    });
+    this.platform.emit({ type: 'library-changed' });
+    this.index.requestSync();
+    return this.getPaper(pdfPath);
+  }
+
+  async addFromUrl(url: string, folder: string): Promise<PaperDetail> {
+    const dir = path.resolve(folder || this.config.folders[0] || '');
+    const inside = this.config.folders.some((r) => !path.relative(r, dir).startsWith('..'));
+    if (!inside) throw new Error('Choose a tracked folder to download into.');
+    const { data, fileName } = await downloadPdf(url);
+    const pdfPath = await uniquePath(dir, fileName);
+    await writeFileAtomic(pdfPath, data);
+    await updateSidecar(jsonPathOf(pdfPath), { source: { url, downloadedAt: new Date().toISOString() } });
+    this.platform.emit({ type: 'library-changed' });
+    this.index.requestSync(200);
+    return this.getPaper(pdfPath);
+  }
+
+  async revealInFolder(id: string): Promise<void> {
+    const p = this.checkId(id);
+    const exists = await fs.stat(p).catch(() => null);
+    await this.platform.revealInFolder(exists ? p : path.dirname(p));
+  }
+
+  async openExternal(url: string): Promise<void> {
+    if (!/^https?:\/\//i.test(url)) throw new Error('Only http(s) links can be opened.');
+    await this.platform.openExternal(url);
+  }
+
+  // --- Annotations ----------------------------------------------------------
+
+  async loadAnnotations(id: string): Promise<Annotation[]> {
+    return readSkimFile(skimPathOf(this.checkId(id)));
+  }
+
+  async saveAnnotations(id: string, annotations: Annotation[]): Promise<void> {
+    await writeSkimFile(skimPathOf(this.checkId(id)), annotations);
+  }
+
+  // --- AI -------------------------------------------------------------------
+
+  private aiFor(aiId?: string): AIProvider {
+    const id = aiId || this.config.defaultAI;
+    const ai = this.config.ais.find((a) => a.id === id);
+    if (!ai) throw new Error('No AI selected. Authorize an AI CLI in Settings.');
+    if (!ai.enabled) throw new Error(`${ai.name} is not authorized. Enable it in Settings.`);
+    return ai;
+  }
+
+  private async paperPages(pdfPath: string): Promise<string[]> {
+    const st = await fs.stat(pdfPath).catch(() => null);
+    if (!st) throw new Error('The PDF file is missing.');
+    const c = this.textCache.get(pdfPath);
+    if (c && c.mtime === st.mtimeMs) return c.pages;
+    const ex = await extractPdf(pdfPath, 200, 400_000);
+    this.textCache.set(pdfPath, { mtime: st.mtimeMs, pages: ex.pages });
+    if (this.textCache.size > 8) this.textCache.delete(this.textCache.keys().next().value!);
+    return ex.pages;
+  }
+
+  private progress(jobId?: string) {
+    return jobId ? (chunk: string) => this.platform.emit({ type: 'ai-progress', jobId, chunk }) : undefined;
+  }
+
+  async extractMetadata(id: string, aiId?: string, jobId?: string): Promise<PaperDetail> {
+    const pdfPath = this.checkId(id);
+    const ai = this.aiFor(aiId);
+    const pages = (await this.paperPages(pdfPath)).slice(0, 3);
+    const out = await runAI(ai, metadataPrompt(pages, path.basename(pdfPath)), {
+      jobId,
+      onChunk: this.progress(jobId),
+      timeoutMs: 5 * 60_000,
+    });
+    const meta = parseJsonObject(out);
+    const strList = (v: unknown) =>
+      Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : undefined;
+    const patch: Partial<Sidecar> = { metadataSource: `ai:${ai.id}` };
+    if (typeof meta.title === 'string' && meta.title.trim()) patch.title = meta.title.trim();
+    if (strList(meta.authors)) patch.authors = strList(meta.authors);
+    if (strList(meta.institutions)) patch.institutions = strList(meta.institutions);
+    if (meta.year) patch.year = Number(meta.year) || String(meta.year);
+    if (typeof meta.venue === 'string' && meta.venue.trim()) patch.venue = meta.venue.trim();
+    if (typeof meta.abstract === 'string' && meta.abstract.trim()) patch.abstract = meta.abstract.trim();
+    if (strList(meta.keywords)) patch.keywords = strList(meta.keywords);
+    // Persist the download location inferred from the PDF (e.g. arXiv id) if none is stored.
+    const cur = await this.getPaper(pdfPath);
+    const onDisk = await readSidecar(jsonPathOf(pdfPath));
+    if (!onDisk.source && cur.sidecar.source) patch.source = cur.sidecar.source;
+    return this.updateSidecar(pdfPath, patch);
+  }
+
+  async generateSummary(id: string, aiId: string, jobId?: string): Promise<PaperDetail> {
+    const pdfPath = this.checkId(id);
+    const ai = this.aiFor(aiId);
+    const detail = await this.getPaper(pdfPath);
+    const pages = await this.paperPages(pdfPath);
+    const out = await runAI(ai, summaryPrompt(pages, detail.title), { jobId, onChunk: this.progress(jobId) });
+    const entry: SummaryEntry = { markdown: stripFences(out), images: {}, createdAt: new Date().toISOString() };
+    return this.updateSidecar(pdfPath, { summaries: { [ai.id]: entry } });
+  }
+
+  async askAI(
+    id: string,
+    aiId: string,
+    question: string,
+    context: { page?: number; selection?: string },
+    jobId?: string,
+  ): Promise<PaperDetail> {
+    const pdfPath = this.checkId(id);
+    const ai = this.aiFor(aiId);
+    const detail = await this.getPaper(pdfPath);
+    const history: ChatMessage[] = detail.sidecar.chats?.[ai.id] ?? [];
+    const pages = await this.paperPages(pdfPath);
+    const out = await runAI(ai, askPrompt(pages, detail.title, history, question, context ?? {}), {
+      jobId,
+      onChunk: this.progress(jobId),
+    });
+    const now = new Date().toISOString();
+    const next: ChatMessage[] = [
+      ...history,
+      { role: 'user', content: question, at: now },
+      { role: 'assistant', content: stripFences(out), at: new Date().toISOString() },
+    ];
+    return this.updateSidecar(pdfPath, { chats: { [ai.id]: next } });
+  }
+
+  async cancelAI(jobId: string): Promise<void> {
+    cancelAIJob(jobId);
+  }
+}

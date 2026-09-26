@@ -1,0 +1,30 @@
+import type { OmoebaAPI } from './types';
+
+/** Names of API methods, used to wire IPC / the dev bridge generically. */
+export const API_METHODS: (keyof OmoebaAPI)[] = [
+  'getConfig',
+  'saveConfig',
+  'isFirstRun',
+  'pickFolders',
+  'addFolders',
+  'removeFolder',
+  'detectAIs',
+  'listPapers',
+  'search',
+  'indexStatus',
+  'reindex',
+  'allTags',
+  'getPaper',
+  'updateSidecar',
+  'readPdf',
+  'redownload',
+  'addFromUrl',
+  'revealInFolder',
+  'openExternal',
+  'loadAnnotations',
+  'saveAnnotations',
+  'extractMetadata',
+  'generateSummary',
+  'askAI',
+  'cancelAI',
+];

@@ -1,0 +1,571 @@
+/** Paper view: metadata, tags, summaries, download location. */
+import type { AIProvider, Config, PaperDetail, Sidecar, SummaryEntry } from '../../shared/types';
+import { api, newJobId } from '../api';
+import { clear, confirmDialog, errorMessage, h, icon, iconButton, toast } from '../dom';
+import { mountMarkdown } from '../markdown';
+import { navigate, refreshConfig } from '../app';
+import { loadDocument } from '../pdfjs';
+import { renderFigure } from '../figures';
+
+/** AI jobs in flight, per paper, so that re-opening a paper does not start them twice. */
+const inflight = new Map<string, Map<string, { label: string; jobId: string; promise: Promise<unknown> }>>();
+
+/** Fires 'change' whenever a job starts or ends (views re-render). */
+const jobEvents = new EventTarget();
+
+function jobsFor(id: string) {
+  let m = inflight.get(id);
+  if (!m) inflight.set(id, (m = new Map()));
+  return m;
+}
+
+/** Whether a summary still has figure references to resolve (or legacy full-page images). */
+export function needsFigures(entry: SummaryEntry): boolean {
+  return /\]\((?:page|figure):\d+\)/.test(entry.markdown) || Object.keys(entry.images).some((k) => /^page-\d+$/.test(k));
+}
+
+/**
+ * Replace ![caption](figure:N) (and ![caption](page:N)) references by the cropped figure,
+ * stored as base64 in the summary. Unresolvable references become links to the page.
+ * Older summaries that embedded whole pages (img:page-N) are converted too.
+ */
+export async function materializeFigures(paperId: string, entry: SummaryEntry): Promise<SummaryEntry | null> {
+  if (!needsFigures(entry)) return null;
+  const images = { ...entry.images };
+  let md = entry.markdown;
+  for (const k of Object.keys(images)) {
+    const m = /^page-(\d+)$/.exec(k);
+    if (!m) continue;
+    md = md.split(`](img:${k})`).join(`](page:${m[1]})`);
+    delete images[k];
+  }
+  const doc = await loadDocument(await api.readPdf(paperId));
+  try {
+    const refs = [...md.matchAll(/!\[([^\]]*)\]\((figure|page):(\d+)\)/g)];
+    for (const [whole, alt, kind, num] of refs) {
+      const n = Number(num);
+      const altFig = /\bfig(?:ure)?\.?\s*(\d+)/i.exec(alt);
+      const ref =
+        kind === 'figure'
+          ? { figure: n, alt }
+          : { page: n, alt, figure: altFig ? Number(altFig[1]) : undefined };
+      let replacement: string;
+      try {
+        const fig = await renderFigure(doc, ref);
+        if (fig) {
+          const id = `fig-${fig.figure}`;
+          images[id] = fig.dataUrl;
+          replacement = `![${alt}](img:${id})`;
+        } else {
+          replacement = kind === 'page' ? `*${alt}* ([p. ${n}](#page=${n}))` : `*${alt}*`;
+        }
+      } catch (e) {
+        console.warn('Figure extraction failed', e);
+        replacement = `*${alt}*`;
+      }
+      md = md.replace(whole, replacement);
+    }
+    // Drop images no longer referenced.
+    for (const k of Object.keys(images)) if (!md.includes(`img:${k}`)) delete images[k];
+    return { ...entry, markdown: md, images, updatedAt: new Date().toISOString() };
+  } finally {
+    doc.destroy();
+  }
+}
+
+export function mountPaper(root: HTMLElement, id: string): () => void {
+  let paper: PaperDetail | null = null;
+  let cfg: Config | null = null;
+  let activeSummary: string | null = null;
+  let editingSummary = false;
+  let disposed = false;
+  const materializing = new Set<string>();
+
+  const content = h('div', { class: 'paper-content' });
+  const readBtn = h('button', { class: 'btn primary', onclick: () => openReader() }, icon('book'), 'Read PDF');
+  const header = h(
+    'header',
+    { class: 'topbar' },
+    h('div', { class: 'topbar-left' }, iconButton('back', 'Back to library', () => navigate('#/'))),
+    h('div', { class: 'spacer' }),
+    iconButton('folder', 'Show in Finder', () => api.revealInFolder(id).catch((e) => toast(errorMessage(e), 'error'))),
+    readBtn,
+  );
+  root.append(h('div', { class: 'view paper-view' }, header, h('div', { class: 'paper-scroll' }, content)));
+
+  const openReader = () => {
+    if (paper?.hasPdf) navigate(`#/read/${encodeURIComponent(id)}`);
+  };
+
+  const enabledAIs = (): AIProvider[] => (cfg?.ais ?? []).filter((a) => a.enabled);
+  const aiName = (aiId: string) => cfg?.ais.find((a) => a.id === aiId)?.name ?? aiId;
+
+  async function patch(p: Partial<Sidecar>) {
+    try {
+      paper = await api.updateSidecar(id, p);
+      render();
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Editable fields
+
+  function editable(opts: {
+    value: string;
+    placeholder: string;
+    cls: string;
+    tag?: 'h1' | 'div';
+    multiline?: boolean;
+    onSave: (v: string) => void;
+  }): HTMLElement {
+    const display = h(opts.tag ?? 'div', {
+      class: `editable ${opts.cls} ${opts.value ? '' : 'placeholder'}`,
+      title: 'Click to edit',
+      tabIndex: 0,
+    });
+    display.textContent = opts.value || opts.placeholder;
+    const startEdit = () => {
+      const input = opts.multiline
+        ? h('textarea', { class: `edit-input ${opts.cls}`, rows: 4 })
+        : h('input', { type: 'text', class: `edit-input ${opts.cls}` });
+      input.value = opts.value;
+      let done = false;
+      const finish = (commit: boolean) => {
+        if (done) return;
+        done = true;
+        if (commit && input.value.trim() !== opts.value) opts.onSave(input.value.trim());
+        else input.replaceWith(display);
+      };
+      input.addEventListener('keydown', (e) => {
+        const ke = e as KeyboardEvent;
+        if (ke.key === 'Enter' && (!opts.multiline || ke.metaKey || ke.ctrlKey)) {
+          e.preventDefault();
+          finish(true);
+        } else if (ke.key === 'Escape') finish(false);
+      });
+      input.addEventListener('blur', () => finish(true));
+      display.replaceWith(input);
+      input.focus();
+    };
+    display.addEventListener('click', startEdit);
+    display.addEventListener('keydown', (e) => (e as KeyboardEvent).key === 'Enter' && startEdit());
+    return display;
+  }
+
+  const splitList = (v: string) =>
+    v
+      .split(/\s*[;,\n]\s*/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+  // ---------------------------------------------------------------------------
+
+  function render() {
+    if (!paper || disposed) return;
+    const p = paper;
+    const sc = p.sidecar;
+    readBtn.disabled = !p.hasPdf;
+    clear(content);
+
+    const jobs = jobsFor(id);
+    const jobBar = jobs.size
+      ? h(
+          'div',
+          { class: 'job-bar' },
+          [...jobs.entries()].map(([, j]) =>
+            h(
+              'div',
+              { class: 'job' },
+              h('span', { class: 'spinner' }),
+              j.label,
+              h('button', { class: 'link-btn', onclick: () => api.cancelAI(j.jobId) }, 'Stop'),
+            ),
+          ),
+        )
+      : null;
+
+    if (!p.hasPdf) {
+      content.append(
+        h(
+          'div',
+          { class: 'banner warn' },
+          icon('warn'),
+          h('span', null, 'The PDF file is missing. ', sc.source?.url ? 'It can be downloaded again from its original location.' : 'No original download location is known.'),
+          sc.source?.url
+            ? h(
+                'button',
+                {
+                  class: 'btn',
+                  onclick: async (e: Event) => {
+                    const b = e.currentTarget as HTMLButtonElement;
+                    b.disabled = true;
+                    b.textContent = 'Downloading…';
+                    try {
+                      paper = await api.redownload(id);
+                      toast('PDF downloaded');
+                      render();
+                      autoRun();
+                    } catch (err) {
+                      toast(errorMessage(err), 'error', 8000);
+                      b.disabled = false;
+                      b.textContent = 'Download again';
+                    }
+                  },
+                },
+                icon('download'),
+                'Download again',
+              )
+            : null,
+        ),
+      );
+    }
+
+    content.append(
+      editable({
+        tag: 'h1',
+        value: sc.title ?? (p.titleIsFallback ? '' : p.title),
+        placeholder: p.title,
+        cls: 'paper-title',
+        onSave: (v) => patch({ title: v || null, metadataSource: 'user' } as Partial<Sidecar>),
+      }),
+      editable({
+        value: p.authors.join(', '),
+        placeholder: 'Add authors',
+        cls: 'paper-authors',
+        onSave: (v) => patch({ authors: splitList(v) }),
+      }),
+      editable({
+        value: (sc.institutions ?? []).join('; '),
+        placeholder: 'Add institutions',
+        cls: 'paper-institutions',
+        onSave: (v) => patch({ institutions: splitList(v) }),
+      }),
+      h(
+        'div',
+        { class: 'paper-meta muted' },
+        [sc.venue, sc.year ?? p.year].filter(Boolean).join(' · ') || null,
+        h('span', { class: 'mono small', title: p.pdfPath }, p.folder + '/' + p.fileName),
+      ),
+      tagEditor(p),
+      sourceRow(p),
+      jobBar ?? '',
+      summarySection(p),
+    );
+
+    if (sc.abstract) {
+      content.append(
+        h('details', { class: 'abstract' }, h('summary', null, 'Abstract'), h('p', null, sc.abstract)),
+      );
+    }
+    const ais = enabledAIs();
+    content.append(
+      h(
+        'div',
+        { class: 'paper-actions' },
+        ais.length
+          ? h(
+              'button',
+              {
+                class: 'btn',
+                disabled: !p.hasPdf || jobs.has('meta'),
+                onclick: () => runMetadata(cfg?.defaultAI ?? ais[0].id),
+              },
+              icon('sparkle'),
+              'Re-extract information with AI',
+            )
+          : h('span', { class: 'muted small' }, 'Authorize an AI CLI in Settings to extract information and summaries.'),
+      ),
+    );
+  }
+
+  function tagEditor(p: PaperDetail): HTMLElement {
+    const tags = p.tags;
+    const input = h('input', { type: 'text', class: 'tag-input', placeholder: tags.length ? 'Add tag' : 'Add tags…', list: 'all-tags' });
+    const datalist = h('datalist', { id: 'all-tags' });
+    api.allTags().then((all) => {
+      for (const t of all) if (!tags.includes(t.tag)) datalist.append(h('option', { value: t.tag }));
+    });
+    const add = () => {
+      const v = input.value.trim().replace(/,$/, '');
+      input.value = '';
+      if (!v) return;
+      const next = [...new Set([...tags, ...v.split(',').map((s) => s.trim()).filter(Boolean)])];
+      patch({ tags: next }).then(() => (content.querySelector('.tag-input') as HTMLInputElement | null)?.focus());
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ',') {
+        e.preventDefault();
+        add();
+      } else if (e.key === 'Backspace' && !input.value && tags.length) {
+        patch({ tags: tags.slice(0, -1) });
+      }
+    });
+    input.addEventListener('change', () => {
+      if (input.value && [...datalist.options].some((o) => o.value === input.value)) add();
+    });
+    return h(
+      'div',
+      { class: 'tag-editor' },
+      icon('tag'),
+      tags.map((t) =>
+        h(
+          'span',
+          { class: 'tag' },
+          t,
+          h('button', { class: 'tag-x', title: `Remove ${t}`, onclick: () => patch({ tags: tags.filter((x) => x !== t) }) }, '×'),
+        ),
+      ),
+      input,
+      datalist,
+    );
+  }
+
+  function sourceRow(p: PaperDetail): HTMLElement {
+    const url = p.sidecar.source?.url;
+    return h(
+      'div',
+      { class: 'source-row' },
+      icon('link'),
+      h('span', { class: 'muted' }, 'Downloaded from '),
+      url
+        ? h('a', { href: url, onclick: (e: Event) => (e.preventDefault(), api.openExternal(url).catch((er) => toast(errorMessage(er), 'error'))) }, url)
+        : h('span', { class: 'muted' }, 'unknown'),
+      iconButton('edit', 'Edit download location', async () => {
+        const { promptDialog } = await import('../dom');
+        const v = await promptDialog({ title: 'Original download location', value: url ?? '', placeholder: 'https://…' });
+        if (v === null) return;
+        patch({ source: v ? { url: v, downloadedAt: p.sidecar.source?.downloadedAt } : (null as unknown as undefined) });
+      }),
+    );
+  }
+
+  function summarySection(p: PaperDetail): HTMLElement {
+    const summaries = p.sidecar.summaries ?? {};
+    const keys = Object.keys(summaries);
+    if (!activeSummary || !summaries[activeSummary]) activeSummary = keys.includes(cfg?.defaultAI ?? '') ? cfg!.defaultAI : keys[0] ?? null;
+    const jobs = jobsFor(id);
+    const ais = enabledAIs();
+
+    const tabs = h(
+      'div',
+      { class: 'tabs' },
+      keys.map((k) =>
+        h(
+          'button',
+          {
+            class: `tab ${k === activeSummary ? 'active' : ''}`,
+            onclick: () => {
+              activeSummary = k;
+              editingSummary = false;
+              render();
+            },
+          },
+          aiName(k),
+        ),
+      ),
+    );
+
+    const genMenu = h('select', {
+      class: 'gen-select',
+      title: 'Generate a summary',
+      disabled: !p.hasPdf || !ais.length,
+      onchange: () => {
+        const v = genMenu.value;
+        genMenu.value = '';
+        if (v) runSummary(v);
+      },
+    });
+    genMenu.append(h('option', { value: '' }, keys.length ? 'Summarize with…' : 'Generate summary with…'));
+    for (const a of ais)
+      genMenu.append(h('option', { value: a.id, disabled: jobs.has('sum:' + a.id) }, (summaries[a.id] ? 'Regenerate with ' : '') + a.name));
+
+    const body = h('div', { class: 'summary-body' });
+    const entry = activeSummary ? summaries[activeSummary] : null;
+    const actions = h('div', { class: 'summary-actions' });
+    if (entry && activeSummary) {
+      const aiId = activeSummary;
+      if (editingSummary) body.append(summaryEditor(aiId, entry));
+      else {
+        mountMarkdown(body, entry.markdown, {
+          images: entry.images,
+          onPageLink: (n) => navigate(`#/read/${encodeURIComponent(id)}?page=${n}`),
+          onExternal: (u) => api.openExternal(u),
+        });
+        if (needsFigures(entry) && p.hasPdf && !materializing.has(aiId)) {
+          materializing.add(aiId);
+          materializeFigures(id, entry)
+            .then((next) => (next ? patch({ summaries: { [aiId]: next } }) : undefined))
+            .catch((e) => console.warn('Figure rendering failed', e))
+            .finally(() => materializing.delete(aiId));
+        }
+        actions.append(
+          h('span', { class: 'muted small' }, `${aiName(aiId)} · ${new Date(entry.updatedAt ?? entry.createdAt).toLocaleDateString()}`),
+          iconButton('edit', 'Edit summary', () => {
+            editingSummary = true;
+            render();
+          }),
+          iconButton('trash', 'Delete summary', async () => {
+            if (await confirmDialog('Delete summary', `Delete the summary written by ${aiName(aiId)}?`, 'Delete', true)) {
+              patch({ summaries: { [aiId]: null as unknown as SummaryEntry } });
+            }
+          }),
+        );
+      }
+    } else if (![...jobs.keys()].some((k) => k.startsWith('sum:'))) {
+      body.append(
+        h('p', { class: 'muted' }, ais.length ? 'No summary yet.' : 'No summary yet. Authorize an AI CLI in Settings to generate one.'),
+      );
+    }
+
+    return h(
+      'section',
+      { class: 'summary' },
+      h('div', { class: 'summary-head' }, h('h2', null, 'Summary'), tabs, h('div', { class: 'spacer' }), genMenu),
+      body,
+      entry && !editingSummary ? actions : null,
+    );
+  }
+
+  function summaryEditor(aiId: string, entry: SummaryEntry): HTMLElement {
+    const images = { ...entry.images };
+    const ta = h('textarea', { class: 'md-editor', spellcheck: true });
+    ta.value = entry.markdown;
+    ta.addEventListener('paste', (e) => {
+      const file = [...(e.clipboardData?.files ?? [])].find((f) => f.type.startsWith('image/'));
+      if (!file) return;
+      e.preventDefault();
+      const reader = new FileReader();
+      reader.onload = () => {
+        const imgId = `img-${Date.now().toString(36)}`;
+        images[imgId] = String(reader.result);
+        ta.setRangeText(`![](img:${imgId})`, ta.selectionStart, ta.selectionEnd, 'end');
+      };
+      reader.readAsDataURL(file);
+    });
+    const saveEdit = () => {
+      editingSummary = false;
+      const used = Object.fromEntries(Object.entries(images).filter(([k]) => ta.value.includes(`img:${k}`)));
+      patch({ summaries: { [aiId]: { ...entry, markdown: ta.value, images: used, updatedAt: new Date().toISOString() } } });
+    };
+    setTimeout(() => ta.focus());
+    return h(
+      'div',
+      { class: 'summary-editor' },
+      ta,
+      h('p', { class: 'muted small' }, 'Markdown with LaTeX ($…$, $$…$$). Paste an image to embed it (stored as base64 in the .json file).'),
+      h(
+        'div',
+        { class: 'dialog-actions' },
+        h('button', { class: 'btn', onclick: () => ((editingSummary = false), render()) }, 'Cancel'),
+        h('button', { class: 'btn primary', onclick: saveEdit }, 'Save'),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // AI jobs
+
+  function track(key: string, label: string, run: (jobId: string) => Promise<PaperDetail>): Promise<void> {
+    const jobs = jobsFor(id);
+    if (jobs.has(key)) return jobs.get(key)!.promise as Promise<void>;
+    const jobId = newJobId();
+    const promise = run(jobId)
+      .then(async (d) => {
+        if (!disposed) {
+          paper = d;
+        }
+      })
+      .catch((e) => {
+        if (!/was stopped/.test(errorMessage(e))) toast(errorMessage(e), 'error', 10000);
+      })
+      .finally(() => {
+        jobs.delete(key);
+        jobEvents.dispatchEvent(new Event('change'));
+      });
+    jobs.set(key, { label, jobId, promise });
+    jobEvents.dispatchEvent(new Event('change'));
+    return promise;
+  }
+
+  function runMetadata(aiId: string) {
+    return track('meta', `Extracting title, authors and institutions with ${aiName(aiId)}…`, (jobId) =>
+      api.extractMetadata(id, aiId, jobId),
+    );
+  }
+
+  function runSummary(aiId: string) {
+    activeSummary = aiId;
+    editingSummary = false;
+    return track('sum:' + aiId, `Writing a summary with ${aiName(aiId)}…`, async (jobId) => {
+      const d = await api.generateSummary(id, aiId, jobId);
+      const entry = d.sidecar.summaries?.[aiId];
+      if (entry) {
+        try {
+          const next = await materializeFigures(id, entry);
+          if (next) return api.updateSidecar(id, { summaries: { [aiId]: next } });
+        } catch (e) {
+          console.warn('Figure rendering failed', e);
+        }
+      }
+      return d;
+    });
+  }
+
+  async function autoRun() {
+    if (!paper || !cfg?.autoExtract || !paper.hasPdf) return;
+    const def = cfg.defaultAI;
+    if (!def || !enabledAIs().some((a) => a.id === def)) return;
+    const sc = paper.sidecar;
+    const needsMeta = !sc.metadataSource?.startsWith('ai:') && (!sc.title || !sc.authors?.length || !sc.institutions?.length);
+    if (needsMeta) await runMetadata(def);
+    if (disposed || !paper) return;
+    if (!Object.keys(paper.sidecar.summaries ?? {}).length && !jobsFor(id).has('sum:' + def)) runSummary(def);
+  }
+
+  // ---------------------------------------------------------------------------
+
+  const offEvent = api.onEvent((e) => {
+    if (e.type === 'paper-updated' && e.id === id && !editingSummary) {
+      api.getPaper(id).then((d) => {
+        paper = d;
+        render();
+      });
+    }
+  });
+
+  Promise.all([api.getPaper(id), refreshConfig()])
+    .then(([d, c]) => {
+      paper = d;
+      cfg = c;
+      render();
+      autoRun();
+    })
+    .catch((e) => {
+      clear(content);
+      content.append(h('div', { class: 'banner warn' }, icon('warn'), errorMessage(e)));
+    });
+
+  const onJobs = () => {
+    // Do not clobber an edit in progress; the next render will pick up the job state.
+    if (editingSummary || document.activeElement?.classList.contains('edit-input')) return;
+    render();
+  };
+  jobEvents.addEventListener('change', onJobs);
+
+  const onKey = (e: KeyboardEvent) => {
+    const t = e.target as HTMLElement;
+    if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') return;
+    if (e.key === 'Escape' || (e.key === 'Backspace' && !e.metaKey)) navigate('#/');
+    else if (e.key === 'Enter' || e.key === 'o') openReader();
+  };
+  window.addEventListener('keydown', onKey);
+
+  return () => {
+    disposed = true;
+    offEvent();
+    jobEvents.removeEventListener('change', onJobs);
+    window.removeEventListener('keydown', onKey);
+  };
+}
