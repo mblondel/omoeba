@@ -25,6 +25,7 @@ api.onMenu = (cb: (action: string) => void) => {
   ipcRenderer.on('omoeba:menu', h);
   return () => ipcRenderer.removeListener('omoeba:menu', h);
 };
+api.setMenuState = (s: { canCloseTab: boolean }) => ipcRenderer.send('omoeba:menu-state', s);
 api.platform = process.platform;
 
 contextBridge.exposeInMainWorld('omoeba', api);

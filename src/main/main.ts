@@ -59,6 +59,8 @@ function registerAppProtocol() {
 }
 let service: OmoebaService;
 let theme: Theme = 'system';
+/** Whether the renderer's active tab can be closed (File → Close Tab is greyed out otherwise). */
+let canCloseTab = false;
 
 /** Light/dark appearance for native UI and the page (prefers-color-scheme follows it). */
 function applyTheme(t: Theme | undefined) {
@@ -142,7 +144,7 @@ function buildMenu() {
         { label: 'Add Paper from URL…', accelerator: 'CmdOrCtrl+N', click: send('add-url') },
         { type: 'separator' },
         ...(isMac ? [] : [{ label: 'Settings…', accelerator: 'Ctrl+,', click: send('settings') }]),
-        { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: send('close-tab') },
+        { id: 'close-tab', label: 'Close Tab', accelerator: 'CmdOrCtrl+W', enabled: canCloseTab, click: send('close-tab') },
         { label: 'Close Window', accelerator: 'CmdOrCtrl+Shift+W', role: 'close' },
         ...(isMac ? [] : [{ role: 'quit' }]),
       ] as Electron.MenuItemConstructorOptions[],
@@ -239,6 +241,13 @@ app.whenReady().then(async () => {
       return result;
     });
   }
+
+  // The renderer reports menu-relevant state (e.g. whether the active tab can be closed).
+  ipcMain.on('omoeba:menu-state', (_e: unknown, s: { canCloseTab?: boolean }) => {
+    canCloseTab = !!s?.canCloseTab;
+    const item = Menu.getApplicationMenu()?.getMenuItemById('close-tab');
+    if (item) item.enabled = canCloseTab;
+  });
 
   buildMenu();
   createWindow();

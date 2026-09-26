@@ -3,6 +3,8 @@ import type { OmoebaAPI, OmoebaEvent } from '../shared/types';
 export interface RendererAPI extends OmoebaAPI {
   onEvent(cb: (e: OmoebaEvent) => void): () => void;
   onMenu(cb: (action: string) => void): () => void;
+  /** Tell the app menu about UI state (absent outside Electron). */
+  setMenuState?(s: { canCloseTab: boolean }): void;
   platform: string;
 }
 

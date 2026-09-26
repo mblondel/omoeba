@@ -121,6 +121,7 @@ function activate(tab: Tab) {
   if (!tab.handle) mountTab(tab);
   else tab.handle.onShow?.();
   document.title = tab.kind === 'library' ? 'Omoeba' : `${tab.title} — Omoeba`;
+  api.setMenuState?.({ canCloseTab: tab.kind !== 'library' });
   saveSession();
 }
 
