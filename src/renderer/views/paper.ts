@@ -7,6 +7,7 @@ import { navigate, refreshConfig, isActiveView, openSearchTab } from '../app';
 import { authorQuery, institutionQuery, tagQuery } from '../authors';
 import { loadDocument } from '../pdfjs';
 import { renderFigure } from '../figures';
+import { createAskChat } from '../askchat';
 
 /** AI jobs in flight, per paper, so that re-opening a paper does not start them twice. */
 const inflight = new Map<string, Map<string, { label: string; jobId: string; promise: Promise<unknown> }>>();
@@ -356,6 +357,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
         }),
       ),
       summarySection(p),
+      askSection(),
     );
     if (!ais.length)
       content.append(
@@ -503,6 +505,27 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       }),
     );
     return details ? h('div', { class: 'source-block' }, row, details) : row;
+  }
+
+  // Ask AI about the paper (the same conversations as in the PDF reader).
+  const askChat = createAskChat({
+    id,
+    getPaper: () => paper,
+    setPaper: (p) => (paper = p),
+    getConfig: () => cfg,
+    onPageLink: (n) => navigate(`#/read/${encodeURIComponent(id)}?page=${n}`),
+    intro: 'Ask a question about this paper. Its full text is sent to the AI.',
+  });
+
+  function askSection(): HTMLElement | string {
+    if (!enabledAIs().length) return '';
+    askChat.refresh();
+    return h(
+      'section',
+      { class: `paper-ask collapsible ${isCollapsed('ask') ? 'collapsed' : ''}` },
+      h('div', { class: 'section-head' }, collapsibleHeading('ask', 'Ask AI')),
+      askChat.root,
+    );
   }
 
   function summarySection(p: PaperDetail): HTMLElement {

@@ -4,10 +4,11 @@ import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from 'pdfjs-di
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { Annotation, AnnotationSources, AnnotationType, Config, PaperDetail, RGBA } from '../../shared/types';
 import { mergeAnnotations } from '../../shared/annotations';
-import { api, newJobId } from '../api';
-import { clear, confirmDialog, debounce, errorMessage, h, icon, iconButton, toast, KEY, choiceDialog } from '../dom';
+import { api } from '../api';
+import { clear, debounce, errorMessage, h, icon, iconButton, toast, KEY, choiceDialog } from '../dom';
 import { mountMarkdown } from '../markdown';
-import { navigate, refreshConfig, isActiveView, type ViewHandle } from '../app';
+import { createAskChat } from '../askchat';
+import { refreshConfig, isActiveView, type ViewHandle } from '../app';
 import { loadDocument } from '../pdfjs';
 import {
   DEFAULT_COLORS,
@@ -1063,115 +1064,26 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
 
   // --- Ask AI
 
-  let askContext: string | null = null;
-  let askAI: string | null = null;
-  let askJob: { jobId: string; question: string } | null = null;
+  const askChat = createAskChat({
+    id,
+    getPaper: () => paper,
+    setPaper: (p) => (paper = p),
+    getConfig: () => cfg,
+    page: () => viewer.currentPageNumber,
+    onPageLink: (n) => jumpToPage(n),
+    intro: 'Ask a question about this paper. The paper text, your current page and selected passage are sent to the AI.',
+  });
 
   function askWithSelection(text: string) {
-    askContext = text.trim() || null;
+    askChat.setContext(text);
     if (!rightOpen) toggleRight();
     setRightTab('ask');
-    (rightBody.querySelector('textarea') as HTMLTextAreaElement | null)?.focus();
+    askChat.focus();
   }
 
   function renderAsk(el: HTMLElement) {
-    const ais = (cfg?.ais ?? []).filter((a) => a.enabled);
-    if (!ais.length) {
-      el.append(
-        h('div', { class: 'pane-empty' }, h('p', null, 'No AI is authorized.'), h('button', { class: 'btn', onclick: () => navigate('#/settings') }, 'Open Settings')),
-      );
-      return;
-    }
-    if (!askAI || !ais.some((a) => a.id === askAI)) askAI = cfg?.defaultAI && ais.some((a) => a.id === cfg!.defaultAI) ? cfg!.defaultAI : ais[0].id;
-    const aiSel = h('select', { class: 'ai-select', title: 'Which AI answers your questions' }, ais.map((a) => h('option', { value: a.id, selected: a.id === askAI }, a.name)));
-    aiSel.addEventListener('change', () => {
-      askAI = aiSel.value;
-      renderRight();
-    });
-    const history = paper?.sidecar.chats?.[askAI] ?? [];
-    const msgs = h('div', { class: 'chat' });
-    for (const m of history) {
-      const b = h('div', { class: `msg ${m.role}` });
-      if (m.role === 'assistant')
-        mountMarkdown(b, m.content, { onPageLink: (n) => jumpToPage(n), onExternal: (u) => api.openExternal(u) });
-      else b.textContent = m.content;
-      msgs.append(b);
-    }
-    if (askJob) {
-      msgs.append(
-        h('div', { class: 'msg user' }, askJob.question),
-        h(
-          'div',
-          { class: 'msg assistant pending' },
-          h('span', { class: 'spinner' }),
-          'Thinking…',
-          h('button', { class: 'link-btn', onclick: () => askJob && api.cancelAI(askJob.jobId) }, 'Stop'),
-        ),
-      );
-    }
-    if (!history.length && !askJob) {
-      msgs.append(
-        h(
-          'div',
-          { class: 'pane-empty' },
-          h('p', { class: 'muted' }, 'Ask a question about this paper. The paper text, your current page and selected passage are sent to the AI.'),
-          h(
-            'div',
-            { class: 'suggestions' },
-            ['What is the main contribution?', 'Explain the method step by step.', 'What are the limitations?'].map((q) =>
-              h('button', { class: 'chip', onclick: () => send(q) }, q),
-            ),
-          ),
-        ),
-      );
-    }
-    const input = h('textarea', { rows: 3, placeholder: `Ask ${ais.find((a) => a.id === askAI)?.name ?? 'AI'}…  (Enter to send)` });
-    const ctxChip = askContext
-      ? h(
-          'div',
-          { class: 'ctx-chip', title: askContext },
-          h('span', null, `“${askContext.slice(0, 140)}${askContext.length > 140 ? '…' : ''}”`),
-          h('button', { class: 'tag-x', onclick: () => ((askContext = null), renderRight()) }, '×'),
-        )
-      : null;
-    const send = async (q?: string) => {
-      const question = (q ?? input.value).trim();
-      if (!question || askJob || !askAI) return;
-      const jobId = newJobId();
-      askJob = { jobId, question };
-      const selection = askContext ?? undefined;
-      askContext = null;
-      renderRight();
-      try {
-        paper = await api.askAI(id, askAI, question, { page: viewer.currentPageNumber, selection }, jobId);
-      } catch (e) {
-        if (!/was stopped/.test(errorMessage(e))) toast(errorMessage(e), 'error', 10000);
-      } finally {
-        askJob = null;
-        if (!disposed && rightTab === 'ask') renderRight();
-      }
-    };
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-        e.preventDefault();
-        send();
-      }
-    });
-    const clearBtn = history.length
-      ? iconButton('trash', 'Clear this conversation', async () => {
-          if (!askAI) return;
-          if (await confirmDialog('Clear conversation', 'Delete this conversation?', 'Clear', true)) {
-            paper = await api.updateSidecar(id, { chats: { [askAI]: null as unknown as [] } });
-            renderRight();
-          }
-        })
-      : null;
-    el.append(
-      h('div', { class: 'pane-toolbar' }, aiSel, h('span', { class: 'spacer' }), clearBtn),
-      msgs,
-      h('div', { class: 'chat-input' }, ctxChip, input, h('button', { class: 'icon-btn send', title: 'Send (↩ — ⇧↩ for a new line)', onclick: () => send() }, icon('send'))),
-    );
-    msgs.scrollTop = msgs.scrollHeight;
+    el.append(askChat.root);
+    askChat.refresh();
   }
 
   // ---------------------------------------------------------------------------

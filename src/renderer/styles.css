@@ -1644,6 +1644,41 @@ li.collapsed > .toc-item .toc-toggle {
   flex-direction: column;
   overflow: hidden;
 }
+.ask-pane .ask-chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Ask AI on the paper page: a card that grows with the conversation. */
+.paper-ask {
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+  margin-top: 18px;
+}
+.paper-ask .section-head {
+  margin-bottom: 10px;
+}
+.paper-ask .section-head h2 {
+  font-size: 16px;
+  margin: 0;
+}
+.paper-ask .ask-chat {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.paper-ask .pane-toolbar {
+  position: static;
+}
+.paper-ask .chat {
+  overflow: visible;
+  padding: 12px;
+}
+.paper-ask .msg {
+  font-size: 13.5px;
+}
 .ai-select {
   height: 26px;
 }
