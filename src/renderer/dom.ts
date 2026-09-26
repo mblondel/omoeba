@@ -283,3 +283,48 @@ export const KEY = {
   alt: isMac ? '⌥' : 'Alt+',
   shift: isMac ? '⇧' : 'Shift+',
 };
+
+/** Number of pastel tag colors defined in styles.css (.tag[data-c="0"] … [data-c="9"]). */
+const TAG_COLORS = 10;
+
+function tagHash(tag: string): number {
+  let h = 2166136261;
+  for (const ch of tag.trim().toLowerCase()) {
+    h ^= ch.codePointAt(0)!;
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % TAG_COLORS;
+}
+
+const tagPalette = new Map<string, number>();
+
+/**
+ * Assign colors to the library's tags so that they differ as much as possible: each tag
+ * starts from its hashed color and moves to the next unused one (most-used tags first).
+ */
+export function setTagPalette(tags: { tag: string; count: number }[]) {
+  tagPalette.clear();
+  const uses = new Array<number>(TAG_COLORS).fill(0);
+  const sorted = [...tags].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+  for (const { tag } of sorted) {
+    const key = tag.trim().toLowerCase();
+    if (tagPalette.has(key)) continue;
+    const start = tagHash(key);
+    const min = Math.min(...uses);
+    let c = start;
+    for (let i = 0; i < TAG_COLORS; i++) {
+      const cand = (start + i) % TAG_COLORS;
+      if (uses[cand] === min) {
+        c = cand;
+        break;
+      }
+    }
+    uses[c]++;
+    tagPalette.set(key, c);
+  }
+}
+
+/** Pastel color index for a tag (same tag → same color everywhere in the app). */
+export function tagColor(tag: string): string {
+  return String(tagPalette.get(tag.trim().toLowerCase()) ?? tagHash(tag));
+}

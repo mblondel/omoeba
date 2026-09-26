@@ -1,7 +1,7 @@
 /** Paper list (main page). */
 import type { IndexStatus, PaperSummary } from '../../shared/types';
 import { api } from '../api';
-import { clear, debounce, errorMessage, formatAuthors, h, icon, iconButton, relTime, toast } from '../dom';
+import { clear, debounce, errorMessage, formatAuthors, h, icon, iconButton, relTime, toast, tagColor, setTagPalette } from '../dom';
 import { navigate, state, addPaperFromUrl, isActiveView } from '../app';
 
 type SortKey = 'title' | 'authors' | 'folder' | 'tags' | 'added';
@@ -155,6 +155,7 @@ export function mountList(root: HTMLElement): () => void {
               'span',
               {
                 class: 'tag',
+                dataset: { c: tagColor(t) },
                 onclick: (e: Event) => {
                   e.stopPropagation();
                   search.value = /\s/.test(t) ? `tag:"${t}"` : `tag:${t}`;
@@ -299,6 +300,9 @@ export function mountList(root: HTMLElement): () => void {
   async function load() {
     try {
       papers = await api.listPapers();
+      const counts = new Map<string, number>();
+      for (const p of papers) for (const t of p.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
+      setTagPalette([...counts].map(([tag, count]) => ({ tag, count })));
       indexedIds = new Set((await api.search('').catch(() => null)) ?? []);
     } catch (e) {
       toast(errorMessage(e), 'error');

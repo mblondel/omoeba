@@ -1693,3 +1693,47 @@ li.collapsed > .toc-item .toc-toggle {
     color: #1d1d1f;
   }
 }
+
+/* Pastel tag colors (index chosen from the tag name, see tagColor in dom.ts) */
+.tag[data-c="0"] {
+  --tag-h: 350;
+}
+.tag[data-c="1"] {
+  --tag-h: 22;
+}
+.tag[data-c="2"] {
+  --tag-h: 48;
+}
+.tag[data-c="3"] {
+  --tag-h: 92;
+}
+.tag[data-c="4"] {
+  --tag-h: 145;
+}
+.tag[data-c="5"] {
+  --tag-h: 178;
+}
+.tag[data-c="6"] {
+  --tag-h: 205;
+}
+.tag[data-c="7"] {
+  --tag-h: 232;
+}
+.tag[data-c="8"] {
+  --tag-h: 262;
+}
+.tag[data-c="9"] {
+  --tag-h: 298;
+}
+.tag[data-c] {
+  background: hsl(var(--tag-h) 85% 90%);
+  color: hsl(var(--tag-h) 50% 28%);
+  box-shadow: inset 0 0 0 1px hsl(var(--tag-h) 60% 82%);
+}
+@media (prefers-color-scheme: dark) {
+  .tag[data-c] {
+    background: hsl(var(--tag-h) 35% 26%);
+    color: hsl(var(--tag-h) 80% 86%);
+    box-shadow: inset 0 0 0 1px hsl(var(--tag-h) 30% 34%);
+  }
+}

@@ -1,7 +1,7 @@
 /** Paper view: metadata, tags, summaries, download location. */
 import type { AIProvider, Config, PaperDetail, Sidecar, SummaryEntry } from '../../shared/types';
 import { api, newJobId } from '../api';
-import { clear, confirmDialog, errorMessage, h, icon, iconButton, toast } from '../dom';
+import { clear, confirmDialog, errorMessage, h, icon, iconButton, toast, tagColor, setTagPalette } from '../dom';
 import { mountMarkdown } from '../markdown';
 import { navigate, refreshConfig, isActiveView } from '../app';
 import { loadDocument } from '../pdfjs';
@@ -145,6 +145,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
   async function patch(p: Partial<Sidecar>) {
     try {
       paper = await api.updateSidecar(id, p);
+      if (p.tags) setTagPalette(await api.allTags().catch(() => []));
       render();
     } catch (e) {
       toast(errorMessage(e), 'error');
@@ -360,7 +361,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       tags.map((t) =>
         h(
           'span',
-          { class: 'tag' },
+          { class: 'tag', dataset: { c: tagColor(t) } },
           t,
           h('button', { class: 'tag-x', title: `Remove ${t}`, onclick: () => patch({ tags: tags.filter((x) => x !== t) }) }, '×'),
         ),
@@ -604,10 +605,11 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     }
   });
 
-  Promise.all([api.getPaper(id), refreshConfig()])
-    .then(([d, c]) => {
+  Promise.all([api.getPaper(id), refreshConfig(), api.allTags().catch(() => [])])
+    .then(([d, c, tags]) => {
       paper = d;
       cfg = c;
+      setTagPalette(tags);
       render();
       autoRun();
     })
