@@ -210,6 +210,15 @@ app.whenReady().then(async () => {
       });
       return r.canceled ? [] : r.filePaths;
     },
+    async pickFolder(defaultPath: string, title: string) {
+      const r = await dialog.showOpenDialog(win!, {
+        title,
+        buttonLabel: 'Choose',
+        defaultPath,
+        properties: ['openDirectory', 'createDirectory'],
+      });
+      return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+    },
     async revealInFolder(p: string) {
       shell.showItemInFolder(p);
     },

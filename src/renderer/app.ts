@@ -263,29 +263,71 @@ function cycleTab(delta: number) {
 
 // ---------------------------------------------------------------------------
 
+const LAST_SAVE_FOLDER = 'omoeba.lastSaveFolder';
+
+/**
+ * "Save into" row of the Add-paper dialog: the chosen folder and a button opening the native
+ * folder dialog at the library folder (or at the last folder used).
+ */
+function saveFolderPicker(roots: string[]) {
+  let folder = roots[0];
+  try {
+    const last = localStorage.getItem(LAST_SAVE_FOLDER);
+    if (last && roots.some((r) => last === r || last.startsWith(r.endsWith('/') ? r : r + '/'))) folder = last;
+  } catch {
+    /* ignore */
+  }
+  const pathLine = h('div', { class: 'folder-path mono small', title: folder }, folder);
+  const choose = h(
+    'button',
+    {
+      type: 'button',
+      class: 'btn',
+      onclick: async () => {
+        try {
+          const picked = await api.pickSaveFolder(folder);
+          if (picked) {
+            folder = picked;
+            pathLine.textContent = picked;
+            pathLine.title = picked;
+          }
+        } catch (e) {
+          toast(errorMessage(e), 'error');
+        }
+      },
+    },
+    icon('folder'),
+    'Choose…',
+  );
+  const el = h('div', { class: 'field' }, 'Save into', h('div', { class: 'folder-row' }, pathLine, choose));
+  return { el, value: () => folder };
+}
+
 export async function addPaperFromUrl() {
   const cfg = state.config ?? (await refreshConfig());
   if (!cfg.folders.length) {
     toast('Add a library folder first (Settings).', 'error');
     return;
   }
-  const select = h(
-    'select',
-    null,
-    cfg.folders.map((f) => h('option', { value: f }, f)),
-  );
+  const folderPicker = saveFolderPicker(cfg.folders);
   const url = await promptDialog({
     title: 'Add paper from URL',
     label: 'PDF or arXiv/OpenReview URL',
     placeholder: 'https://arxiv.org/abs/…',
     okLabel: 'Download',
-    extra: h('label', { class: 'field' }, 'Save into', select),
+    extra: folderPicker.el,
   });
   if (!url) return;
+  const folder = folderPicker.value();
+  try {
+    localStorage.setItem(LAST_SAVE_FOLDER, folder);
+  } catch {
+    /* ignore */
+  }
   toast('Downloading…');
   try {
-    const p = await api.addFromUrl(url, select.value);
-    toast('Added ' + p.fileName);
+    const p = await api.addFromUrl(url, folder);
+    toast(`Added ${p.fileName} to ${p.folder}`);
     navigate(`#/paper/${encodeURIComponent(p.id)}`);
   } catch (e) {
     toast(errorMessage(e), 'error', 8000);

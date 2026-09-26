@@ -18,6 +18,7 @@ export const API_METHODS: (keyof OmoebaAPI)[] = [
   'updateSidecar',
   'readPdf',
   'redownload',
+  'pickSaveFolder',
   'addFromUrl',
   'revealInFolder',
   'openExternal',

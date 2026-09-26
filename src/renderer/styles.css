@@ -950,7 +950,22 @@ label.check {
 label.check input {
   margin-top: 3px;
 }
-label.field {
+div.field .folder-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+div.field .folder-path {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-soft);
+}
+label.field,
+div.field {
   display: flex;
   flex-direction: column;
   gap: 4px;

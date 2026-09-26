@@ -51,6 +51,8 @@ import { expandCandidates, findIdenticalSource, sourcePrompt, type SourceCheck }
 
 export interface Platform {
   pickFolders(): Promise<string[]>;
+  /** Native dialog to choose one folder, starting at `defaultPath`. */
+  pickFolder(defaultPath: string, title: string): Promise<string | null>;
   revealInFolder(p: string): Promise<void>;
   openExternal(url: string): Promise<void>;
   emit(e: OmoebaEvent): void;
@@ -364,10 +366,35 @@ export class OmoebaService implements OmoebaAPI {
     return this.getPaper(pdfPath);
   }
 
+  /** Whether a folder is one of the library folders or inside one. */
+  private inLibrary(dir: string): boolean {
+    return this.config.folders.some((r) => {
+      const rel = path.relative(r, dir);
+      return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel));
+    });
+  }
+
+  /**
+   * Let the user choose, in a native dialog, the folder a downloaded PDF is saved into. The
+   * dialog starts at `start` (a folder inside the library) or the first library folder; a folder
+   * outside the library is refused.
+   */
+  async pickSaveFolder(start?: string): Promise<string | null> {
+    const from = start && this.inLibrary(path.resolve(start)) && (await fs.stat(start).catch(() => null))?.isDirectory()
+      ? path.resolve(start)
+      : this.config.folders[0];
+    if (!from) throw new Error('Add a library folder first (Settings).');
+    const picked = await this.platform.pickFolder(from, 'Choose where to save the PDF');
+    if (!picked) return null;
+    const dir = path.resolve(picked);
+    if (!this.inLibrary(dir)) throw new Error('Choose a folder inside your library folders.');
+    return dir;
+  }
+
   async addFromUrl(url: string, folder: string): Promise<PaperDetail> {
     const dir = path.resolve(folder || this.config.folders[0] || '');
-    const inside = this.config.folders.some((r) => !path.relative(r, dir).startsWith('..'));
-    if (!inside) throw new Error('Choose a tracked folder to download into.');
+    if (!this.inLibrary(dir)) throw new Error('Choose a folder inside your library to download into.');
+    if (!(await fs.stat(dir).catch(() => null))?.isDirectory()) throw new Error('That folder does not exist anymore.');
     const { data, fileName } = await downloadPdf(url);
     const pdfPath = await uniquePath(dir, fileName);
     await writeFileAtomic(pdfPath, data);

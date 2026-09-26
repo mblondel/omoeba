@@ -248,6 +248,8 @@ export interface OmoebaAPI {
   updateSidecar(id: string, patch: Partial<Sidecar>): Promise<PaperDetail>;
   readPdf(id: string): Promise<Uint8Array>;
   redownload(id: string): Promise<PaperDetail>;
+  /** Native folder dialog (starting at `start` or the library folder) to choose where to save a PDF. */
+  pickSaveFolder(start?: string): Promise<string | null>;
   addFromUrl(url: string, folder: string): Promise<PaperDetail>;
   revealInFolder(id: string): Promise<void>;
   openExternal(url: string): Promise<void>;
