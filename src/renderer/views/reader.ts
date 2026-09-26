@@ -59,7 +59,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   let annotations: Annotation[] = [];
   let selectedAnno: string | null = null;
   let tool: Tool = 'select';
-  let toolColors: Record<string, RGBA> = { ...DEFAULT_COLORS, ...store.get('toolColors', {}) };
+  const toolColors: Record<string, RGBA> = { ...DEFAULT_COLORS, ...store.get('toolColors', {}) };
   let leftOpen = store.get('leftOpen', true);
   let rightOpen = store.get('rightOpen', true);
   let leftTab: LeftTab = store.get('leftTab', 'thumbs');
@@ -97,11 +97,6 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     toolButtons.set(t, b);
     return b;
   };
-  const colorBtn = h(
-    'button',
-    { class: 'icon-btn color-btn', title: 'Color for new highlights, underlines, notes and text boxes' },
-    h('span', { class: 'swatch' }),
-  );
   const leftToggle = iconButton('left', `Show/hide page thumbnails and table of contents (${A}${M}1)`, () => toggleLeft());
   const rightToggle = iconButton('right', `Show/hide Ask AI, annotations and notes (${A}${M}2)`, () => toggleRight());
 
@@ -122,13 +117,8 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     h(
       'div',
       { class: 'group tools' },
-      mkTool('select', 'cursor', 'Select text — selecting shows a menu to highlight or ask AI (Esc)'),
-      mkTool('Highlight', 'highlight', 'Highlighter — text you select is highlighted (H)'),
-      mkTool('Underline', 'underline', 'Underline — text you select is underlined (U)'),
-      mkTool('StrikeOut', 'strike', 'Strike out — text you select is struck out'),
       mkTool('Note', 'note', 'Note — click on the page to add a note (N)'),
       mkTool('FreeText', 'text', 'Text box — click on the page to add text (T). You can also double-click an empty spot of a page'),
-      colorBtn,
     ),
     iconButton('search', `Find in document (${M}F)`, () => openFind()),
     rightToggle,
@@ -358,19 +348,8 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     tool = t;
     for (const [k, b] of toolButtons) b.classList.toggle('active', k === t);
     view.dataset.tool = t;
-    const c = toolColors[t === 'select' ? 'Highlight' : t] ?? DEFAULT_COLORS.Highlight;
-    (colorBtn.firstChild as HTMLElement).style.background = css(c);
   }
   setTool('select');
-
-  colorBtn.addEventListener('click', (e) => {
-    const t = tool === 'select' ? 'Highlight' : tool;
-    showPalette(e.currentTarget as HTMLElement, (c) => {
-      toolColors = { ...toolColors, [t]: c };
-      store.set('toolColors', toolColors);
-      setTool(tool);
-    });
-  });
 
   let annotationsDirty = false;
   const saveAnnotations = debounce(async () => {
@@ -527,28 +506,6 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     const pw = popup.offsetWidth;
     popup.style.left = `${Math.max(8, Math.min(r.width - pw - 8, x - r.left - pw / 2))}px`;
     popup.style.top = `${Math.max(8, y - r.top + 10)}px`;
-  }
-
-  function showPalette(anchor: HTMLElement, onPick: (c: RGBA) => void) {
-    clear(popup);
-    popup.append(
-      ...PALETTE.map((p) =>
-        h('button', {
-          class: 'swatch-btn',
-          title: p.name,
-          style: `background:${css(p.color)}`,
-          onclick: () => {
-            onPick(p.color);
-            hidePopup();
-          },
-        }),
-      ),
-    );
-    popup.classList.remove('hidden');
-    const r = view.getBoundingClientRect();
-    const a = anchor.getBoundingClientRect();
-    popup.style.left = `${Math.min(r.width - popup.offsetWidth - 8, a.left - r.left)}px`;
-    popup.style.top = `${a.bottom - r.top + 6}px`;
   }
 
   const pageViewAt = (target: EventTarget | null): PageViewLike | undefined => {
@@ -1143,9 +1100,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
       e.preventDefault();
       commit(annotations.filter((a) => a.id !== selectedAnno), null);
     } else if (!typing && !mod) {
-      if (e.key === 'h') setTool(tool === 'Highlight' ? 'select' : 'Highlight');
-      else if (e.key === 'u') setTool(tool === 'Underline' ? 'select' : 'Underline');
-      else if (e.key === 'n') setTool(tool === 'Note' ? 'select' : 'Note');
+      if (e.key === 'n') setTool(tool === 'Note' ? 'select' : 'Note');
       else if (e.key === 't') setTool(tool === 'FreeText' ? 'select' : 'FreeText');
       else if (e.key === 'ArrowRight' && e.altKey) viewer.nextPage();
       else if (e.key === 'ArrowLeft' && e.altKey) viewer.previousPage();
