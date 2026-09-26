@@ -562,12 +562,12 @@ input.paper-title {
   font-size: 14.5px;
   color: var(--fg);
 }
-.author-link {
+.name-link {
   color: inherit;
   text-decoration: none;
   border-radius: 3px;
 }
-.author-link:hover {
+.name-link:hover {
   color: var(--accent);
   text-decoration: underline;
   text-underline-offset: 2px;

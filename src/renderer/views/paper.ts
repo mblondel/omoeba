@@ -4,7 +4,7 @@ import { api, newJobId } from '../api';
 import { clear, confirmDialog, errorMessage, h, icon, iconButton, toast, tagColor, setTagPalette } from '../dom';
 import { mountMarkdown } from '../markdown';
 import { navigate, refreshConfig, isActiveView, openSearchTab } from '../app';
-import { authorQuery } from '../authors';
+import { authorQuery, institutionQuery } from '../authors';
 import { loadDocument } from '../pdfjs';
 import { renderFigure } from '../figures';
 
@@ -207,6 +207,23 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     return display;
   }
 
+  /** A clickable name (author, institution) inside an editable field. */
+  const nameLink = (text: string, title: string, onOpen: () => void) =>
+    h(
+      'a',
+      {
+        class: 'name-link',
+        href: '#',
+        title,
+        onclick: (e: MouseEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onOpen();
+        },
+      },
+      text,
+    );
+
   const splitList = (v: string) =>
     v
       .split(/\s*[;,\n]\s*/)
@@ -291,22 +308,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
         renderValue: (el) =>
           p.authors.forEach((a, i) => {
             if (i) el.append(', ');
-            el.append(
-              h(
-                'a',
-                {
-                  class: 'author-link',
-                  href: '#',
-                  title: `Show all papers by ${a}`,
-                  onclick: (e: MouseEvent) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    openSearchTab(authorQuery(a), a);
-                  },
-                },
-                a,
-              ),
-            );
+            el.append(nameLink(a, `Show all papers by ${a}`, () => openSearchTab(authorQuery(a), a)));
           }),
         onSave: (v) => patch({ authors: splitList(v) }),
       }),
@@ -314,6 +316,12 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
         value: (sc.institutions ?? []).join('; '),
         placeholder: 'Add institutions',
         cls: 'paper-institutions',
+        title: 'Click an institution to see all its papers; click elsewhere to edit',
+        renderValue: (el) =>
+          (sc.institutions ?? []).forEach((inst, i) => {
+            if (i) el.append('; ');
+            el.append(nameLink(inst, `Show all papers from ${inst}`, () => openSearchTab(institutionQuery(inst), inst)));
+          }),
         onSave: (v) => patch({ institutions: splitList(v) }),
       }),
       h(

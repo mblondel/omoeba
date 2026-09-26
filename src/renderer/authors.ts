@@ -1,4 +1,7 @@
-/** Matching author names written in different ways ("Yann LeCun", "Y. LeCun", "LeCun, Yann"). */
+/**
+ * Matching author names written in different ways ("Yann LeCun", "Y. LeCun", "LeCun, Yann"),
+ * and institution names (ignoring case, accents and punctuation).
+ */
 
 function parts(name: string): { first: string; last: string } {
   let n = name
@@ -30,4 +33,25 @@ export function sameAuthor(a: string, b: string): boolean {
 /** Library search query selecting the papers of an author. */
 export function authorQuery(name: string): string {
   return `author:"${name.replace(/"/g, '')}"`;
+}
+
+function normInstitution(name: string): string {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/^the /, '')
+    .trim();
+}
+
+export function sameInstitution(a: string, b: string): boolean {
+  const x = normInstitution(a);
+  return !!x && x === normInstitution(b);
+}
+
+/** Library search query selecting the papers of an institution. */
+export function institutionQuery(name: string): string {
+  return `inst:"${name.replace(/"/g, '')}"`;
 }

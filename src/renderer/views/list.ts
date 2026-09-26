@@ -4,7 +4,7 @@ import { api } from '../api';
 import { clear, debounce, errorMessage, formatAuthors, h, icon, iconButton, relTime, toast, tagColor, setTagPalette } from '../dom';
 import { navigate, state, addPaperFromUrl, isActiveView } from '../app';
 import { renderThumbnail } from '../thumbnail';
-import { sameAuthor } from '../authors';
+import { sameAuthor, sameInstitution } from '../authors';
 
 type SortKey = 'title' | 'authors' | 'folder' | 'tags' | 'added';
 
@@ -246,12 +246,14 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
   }
 
   /**
-   * Client-side part of the query: folder:, and exact author names (author:"First Last", as
-   * set by clicking an author in a paper) — the index would match the name's words separately.
+   * Client-side part of the query: folder:, and exact author and institution names
+   * (author:"First Last", inst:"Name", as set by clicking them in a paper) — the index would
+   * match the name's words separately.
    */
-  function splitQuery(q: string): { rest: string; folders: string[]; authors: string[] } {
+  function splitQuery(q: string): { rest: string; folders: string[]; authors: string[]; insts: string[] } {
     const folders: string[] = [];
     const authors: string[] = [];
+    const insts: string[] = [];
     const rest = q
       .replace(/(?:^|\s)folder:(?:"([^"]*)"|(\S+))/gi, (_, a, b) => {
         folders.push((a ?? b).toLowerCase());
@@ -260,8 +262,12 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
       .replace(/(?:^|\s)(?:author|authors|a):"([^"]*)"/gi, (_, a) => {
         if (a.trim()) authors.push(a);
         return ' ';
+      })
+      .replace(/(?:^|\s)(?:inst|institution|i|affiliation):"([^"]*)"/gi, (_, a) => {
+        if (a.trim()) insts.push(a);
+        return ' ';
       });
-    return { rest: rest.trim(), folders, authors };
+    return { rest: rest.trim(), folders, authors, insts };
   }
 
   function fallbackMatch(p: PaperSummary, q: string): boolean {
@@ -278,10 +284,11 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
     const seq = ++searchSeq;
     const q = search.value.trim();
     if (!isSearchTab) state.listQuery = q;
-    const { rest, folders, authors } = splitQuery(q);
+    const { rest, folders, authors, insts } = splitQuery(q);
     let list = papers;
     if (folders.length) list = list.filter((p) => folders.every((f) => p.folder.toLowerCase().includes(f)));
     if (authors.length) list = list.filter((p) => authors.every((a) => p.authors.some((b) => sameAuthor(a, b))));
+    if (insts.length) list = list.filter((p) => insts.every((a) => p.institutions.some((b) => sameInstitution(a, b))));
     if (rest) {
       let ids: string[] | null = null;
       try {
