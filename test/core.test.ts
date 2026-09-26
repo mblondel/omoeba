@@ -307,7 +307,16 @@ test('annotations: saved to both .skim and .json, conflicts detected', async () 
 // Finding the original download location (SHA-256 verification)
 
 import http from 'node:http';
-import { arxivIdOf, displayUrl, expandCandidates, findIdenticalSource } from '../src/main/sourcefinder';
+import {
+  arxivIdOf,
+  arxivStampOf,
+  displayUrl,
+  expandCandidates,
+  findIdenticalSource,
+  openReviewCandidates,
+  sourcePrompt,
+  venueLineOf,
+} from '../src/main/sourcefinder';
 
 test('source finder: candidates', () => {
   assert.deepEqual(arxivIdOf('https://arxiv.org/abs/2507.19457v2'), { id: '2507.19457', version: 'v2' });
@@ -398,4 +407,53 @@ test('thumbnail cache: put, replace, delete, reopen, compaction, truncated tail'
   assert.deepEqual(await c.get('/lib/p0.pdf', 1000), png(1, 1200));
   assert.equal((await readFile(file)).length, data.length);
   await c.close();
+});
+
+test('source finder: clues from the first page', async () => {
+  assert.equal(arxivStampOf('Title\narXiv:2410.15474v2 [cs.LG] 28 Feb 2025\n'), '2410.15474v2');
+  assert.equal(arxivStampOf('see arXiv:2410.15474 for details'), undefined);
+  assert.equal(venueLineOf('Published as a conference paper at ICLR 2025\nOPTIMIZING'), 'Published as a conference paper at ICLR 2025');
+  assert.equal(
+    venueLineOf('38th Conference on Neural Information Processing Systems (NeurIPS 2024).'),
+    '38th Conference on Neural Information Processing Systems (NeurIPS 2024)',
+  );
+  assert.equal(
+    venueLineOf('Proceedings of the 27 th International Conference on Artificial Intelligence and Statistics (AISTATS) 2024, Valencia'),
+    'Proceedings of the 27 th International Conference on Artificial Intelligence and Statistics (AISTATS) 2024',
+  );
+  assert.equal(venueLineOf('Just a preprint'), undefined);
+
+  // Without an arXiv stamp, the AI's arXiv suggestions are tried last.
+  const c = expandCandidates(['https://arxiv.org/abs/2410.15474', 'https://openreview.net/forum?id=Xj66fkrlTk'], {}, { arxivLast: true });
+  assert.equal(c[0], 'https://openreview.net/pdf?id=Xj66fkrlTk');
+
+  const prompt = sourcePrompt({
+    title: 'T', authors: [], fileName: 'f.pdf', arxivStamp: false,
+    venueLine: 'Published as a conference paper at ICLR 2025', firstPage: '',
+  });
+  assert.match(prompt, /NO arXiv stamp/);
+  assert.match(prompt, /ICLR 2025/);
+  assert.doesNotMatch(sourcePrompt({ title: 'T', authors: [], fileName: 'f.pdf', arxivStamp: true, firstPage: '' }), /NO arXiv stamp/);
+
+  // OpenReview search: only exact title matches (API v2 wraps values, v1 does not).
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (u: string | URL) => {
+    const v2 = String(u).startsWith('https://api2.');
+    const notes = v2
+      ? [
+          { id: 'Xj66fkrlTk', forum: 'Xj66fkrlTk', content: { title: { value: 'Optimizing Backward Policies in GFlowNets via Trajectory Likelihood Maximization' }, pdf: { value: '/pdf/abc123.pdf' } } },
+          { id: 'other', forum: 'other', content: { title: { value: 'Something else' } } },
+        ]
+      : [{ id: 'old1', forum: 'old1', content: { title: 'optimizing backward policies in GFlowNets via trajectory likelihood maximization.' } }];
+    return new Response(JSON.stringify({ notes }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }) as typeof fetch;
+  try {
+    assert.deepEqual(await openReviewCandidates('Optimizing Backward Policies in GFlowNets via Trajectory Likelihood Maximization'), [
+      'https://openreview.net/pdf?id=Xj66fkrlTk',
+      'https://openreview.net/pdf/abc123.pdf',
+      'https://openreview.net/pdf?id=old1',
+    ]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

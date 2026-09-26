@@ -1,5 +1,5 @@
 /** Paper view: metadata, tags, summaries, download location. */
-import type { AIProvider, Config, PaperDetail, Sidecar, SummaryEntry } from '../../shared/types';
+import type { AIProvider, Config, PaperDetail, Sidecar, SourceCheckResult, SummaryEntry } from '../../shared/types';
 import { api, newJobId } from '../api';
 import { clear, confirmDialog, errorMessage, h, icon, iconButton, toast, tagColor, setTagPalette } from '../dom';
 import { mountMarkdown } from '../markdown';
@@ -410,9 +410,50 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     );
   }
 
+  /** What the last unsuccessful search for the download location tried, and why each failed. */
+  function sourceSearchDetails(p: PaperDetail): HTMLElement | null {
+    const ss = p.sidecar.sourceSearch;
+    if (!ss || ss.found || p.sidecar.source?.url || jobsFor(id).has('source')) return null;
+    const why = (a: SourceCheckResult) =>
+      a.status === 'different'
+        ? `different file${a.detail && a.detail !== 'checksum differs' ? ` (${a.detail})` : ''}`
+        : a.status === 'not-pdf'
+          ? 'not a PDF (a web page, a login or a bot check?)'
+          : a.status === 'error'
+            ? a.detail || 'failed'
+            : 'identical';
+    const attempts = ss.attempts ?? [];
+    const when = new Date(ss.at).toLocaleDateString();
+    return h(
+      'details',
+      { class: 'source-search' },
+      h(
+        'summary',
+        null,
+        ss.checked
+          ? `Not found on ${when}: no identical copy among ${ss.checked} address${ss.checked > 1 ? 'es' : ''} tried`
+          : `Not found on ${when}: no address to try`,
+      ),
+      attempts.length
+        ? h(
+            'ul',
+            null,
+            attempts.map((a) => h('li', null, h('span', { class: 'mono' }, a.url), h('span', { class: 'muted' }, ' — ' + why(a)))),
+          )
+        : ss.checked
+          ? h('p', { class: 'muted' }, 'The addresses tried were not recorded (search made with an older version).')
+          : null,
+      ss.aiCandidates
+        ? h('p', { class: 'muted' }, ss.aiCandidates.length ? `The AI suggested: ${ss.aiCandidates.join(', ')}` : 'The AI suggested no address.')
+        : null,
+      ss.aiError ? h('p', { class: 'muted' }, `The AI could not be asked: ${ss.aiError}`) : null,
+    );
+  }
+
   function sourceRow(p: PaperDetail): HTMLElement {
     const url = p.sidecar.source?.url;
-    return h(
+    const details = sourceSearchDetails(p);
+    const row = h(
       'div',
       { class: 'source-row' },
       icon('link'),
@@ -440,7 +481,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
               onclick: () => runFindSource(),
             },
             icon('sparkle', 13),
-            'Find with AI',
+            p.sidecar.sourceSearch ? 'Search again' : 'Find with AI',
           )
         : null,
       iconButton('edit', 'Edit download location', async () => {
@@ -450,6 +491,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
         patch({ source: v ? { url: v, downloadedAt: p.sidecar.source?.downloadedAt } : (null as unknown as undefined) });
       }),
     );
+    return details ? h('div', { class: 'source-block' }, row, details) : row;
   }
 
   function summarySection(p: PaperDetail): HTMLElement {

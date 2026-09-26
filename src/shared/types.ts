@@ -77,7 +77,18 @@ export interface Sidecar {
    */
   thumbnail?: { png: string; pdfMtime: number };
   /** Last automatic search for the download location (so it is not repeated on every open). */
-  sourceSearch?: { at: string; found: boolean; checked: number };
+  sourceSearch?: {
+    at: string;
+    found: boolean;
+    /** Number of addresses tried. */
+    checked: number;
+    /** Each address tried, and what it gave. */
+    attempts?: SourceCheckResult[];
+    /** Addresses the AI suggested (before expansion into PDF links / arXiv versions). */
+    aiCandidates?: string[];
+    /** Why the AI could not be asked, if so. */
+    aiError?: string;
+  };
   /** Who produced title/authors/institutions ("pdf", "user", "ai:<id>"). */
   metadataSource?: string;
   /** Ask-AI chat history per AI. */
@@ -183,10 +194,16 @@ export interface AnnotationSources {
   diff?: { onlySkim: number; onlyJson: number; changed: number };
 }
 
+export interface SourceCheckResult {
+  url: string;
+  status: 'match' | 'different' | 'not-pdf' | 'error';
+  detail?: string;
+}
+
 export interface SourceSearchSummary {
   found: boolean;
   url?: string;
-  checked: { url: string; status: 'match' | 'different' | 'not-pdf' | 'error'; detail?: string }[];
+  checked: SourceCheckResult[];
   /** Set when the AI could not be asked (the PDF's own hints were still tried). */
   aiError?: string;
 }

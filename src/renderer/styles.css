@@ -1855,6 +1855,27 @@ li.collapsed > .toc-item .toc-toggle {
   white-space: nowrap;
   cursor: help;
 }
+.source-search {
+  margin: 4px 0 0 22px;
+  font-size: 12.5px;
+  color: var(--fg-soft);
+}
+.source-search summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.source-search ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+.source-search li {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+.source-search p {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
 .source-row .btn.small {
   margin-left: 4px;
 }

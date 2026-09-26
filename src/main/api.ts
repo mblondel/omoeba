@@ -47,7 +47,15 @@ import {
   summaryPrompt,
 } from './ai';
 import { downloadPdf, uniquePath, writeFileAtomic } from './download';
-import { expandCandidates, findIdenticalSource, sourcePrompt, type SourceCheck } from './sourcefinder';
+import {
+  arxivStampOf,
+  expandCandidates,
+  findIdenticalSource,
+  openReviewCandidates,
+  sourcePrompt,
+  venueLineOf,
+  type SourceCheck,
+} from './sourcefinder';
 
 export interface Platform {
   pickFolders(): Promise<string[]>;
@@ -542,7 +550,11 @@ export class OmoebaService implements OmoebaAPI {
     if (!(await fs.stat(pdfPath).catch(() => null))) throw new Error('The PDF file is missing.');
     const detail = await this.getPaper(pdfPath);
     const ex = await extractPdf(pdfPath, 1);
-    const hints = { arxivId: ex.info.arxivId, doi: ex.info.doi };
+    const firstPage = ex.pages[0] ?? '';
+    // arXiv's margin stamp names the exact version; without it the file is not from arXiv.
+    const stamp = arxivStampOf(firstPage);
+    const venueLine = venueLineOf(firstPage);
+    const hints = { arxivId: stamp ?? ex.info.arxivId, doi: ex.info.doi };
     const progress = this.progress(jobId);
     const stopped = () => !!jobId && this.cancelled.has(jobId);
     const opts = {
@@ -564,7 +576,21 @@ export class OmoebaService implements OmoebaAPI {
       if (r.found) found = { url: r.url!, sha256: r.sha256 };
     }
 
-    // 2. Ask the AI for candidates.
+    // 2. Not from arXiv: look for the paper on OpenReview by its exact title.
+    if (!found && !stamp && !stopped()) {
+      progress?.('Searching OpenReview by title…\n');
+      const tried = new Set(checked.map((c) => c.url));
+      const fromOpenReview = (await openReviewCandidates(detail.title)).filter((u) => !tried.has(u));
+      if (fromOpenReview.length) {
+        const r = await findIdenticalSource(pdfPath, fromOpenReview, { ...opts, maxChecks: opts.maxChecks - checked.length });
+        checked.push(...r.checked);
+        sha = r.sha256;
+        if (r.found) found = { url: r.url!, sha256: r.sha256 };
+      }
+    }
+
+    // 3. Ask the AI for candidates.
+    let aiCandidates: string[] | undefined;
     let aiError: string | undefined;
     if (!found && !stopped()) {
       let ai: AIProvider | null = null;
@@ -584,14 +610,17 @@ export class OmoebaService implements OmoebaAPI {
               fileName: path.basename(pdfPath),
               arxivId: hints.arxivId,
               doi: hints.doi,
-              firstPage: ex.pages[0] ?? '',
+              arxivStamp: !!stamp,
+              venueLine,
+              firstPage,
             }),
             { jobId, timeoutMs: 5 * 60_000 },
           );
           const urls = parseJsonObject(out).candidates;
           const list = Array.isArray(urls) ? urls.map(String) : [];
+          aiCandidates = list.slice(0, 20);
           const tried = new Set(checked.map((c) => c.url));
-          const more = expandCandidates(list, hints).filter((u) => !tried.has(u));
+          const more = expandCandidates(list, hints, { arxivLast: !stamp }).filter((u) => !tried.has(u));
           if (more.length && !stopped()) {
             const r = await findIdenticalSource(pdfPath, more, { ...opts, maxChecks: opts.maxChecks - checked.length });
             checked.push(...r.checked);
@@ -606,7 +635,17 @@ export class OmoebaService implements OmoebaAPI {
     if (jobId) this.cancelled.delete(jobId);
 
     const now = new Date().toISOString();
-    const patch: Partial<Sidecar> = { sourceSearch: { at: now, found: !!found, checked: checked.length } };
+    // What was tried is kept, so that a failed search can be understood (shown in the paper view).
+    const patch: Partial<Sidecar> = {
+      sourceSearch: {
+        at: now,
+        found: !!found,
+        checked: checked.length,
+        attempts: checked.map((c) => ({ url: c.url, status: c.status, ...(c.detail ? { detail: c.detail.slice(0, 200) } : {}) })),
+        ...(aiCandidates ? { aiCandidates } : {}),
+        ...(aiError ? { aiError: aiError.slice(0, 500) } : {}),
+      },
+    };
     if (found) patch.source = { url: found.url, sha256: found.sha256 || sha, verifiedAt: now };
     const paper = await this.updateSidecar(pdfPath, patch);
     return { paper, result: { found: !!found, url: found?.url, checked, aiError } };
