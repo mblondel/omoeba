@@ -1,7 +1,7 @@
 /** Renderer entry: tabs and app-wide actions. */
 import type { Config } from '../shared/types';
 import { api } from './api';
-import { clear, errorMessage, h, icon, promptDialog, toast } from './dom';
+import { clear, errorMessage, h, icon, installTooltips, promptDialog, toast } from './dom';
 import { mountList } from './views/list';
 import { mountPaper } from './views/paper';
 import { mountReader } from './views/reader';
@@ -328,4 +328,5 @@ window.addEventListener('keydown', (e) => {
 });
 
 document.body.classList.add(`platform-${api.platform}`);
+installTooltips();
 start();

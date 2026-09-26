@@ -416,7 +416,7 @@ function annotationItem(a: Annotation, selected: boolean, opts: AnnotationPaneOp
     PALETTE.map((p) =>
       h('button', {
         class: 'swatch-btn',
-        title: p.name,
+        title: a.type === 'FreeText' ? `Text color: ${p.name}` : `Color: ${p.name}`,
         style: `background:${css(p.color)}`,
         onclick: () => edit(a.type === 'FreeText' ? { fontColor: p.color } : { color: p.color }, false),
       }),
@@ -428,7 +428,7 @@ function annotationItem(a: Annotation, selected: boolean, opts: AnnotationPaneOp
       { class: 'anno-actions' },
       colors,
       h('span', { class: 'spacer' }),
-      h('button', { class: 'icon-btn danger', title: 'Delete annotation', onclick: () => opts.onDelete(a) }, icon('trash')),
+      h('button', { class: 'icon-btn danger', title: 'Delete annotation (⌫)', onclick: () => opts.onDelete(a) }, icon('trash')),
     ),
   );
   return item;

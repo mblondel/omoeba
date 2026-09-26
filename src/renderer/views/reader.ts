@@ -4,7 +4,7 @@ import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from 'pdfjs-di
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { Annotation, AnnotationType, Config, PaperDetail, RGBA } from '../../shared/types';
 import { api, newJobId } from '../api';
-import { clear, confirmDialog, debounce, errorMessage, h, icon, iconButton, toast } from '../dom';
+import { clear, confirmDialog, debounce, errorMessage, h, icon, iconButton, toast, KEY } from '../dom';
 import { mountMarkdown } from '../markdown';
 import { navigate, refreshConfig, isActiveView, type ViewHandle } from '../app';
 import { loadDocument } from '../pdfjs';
@@ -24,6 +24,12 @@ import {
 type Tool = 'select' | 'Highlight' | 'Underline' | 'StrikeOut' | 'Note' | 'FreeText';
 type LeftTab = 'thumbs' | 'toc';
 type RightTab = 'ask' | 'annotations' | 'notes';
+
+const RIGHT_TAB_TIPS: Record<RightTab, string> = {
+  ask: 'Ask an AI questions about this paper',
+  annotations: 'Highlights and notes on the PDF (saved in the .skim file, compatible with Skim)',
+  notes: 'Your notes on this paper, in Markdown with LaTeX',
+};
 
 const store = {
   get<T>(k: string, d: T): T {
@@ -65,11 +71,18 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   // Layout
 
   const titleEl = h('div', { class: 'reader-title' }, '');
-  const pageInput = h('input', { type: 'text', class: 'page-input', value: '1', 'aria-label': 'Page number' });
+  const { mod: M, alt: A, shift: S } = KEY;
+  const pageInput = h('input', {
+    type: 'text',
+    class: 'page-input',
+    value: '1',
+    'aria-label': 'Page number',
+    title: 'Current page — type a page number and press Enter to go there',
+  });
   const pageCount = h('span', { class: 'muted page-count' }, '/ –');
   const zoomSelect = h(
     'select',
-    { class: 'zoom-select', title: 'Zoom' },
+    { class: 'zoom-select', title: 'Zoom level (pinch or ' + M + 'scroll to zoom)' },
     h('option', { value: 'auto' }, 'Automatic'),
     h('option', { value: 'page-fit' }, 'Page fit'),
     h('option', { value: 'page-width' }, 'Page width'),
@@ -82,9 +95,13 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     toolButtons.set(t, b);
     return b;
   };
-  const colorBtn = h('button', { class: 'icon-btn color-btn', title: 'Annotation color' }, h('span', { class: 'swatch' }));
-  const leftToggle = iconButton('left', 'Toggle left pane', () => toggleLeft());
-  const rightToggle = iconButton('right', 'Toggle right pane', () => toggleRight());
+  const colorBtn = h(
+    'button',
+    { class: 'icon-btn color-btn', title: 'Color for new highlights, underlines, notes and text boxes' },
+    h('span', { class: 'swatch' }),
+  );
+  const leftToggle = iconButton('left', `Show/hide page thumbnails and table of contents (${A}${M}1)`, () => toggleLeft());
+  const rightToggle = iconButton('right', `Show/hide Ask AI, annotations and notes (${A}${M}2)`, () => toggleRight());
 
   const header = h(
     'header',
@@ -96,22 +113,22 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     h(
       'div',
       { class: 'group' },
-      iconButton('minus', 'Zoom out', () => zoomBy(1 / 1.15)),
+      iconButton('minus', `Zoom out (${M}−)`, () => zoomBy(1 / 1.15)),
       zoomSelect,
-      iconButton('plus', 'Zoom in', () => zoomBy(1.15)),
+      iconButton('plus', `Zoom in (${M}+)`, () => zoomBy(1.15)),
     ),
     h(
       'div',
       { class: 'group tools' },
-      mkTool('select', 'cursor', 'Select text'),
-      mkTool('Highlight', 'highlight', 'Highlight tool'),
-      mkTool('Underline', 'underline', 'Underline tool'),
-      mkTool('StrikeOut', 'strike', 'Strike-out tool'),
-      mkTool('Note', 'note', 'Add a note (click on the page)'),
-      mkTool('FreeText', 'text', 'Add a text box (click on the page)'),
+      mkTool('select', 'cursor', 'Select text — selecting shows a menu to highlight or ask AI (Esc)'),
+      mkTool('Highlight', 'highlight', 'Highlighter — text you select is highlighted (H)'),
+      mkTool('Underline', 'underline', 'Underline — text you select is underlined (U)'),
+      mkTool('StrikeOut', 'strike', 'Strike out — text you select is struck out'),
+      mkTool('Note', 'note', 'Note — click on the page to add a note (N)'),
+      mkTool('FreeText', 'text', 'Text box — click on the page to add text (T)'),
       colorBtn,
     ),
-    iconButton('search', 'Find in document', () => openFind()),
+    iconButton('search', `Find in document (${M}F)`, () => openFind()),
     rightToggle,
   );
 
@@ -123,9 +140,9 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     icon('search'),
     findInput,
     findCount,
-    iconButton('up', 'Previous match', () => find('again', true)),
-    iconButton('down', 'Next match', () => find('again', false)),
-    iconButton('close', 'Close', () => closeFind()),
+    iconButton('up', `Previous match (${S}↩)`, () => find('again', true)),
+    iconButton('down', 'Next match (↩)', () => find('again', false)),
+    iconButton('close', 'Close (Esc)', () => closeFind()),
   );
 
   const leftTabs = h('div', { class: 'pane-tabs' });
@@ -429,13 +446,14 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
         }),
       ),
       h('span', { class: 'sep' }),
-      mk('Underline', 'underline', 'Underline'),
-      mk('StrikeOut', 'strike', 'Strike out'),
+      mk('Underline', 'underline', 'Underline the selection'),
+      mk('StrikeOut', 'strike', 'Strike out the selection'),
       h('span', { class: 'sep' }),
       h(
         'button',
         {
           class: 'btn small',
+          title: 'Ask the AI about the selected passage',
           onmousedown: (e: Event) => e.preventDefault(),
           onclick: () => {
             const text = window.getSelection()?.toString() ?? '';
@@ -595,7 +613,12 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
       const box = h('div', { class: 'thumb-img', style: `aspect-ratio: 1 / ${ratio}` });
       const item = h(
         'div',
-        { class: `thumb ${i === viewer.currentPageNumber ? 'current' : ''}`, dataset: { page: String(i) }, onclick: () => (viewer.currentPageNumber = i) },
+        {
+          class: `thumb ${i === viewer.currentPageNumber ? 'current' : ''}`,
+          dataset: { page: String(i) },
+          title: `Go to page ${i}`,
+          onclick: () => (viewer.currentPageNumber = i),
+        },
         box,
         h('div', { class: 'thumb-label' }, String(i)),
       );
@@ -684,7 +707,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   function renderRightTabs() {
     clear(rightTabs);
     const tab = (t: RightTab, iconName: string, label: string) =>
-      h('button', { class: `pane-tab ${rightTab === t ? 'active' : ''}`, onclick: () => setRightTab(t) }, icon(iconName, 14), label);
+      h('button', { class: `pane-tab ${rightTab === t ? 'active' : ''}`, title: RIGHT_TAB_TIPS[t], onclick: () => setRightTab(t) }, icon(iconName, 14), label);
     rightTabs.append(tab('ask', 'chat', 'Ask AI'), tab('annotations', 'highlight', 'Annotations'), tab('notes', 'note', 'Notes'));
   }
 
@@ -796,7 +819,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
       return;
     }
     if (!askAI || !ais.some((a) => a.id === askAI)) askAI = cfg?.defaultAI && ais.some((a) => a.id === cfg!.defaultAI) ? cfg!.defaultAI : ais[0].id;
-    const aiSel = h('select', { class: 'ai-select' }, ais.map((a) => h('option', { value: a.id, selected: a.id === askAI }, a.name)));
+    const aiSel = h('select', { class: 'ai-select', title: 'Which AI answers your questions' }, ais.map((a) => h('option', { value: a.id, selected: a.id === askAI }, a.name)));
     aiSel.addEventListener('change', () => {
       askAI = aiSel.value;
       renderRight();
@@ -871,7 +894,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
       }
     });
     const clearBtn = history.length
-      ? iconButton('trash', 'Clear conversation', async () => {
+      ? iconButton('trash', 'Clear this conversation', async () => {
           if (!askAI) return;
           if (await confirmDialog('Clear conversation', 'Delete this conversation?', 'Clear', true)) {
             paper = await api.updateSidecar(id, { chats: { [askAI]: null as unknown as [] } });
@@ -882,7 +905,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
     el.append(
       h('div', { class: 'pane-toolbar' }, aiSel, h('span', { class: 'spacer' }), clearBtn),
       msgs,
-      h('div', { class: 'chat-input' }, ctxChip, input, h('button', { class: 'icon-btn send', title: 'Send', onclick: () => send() }, icon('send'))),
+      h('div', { class: 'chat-input' }, ctxChip, input, h('button', { class: 'icon-btn send', title: 'Send (↩ — ⇧↩ for a new line)', onclick: () => send() }, icon('send'))),
     );
     msgs.scrollTop = msgs.scrollHeight;
   }

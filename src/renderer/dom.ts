@@ -215,3 +215,71 @@ export function relTime(iso?: string | null): string {
   if (d < 86400) return `${Math.floor(d / 3600)} h ago`;
   return new Date(iso).toLocaleDateString();
 }
+
+// ---------------------------------------------------------------------------
+// Tooltips: any element with a `title` shows a styled tooltip after a short delay
+// (native tooltips are slow and easy to miss). The title is moved to data-tip on first
+// hover so the native tooltip does not also appear.
+
+let tipEl: HTMLDivElement | null = null;
+let tipTimer: number | undefined;
+let tipTarget: HTMLElement | null = null;
+
+function hideTip() {
+  window.clearTimeout(tipTimer);
+  tipTarget = null;
+  tipEl?.classList.remove('show');
+}
+
+function showTip(target: HTMLElement) {
+  const text = target.dataset.tip;
+  if (!text || !target.isConnected) return;
+  if (!tipEl) {
+    tipEl = document.createElement('div');
+    tipEl.className = 'tooltip';
+    tipEl.setAttribute('role', 'tooltip');
+    document.body.appendChild(tipEl);
+  }
+  tipEl.textContent = text;
+  tipEl.classList.add('show');
+  const r = target.getBoundingClientRect();
+  const t = tipEl.getBoundingClientRect();
+  const margin = 6;
+  let top = r.bottom + margin;
+  if (top + t.height > window.innerHeight - 4) top = r.top - t.height - margin;
+  const left = Math.max(4, Math.min(window.innerWidth - t.width - 4, r.left + r.width / 2 - t.width / 2));
+  tipEl.style.top = `${Math.max(4, top)}px`;
+  tipEl.style.left = `${left}px`;
+}
+
+export function installTooltips() {
+  document.addEventListener('mouseover', (e) => {
+    const el = (e.target as Element | null)?.closest?.<HTMLElement>('[title], [data-tip]');
+    if (el === tipTarget) return;
+    const wasShown = !!tipEl?.classList.contains('show');
+    hideTip();
+    if (!el) return;
+    const title = el.getAttribute('title');
+    if (title) {
+      el.dataset.tip = title;
+      el.removeAttribute('title');
+    }
+    if (!el.dataset.tip) return;
+    tipTarget = el;
+    // Show immediately when moving from one control to the next (like native toolbars).
+    const delay = wasShown ? 0 : 400;
+    tipTimer = window.setTimeout(() => tipTarget === el && showTip(el), delay);
+  });
+  document.addEventListener('mouseout', (e) => {
+    if (tipTarget && !tipTarget.contains(e.relatedTarget as Node | null)) hideTip();
+  });
+  for (const ev of ['mousedown', 'keydown', 'wheel', 'blur'] as const) window.addEventListener(ev, hideTip, true);
+}
+
+/** Keyboard shortcut labels for the current platform. */
+const isMac = /Mac/i.test(navigator.platform) || /Mac OS/i.test(navigator.userAgent);
+export const KEY = {
+  mod: isMac ? '⌘' : 'Ctrl+',
+  alt: isMac ? '⌥' : 'Alt+',
+  shift: isMac ? '⇧' : 'Shift+',
+};
