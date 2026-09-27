@@ -95,16 +95,6 @@ function thumbCell(p: PaperSummary): HTMLElement {
 let savedScroll = 0;
 let savedSelected: string | null = null;
 
-/** When a paper was last seen, short: the time today, "Yesterday", else the date. */
-function formatOpened(ms: number): string {
-  const d = new Date(ms);
-  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const days = Math.round((day(new Date()) - day(d)) / 86_400_000);
-  if (days === 0) return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  if (days === 1) return 'Yesterday';
-  return d.toLocaleDateString();
-}
-
 /**
  * `query`: a search tab, starting from its own query. `recent`: the Recently Seen tab (papers
  * whose page or PDF was opened, most recent first).
@@ -114,7 +104,9 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
   const isSearchTab = opts.query !== undefined || !!opts.recent;
   let papers: PaperSummary[] = [];
   let visible: PaperSummary[] = [];
+  // The Recently Seen tab lists the most recently seen first (there is no column for it).
   let sort: { key: SortKey; dir: 1 | -1 } = opts.recent ? { key: 'opened', dir: -1 } : prefs.sort;
+  if (!opts.recent && sort.key === 'opened') sort = { key: 'title', dir: 1 };
   let selected: string | null = isSearchTab ? null : savedSelected;
   let searchSeq = 0;
   let indexStatus: IndexStatus | null = null;
@@ -312,7 +304,6 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
     { key: 'authors', label: 'Authors', cls: 'c-authors' },
     { key: 'folder', label: 'Folder', cls: 'c-folder' },
     { key: 'tags', label: 'Tags', cls: 'c-tags' },
-    { key: 'opened', label: 'Seen', cls: 'c-opened' },
   ];
 
   function renderHead() {
@@ -329,7 +320,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
               class: `${c.cls} sortable ${sort.key === c.key ? 'sorted' : ''}`,
               onclick: () => {
                 // Dates: most recent first on the first click.
-                sort = { key: c.key, dir: sort.key === c.key ? ((-sort.dir) as 1 | -1) : c.key === 'opened' ? -1 : 1 };
+                sort = { key: c.key, dir: sort.key === c.key ? ((-sort.dir) as 1 | -1) : 1 };
                 if (!opts.recent) prefs.sort = sort;
                 renderHead();
                 applyFilter();
@@ -366,7 +357,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
    */
   const CHUNK = 200;
   let rendered = 0;
-  const sentinel = h('tr', { class: 'list-sentinel' }, h('td', { colSpan: 6 }));
+  const sentinel = h('tr', { class: 'list-sentinel' }, h('td', { colSpan: 5 }));
   const moreObserver = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && renderMore(), {
     root: wrap,
     rootMargin: '800px 0px',
@@ -482,11 +473,6 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
             t,
           ),
         ),
-      ),
-      h(
-        'td',
-        { class: 'c-opened', title: p.openedAt ? `Last seen ${new Date(p.openedAt).toLocaleString()}` : 'Not seen yet' },
-        p.openedAt ? formatOpened(p.openedAt) : '',
       ),
     );
   }

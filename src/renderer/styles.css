@@ -507,10 +507,6 @@ td.c-title {
 .c-tags {
   width: 18%;
 }
-.c-opened {
-  width: 92px;
-  color: var(--muted);
-}
 td.c-title .unknown-title {
   display: inline-flex;
   vertical-align: -2px;
