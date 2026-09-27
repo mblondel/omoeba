@@ -16,7 +16,8 @@
 - PDF annotations (compatible with Skim).
 - Markdown notes.
 - Tags.
-- AI features: ask questions, summaries, etc.
+- AI: ask questions, summaries, tagging, related work, ...
+- Easy to sync via gdrive or git.
 
 ## Getting started
 
