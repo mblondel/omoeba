@@ -112,6 +112,8 @@ function renderTabButton(tab: Tab) {
 function activate(tab: Tab) {
   if (active === tab) return;
   if (active) {
+    // Keyboard focus does not stay in the tab being hidden (keys would go to it).
+    if (document.activeElement instanceof HTMLElement && active.panel.contains(document.activeElement)) document.activeElement.blur();
     active.panel.hidden = true;
     active.button.classList.remove('active');
     active.button.setAttribute('aria-selected', 'false');
@@ -422,6 +424,22 @@ api.onEvent((e) => {
   if (e.type === 'paper-updated') for (const t of tabs) if (t.paperId === e.id) refreshTitle(t);
   if (e.type === 'config-changed') refreshConfig();
 });
+
+// ⌘W closes the active tab. The menu has this shortcut too, but a key press that reaches the page
+// first does not always get to the menu: it is handled here (and marked handled, so the menu does
+// not act on it as well).
+window.addEventListener(
+  'keydown',
+  (e) => {
+    const mod = api.platform === 'darwin' ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+    if (!mod || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'w') return;
+    if (!active || active.kind === 'library' || !api.setMenuState) return;
+    e.preventDefault();
+    e.stopPropagation();
+    closeTab(active);
+  },
+  true,
+);
 
 // Ctrl+Tab / Ctrl+Shift+Tab and ⌘1…⌘9.
 window.addEventListener('keydown', (e) => {
