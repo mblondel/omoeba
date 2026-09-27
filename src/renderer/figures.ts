@@ -7,6 +7,7 @@
  * ink on the rendered page. Only the figure is kept, not the whole page.
  */
 import type { PDFDocumentProxy } from './pdfjs';
+import type { FigureRef } from '../shared/types';
 
 interface Line {
   text: string;
@@ -211,14 +212,15 @@ function figureRegion(cap: Caption, lay: PageLayout): [number, number, number, n
 }
 
 /**
- * Render the figure referenced by `ref` and return it as a data URL, or null if it cannot
- * be located.
+ * Locate the figure referenced by `ref`: its page and crop box in PDF points, or null if it
+ * cannot be found. The crop box is what is stored in the sidecar; the pixels are rendered
+ * from the PDF when the figure is shown (see renderFigureRef).
  */
-export async function renderFigure(
+export async function locateFigure(
   doc: PDFDocumentProxy,
   ref: { figure?: number; page?: number; alt: string },
   targetWidth = 900,
-): Promise<{ dataUrl: string; page: number; figure: number } | null> {
+): Promise<{ ref: FigureRef; figure: number } | null> {
   const found = await findCaption(doc, ref);
   if (!found) return null;
   const { cap, lay } = found;
@@ -310,15 +312,45 @@ export async function renderFigure(
   topPx += cy0;
   bottom = topPx + (cy1 - cy0);
 
-  const out = document.createElement('canvas');
-  const outScale = Math.min(1, targetWidth / (right - left));
-  out.width = Math.round((right - left) * outScale);
-  out.height = Math.round((bottom - topPx) * outScale);
-  const octx = out.getContext('2d')!;
-  octx.fillStyle = '#fff';
-  octx.fillRect(0, 0, out.width, out.height);
-  octx.drawImage(canvas, left, topPx, right - left, bottom - topPx, 0, 0, out.width, out.height);
-  const png = out.toDataURL('image/png');
-  const jpg = out.toDataURL('image/jpeg', 0.85);
-  return { dataUrl: png.length < jpg.length * 1.3 ? png : jpg, page: cap.page, figure: cap.number };
+  // Back to PDF points, rounded to 0.1pt so that re-locating gives the same numbers.
+  const [ax, ay] = viewport.convertToPdfPoint(left, bottom);
+  const [bx, by] = viewport.convertToPdfPoint(right, topPx);
+  const round = (n: number) => Math.round(n * 10) / 10;
+  const rect: FigureRef['rect'] = [
+    round(Math.min(ax, bx)),
+    round(Math.min(ay, by)),
+    round(Math.max(ax, bx)),
+    round(Math.max(ay, by)),
+  ];
+  return { ref: { page: cap.page, rect }, figure: cap.number };
+}
+
+/** Width in CSS pixels at which a figure is laid out (before it is rendered). */
+export function figureDisplaySize(ref: FigureRef): { width: number; height: number } {
+  const [x0, y0, x1, y1] = ref.rect;
+  const width = Math.round(Math.min(900, (x1 - x0) * 3));
+  return { width, height: Math.round((width * (y1 - y0)) / (x1 - x0)) };
+}
+
+/**
+ * Render a figure from the PDF, `pixelWidth` pixels wide (only the crop box is drawn).
+ * Null if the page does not exist.
+ */
+export async function renderFigureRef(doc: PDFDocumentProxy, ref: FigureRef, pixelWidth: number): Promise<HTMLCanvasElement | null> {
+  if (ref.page > doc.numPages) return null;
+  const page = await doc.getPage(ref.page);
+  const [x0, y0, x1, y1] = ref.rect;
+  const scale = Math.min(8, Math.max(0.5, pixelWidth / (x1 - x0)));
+  const r = page.getViewport({ scale }).convertToViewportRectangle([x0, y0, x1, y1]);
+  const left = Math.min(r[0], r[2]);
+  const top = Math.min(r[1], r[3]);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(Math.abs(r[2] - r[0])));
+  canvas.height = Math.max(1, Math.round(Math.abs(r[3] - r[1])));
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const viewport = page.getViewport({ scale, offsetX: -left, offsetY: -top });
+  await page.render({ canvas, canvasContext: ctx, viewport }).promise;
+  return canvas;
 }

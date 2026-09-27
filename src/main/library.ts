@@ -2,6 +2,7 @@
 import { promises as fs, Dirent } from 'node:fs';
 import path from 'node:path';
 import type { PaperSummary, Sidecar } from '../shared/types';
+import { canonicalJson } from '../shared/canonicaljson';
 
 export interface ScannedFile {
   base: string; // absolute path without extension
@@ -120,23 +121,49 @@ async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export async function readSidecar(jsonPath: string): Promise<Sidecar> {
+type SidecarState = 'missing' | 'ok' | 'invalid';
+
+async function loadSidecar(jsonPath: string): Promise<{ sc: Sidecar; state: SidecarState }> {
   try {
     const raw = JSON.parse(await fs.readFile(jsonPath, 'utf8'));
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) return { ...raw, omoeba: 1 } as Sidecar;
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) return { sc: { ...raw, omoeba: 1 } as Sidecar, state: 'ok' };
+    console.error('Bad sidecar', jsonPath, 'not an object');
   } catch (e: unknown) {
-    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') console.error('Bad sidecar', jsonPath, e);
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { sc: { omoeba: 1 }, state: 'missing' };
+    console.error('Bad sidecar', jsonPath, e);
   }
-  return { omoeba: 1 };
+  return { sc: { omoeba: 1 }, state: 'invalid' };
+}
+
+export async function readSidecar(jsonPath: string): Promise<Sidecar> {
+  return (await loadSidecar(jsonPath)).sc;
+}
+
+/** Keys that are not content: a sidecar with only these is not worth keeping. */
+const BOOKKEEPING_KEYS = new Set(['omoeba', 'updatedAt']);
+
+/** Sidecar text: canonical JSON, with "omoeba" first so that the file is recognized cheaply. */
+export function formatSidecar(sc: Sidecar): string {
+  return canonicalJson(sc, ['omoeba']);
+}
+
+/** Whether two sidecars have the same content (ignoring `updatedAt` and key order). */
+export function sameSidecarContent(a: Sidecar, b: Sidecar): boolean {
+  const strip = ({ updatedAt: _u, ...rest }: Sidecar) => rest as Sidecar;
+  return formatSidecar(strip(a)) === formatSidecar(strip(b));
 }
 
 /**
  * Applies a shallow patch to the sidecar. `summaries` and `chats` are merged per key;
  * a key set to null is removed.
+ *
+ * To keep synced libraries (git, Google Drive) quiet, the file is only written when its
+ * content changes (`updatedAt` is bumped only then), and a sidecar left with no content is
+ * removed rather than written.
  */
 export async function updateSidecar(jsonPath: string, patch: Partial<Sidecar>): Promise<Sidecar> {
   return withLock(jsonPath, async () => {
-    const cur = await readSidecar(jsonPath);
+    const { sc: cur, state } = await loadSidecar(jsonPath);
     const next: Sidecar = { ...cur };
     for (const [k, v] of Object.entries(patch)) {
       if ((k === 'summaries' || k === 'chats') && v && typeof v === 'object') {
@@ -153,16 +180,26 @@ export async function updateSidecar(jsonPath: string, patch: Partial<Sidecar>): 
       }
     }
     next.omoeba = 1;
+    if (Object.keys(next).every((k) => BOOKKEEPING_KEYS.has(k))) {
+      // Never delete a file that could not be read: it may be mid-sync or hand-edited.
+      if (state === 'ok') await fs.unlink(jsonPath).catch(() => undefined);
+      return { omoeba: 1 };
+    }
+    if (state === 'ok' && sameSidecarContent(cur, next)) return cur;
     next.updatedAt = new Date().toISOString();
-    await writeJsonAtomic(jsonPath, next);
+    await writeTextAtomic(jsonPath, formatSidecar(next));
     return next;
   });
 }
 
-export async function writeJsonAtomic(file: string, data: unknown): Promise<void> {
+async function writeTextAtomic(file: string, text: string): Promise<void> {
   const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
-  await fs.writeFile(tmp, JSON.stringify(data, null, 2) + '\n');
+  await fs.writeFile(tmp, text);
   await fs.rename(tmp, file);
+}
+
+export async function writeJsonAtomic(file: string, data: unknown): Promise<void> {
+  await writeTextAtomic(file, JSON.stringify(data, null, 2) + '\n');
 }
 
 // ---------------------------------------------------------------------------

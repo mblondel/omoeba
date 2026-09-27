@@ -1776,6 +1776,13 @@ li.collapsed > .toc-item .toc-toggle {
   object-fit: contain;
   padding: 8px;
 }
+/* Figures of the paper, rendered from the PDF: the box is laid out before the pixels arrive. */
+.markdown img.pdf-figure {
+  height: auto;
+}
+.markdown img.pdf-figure:not([src]) {
+  visibility: hidden;
+}
 .markdown figcaption {
   font-size: 12px;
   color: var(--muted);

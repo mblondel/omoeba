@@ -39,11 +39,43 @@ export interface Config {
 
 export type Theme = 'system' | 'light' | 'dark';
 
+/**
+ * A figure of the paper, by location: rendered from the PDF when shown, so that the
+ * sidecar stays small and diffs stay readable.
+ */
+export interface FigureRef {
+  /** 1-based page number. */
+  page: number;
+  /** Crop box [x0, y0, x1, y1] in PDF user-space points (origin bottom-left). */
+  rect: [number, number, number, number];
+}
+
+/** An embedded image (pasted by the user): data URI. Or a figure of the paper. */
+export type SummaryImage = string | FigureRef;
+
+export function isFigureRef(v: unknown): v is FigureRef {
+  const r = v as FigureRef | null;
+  return (
+    !!r &&
+    typeof r === 'object' &&
+    Number.isInteger(r.page) &&
+    r.page >= 1 &&
+    Array.isArray(r.rect) &&
+    r.rect.length === 4 &&
+    r.rect.every((n) => Number.isFinite(n)) &&
+    r.rect[2] > r.rect[0] &&
+    r.rect[3] > r.rect[1]
+  );
+}
+
 export interface SummaryEntry {
   /** Markdown. Images are referenced as ![alt](img:<id>) and stored in `images`. */
   markdown: string;
-  /** Image id -> data URI (data:image/png;base64,...). */
-  images: Record<string, string>;
+  /**
+   * Image id -> figure location (ids "fig-N", figure N of the paper), or data URI
+   * (data:image/png;base64,...) for images pasted by the user.
+   */
+  images: Record<string, SummaryImage>;
   createdAt: string;
   updatedAt?: string;
 }
@@ -71,11 +103,6 @@ export interface Sidecar {
     sha256?: string;
     verifiedAt?: string;
   };
-  /**
-   * Legacy: thumbnails were briefly stored here. They now live in ~/omoeba/thumbnails.cache;
-   * found entries are moved there and removed from the sidecar.
-   */
-  thumbnail?: { png: string; pdfMtime: number };
   /** Last automatic search for the download location (so it is not repeated on every open). */
   sourceSearch?: {
     at: string;

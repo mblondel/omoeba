@@ -1,6 +1,8 @@
 /** Markdown rendering with LaTeX (KaTeX) and HTML sanitization. */
 import { Marked } from 'marked';
 import katex from 'katex';
+import { isFigureRef, type FigureRef, type SummaryImage } from '../shared/types';
+import { figureDisplaySize } from './figures';
 
 const marked = new Marked({ gfm: true, breaks: false });
 
@@ -102,8 +104,8 @@ export function escapeHtml(s: string): string {
 }
 
 export interface RenderOptions {
-  /** Images referenced as img:<id>. */
-  images?: Record<string, string>;
+  /** Images referenced as img:<id>: data URIs, or figures of the paper (see `figures`). */
+  images?: Record<string, SummaryImage>;
 }
 
 export function renderMarkdown(src: string, opts: RenderOptions = {}): string {
@@ -114,7 +116,7 @@ export function renderMarkdown(src: string, opts: RenderOptions = {}): string {
   if (opts.images) {
     html = html.replace(/src="img:([^"]+)"/g, (m, id) => {
       const data = opts.images![decodeURIComponent(id)];
-      return data ? `src="${data}"` : m;
+      return typeof data === 'string' && data.startsWith('data:image/') ? `src="${escapeHtml(data)}"` : m;
     });
   }
   return html;
@@ -160,12 +162,39 @@ function parenthesizePageRefs(root: DocumentFragment) {
 export function mountMarkdown(
   el: HTMLElement,
   src: string,
-  opts: RenderOptions & { onPageLink?: (page: number) => void; onExternal?: (url: string) => void } = {},
+  opts: RenderOptions & {
+    onPageLink?: (page: number) => void;
+    onExternal?: (url: string) => void;
+    /**
+     * Renders a figure of the paper `pixelWidth` pixels wide; resolves to an image URL, or
+     * null if it cannot be rendered (e.g. the PDF is missing).
+     */
+    figures?: (ref: FigureRef, pixelWidth: number) => Promise<string | null>;
+  } = {},
 ) {
   // Build in an inert template so unresolved image references are never fetched.
   const tpl = document.createElement('template');
   tpl.innerHTML = renderMarkdown(src, opts);
   el.classList.add('markdown');
+  // Figures of the paper: laid out at their final size now, rendered from the PDF below.
+  const pendingFigures: { img: HTMLImageElement; ref: FigureRef }[] = [];
+  for (const img of tpl.content.querySelectorAll<HTMLImageElement>('img[src^="img:"]')) {
+    let id = img.getAttribute('src')!.slice(4);
+    try {
+      id = decodeURIComponent(id);
+    } catch {
+      /* keep as is */
+    }
+    const ref = opts.images?.[id];
+    if (!isFigureRef(ref)) continue;
+    const { width, height } = figureDisplaySize(ref);
+    img.removeAttribute('src');
+    img.classList.add('pdf-figure');
+    img.width = width;
+    img.height = height;
+    img.style.aspectRatio = `${width} / ${height}`;
+    pendingFigures.push({ img, ref });
+  }
   for (const img of tpl.content.querySelectorAll<HTMLImageElement>('img[src^="page:"], img[src^="figure:"], img[src^="img:"]')) {
     const src = img.getAttribute('src')!;
     const ph = document.createElement('div');
@@ -185,6 +214,36 @@ export function mountMarkdown(
   }
   parenthesizePageRefs(tpl.content);
   el.replaceChildren(tpl.content);
+  for (const { img, ref } of pendingFigures) {
+    const fallback = () => {
+      if (!img.isConnected) return;
+      const ph = document.createElement('div');
+      ph.className = 'img-placeholder';
+      const link = document.createElement('a');
+      link.href = `#page=${ref.page}`;
+      link.textContent = `p. ${ref.page}`;
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        opts.onPageLink?.(ref.page);
+      });
+      ph.append('Figure on ', link);
+      img.replaceWith(ph);
+    };
+    if (!opts.figures) {
+      fallback();
+      continue;
+    }
+    // Render at the laid-out width, for the screen's pixel density.
+    const cssWidth = img.getBoundingClientRect().width || img.width;
+    const pixelWidth = Math.round(Math.min(2400, cssWidth * (window.devicePixelRatio || 1)));
+    opts
+      .figures(ref, pixelWidth)
+      .then((url) => (url ? (img.src = url) : fallback()))
+      .catch((e) => {
+        console.warn('Figure rendering failed', e);
+        fallback();
+      });
+  }
   for (const a of el.querySelectorAll<HTMLAnchorElement>('a[href]')) {
     const href = a.getAttribute('href')!;
     const m = /^#page=(\d+)/.exec(href);

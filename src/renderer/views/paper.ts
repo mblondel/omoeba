@@ -1,12 +1,12 @@
 /** Paper view: metadata, tags, summaries, download location. */
-import type { AIProvider, Config, PaperDetail, Sidecar, SourceCheckResult, SummaryEntry } from '../../shared/types';
+import type { AIProvider, Config, FigureRef, PaperDetail, Sidecar, SourceCheckResult, SummaryEntry } from '../../shared/types';
 import { api, newJobId } from '../api';
 import { clear, confirmDialog, errorMessage, h, icon, iconButton, toast, tagColor, setTagPalette } from '../dom';
 import { mountMarkdown } from '../markdown';
 import { navigate, refreshConfig, isActiveView, openSearchTab } from '../app';
 import { authorQuery, institutionQuery, tagQuery } from '../authors';
-import { loadDocument } from '../pdfjs';
-import { renderFigure } from '../figures';
+import { loadDocument, type PDFDocumentProxy } from '../pdfjs';
+import { locateFigure, renderFigureRef } from '../figures';
 import { createAskChat } from '../askchat';
 
 /** AI jobs in flight, per paper, so that re-opening a paper does not start them twice. */
@@ -21,26 +21,20 @@ function jobsFor(id: string) {
   return m;
 }
 
-/** Whether a summary still has figure references to resolve (or legacy full-page images). */
+/** Whether a summary still has figure references (figure:N, page:N) to resolve. */
 export function needsFigures(entry: SummaryEntry): boolean {
-  return /\]\((?:page|figure):\d+\)/.test(entry.markdown) || Object.keys(entry.images).some((k) => /^page-\d+$/.test(k));
+  return /\]\((?:page|figure):\d+\)/.test(entry.markdown);
 }
 
 /**
- * Replace ![caption](figure:N) (and ![caption](page:N)) references by the cropped figure,
- * stored as base64 in the summary. Unresolvable references become links to the page.
- * Older summaries that embedded whole pages (img:page-N) are converted too.
+ * Replace ![caption](figure:N) (and ![caption](page:N)) references by the location of the
+ * figure in the PDF (page and crop box), which is rendered when the summary is shown.
+ * Unresolvable references become links to the page.
  */
 export async function materializeFigures(paperId: string, entry: SummaryEntry): Promise<SummaryEntry | null> {
   if (!needsFigures(entry)) return null;
   const images = { ...entry.images };
   let md = entry.markdown;
-  for (const k of Object.keys(images)) {
-    const m = /^page-(\d+)$/.exec(k);
-    if (!m) continue;
-    md = md.split(`](img:${k})`).join(`](page:${m[1]})`);
-    delete images[k];
-  }
   const doc = await loadDocument(await api.readPdf(paperId));
   try {
     const refs = [...md.matchAll(/!\[([^\]]*)\]\((figure|page):(\d+)\)/g)];
@@ -52,18 +46,16 @@ export async function materializeFigures(paperId: string, entry: SummaryEntry): 
           ? { figure: n, alt }
           : { page: n, alt, figure: altFig ? Number(altFig[1]) : undefined };
       let replacement: string;
-      try {
-        const fig = await renderFigure(doc, ref);
-        if (fig) {
-          const id = `fig-${fig.figure}`;
-          images[id] = fig.dataUrl;
-          replacement = `![${alt}](img:${id})`;
-        } else {
-          replacement = kind === 'page' ? `*${alt}* ([p. ${n}](#page=${n}))` : `*${alt}*`;
-        }
-      } catch (e) {
+      const fig = await locateFigure(doc, ref).catch((e) => {
         console.warn('Figure extraction failed', e);
-        replacement = `*${alt}*`;
+        return null;
+      });
+      if (fig) {
+        const id = `fig-${fig.figure}`;
+        images[id] = fig.ref;
+        replacement = `![${alt}](img:${id})`;
+      } else {
+        replacement = kind === 'page' ? `*${alt}* ([p. ${n}](#page=${n}))` : `*${alt}*`;
       }
       md = md.replace(whole, replacement);
     }
@@ -73,6 +65,69 @@ export async function materializeFigures(paperId: string, entry: SummaryEntry): 
   } finally {
     doc.destroy();
   }
+}
+
+/**
+ * Renders the figures of one paper from its PDF, for as long as the paper view is open.
+ * The PDF is loaded on first use and released when idle; rendered figures are kept in
+ * memory (as object URLs) so that re-rendering the view does not flicker.
+ */
+function figureRenderer(paperId: string) {
+  let doc: Promise<PDFDocumentProxy> | null = null;
+  let docKey = 0;
+  let busy = 0;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  const urls = new Map<string, Promise<string | null>>();
+
+  const release = () => {
+    const d = doc;
+    doc = null;
+    d?.then((x) => x.destroy()).catch(() => undefined);
+  };
+  const clearUrls = () => {
+    for (const u of urls.values()) u.then((x) => x && URL.revokeObjectURL(x)).catch(() => undefined);
+    urls.clear();
+  };
+
+  async function render(ref: FigureRef, pixelWidth: number, pdfMtime: number): Promise<string | null> {
+    if (pdfMtime !== docKey) {
+      // The PDF changed (e.g. re-downloaded): start over.
+      release();
+      clearUrls();
+      docKey = pdfMtime;
+    }
+    // Reuse a rendering that is at least as wide (widths are bucketed to limit re-renders).
+    const width = Math.ceil(pixelWidth / 200) * 200;
+    const key = `${ref.page}:${ref.rect.join(',')}:${width}`;
+    let url = urls.get(key);
+    if (!url) {
+      url = (async () => {
+        busy++;
+        clearTimeout(idleTimer);
+        try {
+          doc ??= api.readPdf(paperId).then(loadDocument);
+          const canvas = await renderFigureRef(await doc, ref, width);
+          if (!canvas) return null;
+          const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/png'));
+          return blob ? URL.createObjectURL(blob) : null;
+        } finally {
+          if (--busy === 0) idleTimer = setTimeout(release, 30_000);
+        }
+      })();
+      url.catch(() => urls.delete(key));
+      urls.set(key, url);
+    }
+    return url;
+  }
+
+  return {
+    render,
+    dispose() {
+      clearTimeout(idleTimer);
+      release();
+      clearUrls();
+    },
+  };
 }
 
 /** Collapsed state of the paper page's sections, remembered across papers and sessions. */
@@ -124,6 +179,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
   let draftMine: SummaryEntry | null = null;
   let disposed = false;
   const materializing = new Set<string>();
+  const figures = figureRenderer(id);
 
   const content = h('div', { class: 'paper-content' });
   const readBtn = h('button', { class: 'btn primary', onclick: () => openReader() }, icon('book'), 'Read PDF');
@@ -592,6 +648,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       else {
         mountMarkdown(body, entry.markdown, {
           images: entry.images,
+          figures: (ref, px) => (p.hasPdf ? figures.render(ref, px, p.pdfMtime) : Promise.resolve(null)),
           onPageLink: (n) => navigate(`#/read/${encodeURIComponent(id)}?page=${n}`),
           onExternal: (u) => api.openExternal(u),
         });
@@ -796,6 +853,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
 
   return () => {
     disposed = true;
+    figures.dispose();
     offEvent();
     jobEvents.removeEventListener('change', onJobs);
     window.removeEventListener('keydown', onKey);

@@ -457,3 +457,91 @@ test('source finder: clues from the first page', async () => {
     globalThis.fetch = realFetch;
   }
 });
+
+import { stat, unlink } from 'node:fs/promises';
+import { canonicalJson } from '../src/shared/canonicaljson';
+import { formatSidecar } from '../src/main/library';
+import { isFigureRef } from '../src/shared/types';
+import { figureDisplaySize } from '../src/renderer/figures';
+
+test('canonical json: sorted keys, compact numeric arrays, stable output', () => {
+  const a = { b: 1, a: { d: [1, 2.5], c: 'x' }, omoeba: 1, tags: ['t1', 't2'], empty: [], obj: {} };
+  const b = { tags: ['t1', 't2'], omoeba: 1, obj: {}, empty: [], a: { c: 'x', d: [1, 2.5] }, b: 1 };
+  const text = canonicalJson(a, ['omoeba']);
+  assert.equal(text, canonicalJson(b, ['omoeba']));
+  assert.equal(
+    text,
+    [
+      '{',
+      '  "omoeba": 1,',
+      '  "a": {',
+      '    "c": "x",',
+      '    "d": [1, 2.5]',
+      '  },',
+      '  "b": 1,',
+      '  "empty": [],',
+      '  "obj": {},',
+      '  "tags": [',
+      '    "t1",',
+      '    "t2"',
+      '  ]',
+      '}',
+      '',
+    ].join('\n'),
+  );
+  // Quads of points stay one line per quad; long numeric arrays are split.
+  const quads = [[[72.1, 512.5], [372.6, 512.5], [72.1, 500.2], [372.6, 500.2]]];
+  assert.equal(canonicalJson({ quads }), '{\n  "quads": [\n    [[72.1, 512.5], [372.6, 512.5], [72.1, 500.2], [372.6, 500.2]]\n  ]\n}\n');
+  const long = Array.from({ length: 40 }, (_, i) => i * 1.25);
+  assert.equal(canonicalJson(long).split('\n').length, 43);
+  // Same data after a round trip; undefined values are dropped like JSON.stringify.
+  const data = { x: [1, [2, 3], 'a', null, { y: true }], s: 'é"\n', u: undefined };
+  assert.deepEqual(JSON.parse(canonicalJson(data)), JSON.parse(JSON.stringify(data)));
+});
+
+test('sidecars: written only when the content changes; empty ones are not kept', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'omoeba-sc-'));
+  const json = path.join(root, 'p.json');
+
+  // Nothing to record: no file is created.
+  await updateSidecar(json, { tags: null } as never);
+  await assert.rejects(stat(json));
+
+  const sc1 = await updateSidecar(json, { tags: ['b', 'a'], title: 'T' });
+  const text1 = await readFile(json, 'utf8');
+  assert.equal(text1, formatSidecar(sc1));
+  assert.ok(text1.startsWith('{\n  "omoeba": 1,\n'));
+  const mtime1 = (await stat(json)).mtimeMs;
+
+  // Same content (in any key order): not rewritten, updatedAt kept.
+  await new Promise((r) => setTimeout(r, 20));
+  const sc2 = await updateSidecar(json, { title: 'T', tags: ['b', 'a'] });
+  assert.equal(sc2.updatedAt, sc1.updatedAt);
+  assert.equal((await stat(json)).mtimeMs, mtime1);
+  assert.equal(await readFile(json, 'utf8'), text1);
+
+  // A real change is written, canonically.
+  const sc3 = await updateSidecar(json, { notes: 'hello' });
+  assert.equal(await readFile(json, 'utf8'), formatSidecar(sc3));
+
+  // Removing the last content removes the file.
+  await updateSidecar(json, { tags: null, title: null, notes: null } as never);
+  await assert.rejects(stat(json));
+
+  // A file that cannot be parsed is never deleted.
+  await writeFile(json, '{ broken');
+  await updateSidecar(json, { tags: null } as never);
+  assert.equal(await readFile(json, 'utf8'), '{ broken');
+  await unlink(json);
+});
+
+test('figure references', () => {
+  assert.ok(isFigureRef({ page: 3, rect: [72, 300, 540, 700] }));
+  assert.ok(!isFigureRef('data:image/png;base64,AAAA'));
+  assert.ok(!isFigureRef({ page: 0, rect: [72, 300, 540, 700] }));
+  assert.ok(!isFigureRef({ page: 1, rect: [540, 300, 72, 700] }));
+  assert.ok(!isFigureRef({ page: 1, rect: [72, 300, 540] }));
+  const s = figureDisplaySize({ page: 1, rect: [100, 100, 400, 250] });
+  assert.deepEqual(s, { width: 900, height: 450 });
+  assert.deepEqual(figureDisplaySize({ page: 1, rect: [0, 0, 100, 50] }), { width: 300, height: 150 });
+});

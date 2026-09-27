@@ -132,7 +132,6 @@ export class OmoebaService implements OmoebaAPI {
         const w = watch(folder, { recursive: true }, (_ev, file) => {
           if (!file || /(^|[/\\])\.|\.tmp-|\.download-/.test(file)) return;
           if (!/\.(pdf|json|skim)$/i.test(file)) return;
-          if ((this.quietWrites.get(path.join(folder, file)) ?? 0) > Date.now()) return;
           this.platform.emit({ type: 'library-changed' });
           this.index.requestSync();
         });
@@ -205,8 +204,6 @@ export class OmoebaService implements OmoebaAPI {
   async listPapers(): Promise<PaperSummary[]> {
     const files = await scanFolders(this.config.folders);
     const sidecars = await Promise.all(files.map((f) => this.sidecarFor(f)));
-    const legacy = files.map((f, i) => ({ f, sc: sidecars[i] })).filter((x) => x.sc.thumbnail);
-    if (legacy.length) await this.migrateThumbnails(legacy);
     const out = files.map((f, i) => buildSummary(f, sidecars[i], this.index.docInfo(f.base + '.pdf'), this.thumbnailUrl(f)));
     void this.pruneThumbnails(files);
     return out.sort((a, b) => a.title.localeCompare(b.title));
@@ -237,30 +234,6 @@ export class OmoebaService implements OmoebaAPI {
     const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(png);
     if (!m || m[1].length > 90_000) throw new Error('Invalid thumbnail');
     await this.thumbs.put(pdfPath, pdfMtime, Buffer.from(m[1], 'base64'));
-  }
-
-  /**
-   * Thumbnails that were stored in .json sidecars are moved to the cache (right away), and
-   * removed from the sidecars (in the background).
-   */
-  private stripping = new Set<string>();
-  private async migrateThumbnails(items: { f: ScannedFile; sc: Sidecar }[]) {
-    for (const { f, sc } of items) {
-      const pdfPath = pdfPathOf(f.base);
-      const t = sc.thumbnail;
-      const m = t && typeof t.png === 'string' ? /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(t.png) : null;
-      if (m && f.hasPdf && t!.pdfMtime === f.pdfMtime && this.thumbs.mtimeOf(pdfPath) !== f.pdfMtime)
-        await this.thumbs.put(pdfPath, f.pdfMtime, Buffer.from(m[1], 'base64')).catch(() => undefined);
-    }
-    const todo = items.map(({ f }) => f.base + '.json').filter((p) => !this.stripping.has(p));
-    todo.forEach((p) => this.stripping.add(p));
-    void (async () => {
-      for (const jsonPath of todo) {
-        this.quietWrites.set(jsonPath, Date.now() + 3000);
-        await updateSidecar(jsonPath, { thumbnail: null } as unknown as Partial<Sidecar>).catch(() => undefined);
-        this.stripping.delete(jsonPath);
-      }
-    })();
   }
 
   /** Forget thumbnails of PDFs that no longer exist (checked at most every 10 minutes). */
@@ -564,9 +537,6 @@ export class OmoebaService implements OmoebaAPI {
   }
 
   private cancelled = new Set<string>();
-
-  /** Files written for bookkeeping only (e.g. thumbnail migration): their change events are ignored. */
-  private quietWrites = new Map<string, number>();
 
   async cancelAI(jobId: string): Promise<void> {
     this.cancelled.add(jobId);
