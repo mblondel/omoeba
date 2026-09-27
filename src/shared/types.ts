@@ -319,7 +319,17 @@ export type OmoebaEvent =
   | { type: 'ai-progress'; jobId: string; chunk: string }
   | { type: 'paper-updated'; id: string }
   | { type: 'config-changed' }
-  | { type: 'duplicates-progress'; done: number; total: number };
+  | { type: 'duplicates-progress'; done: number; total: number }
+  | { type: 'syntheses-changed' }
+  /** What an AI job is doing (see AITraceKind), for jobs followed step by step (syntheses). */
+  | { type: 'ai-trace'; jobId: string; kind: AITraceKind; text: string };
+
+/**
+ * Steps of an AI job: "status" (e.g. reading the papers), thinking ("thinking-start", its text
+ * when the AI shares it, "thinking-end"), "text" (the answer as it is written), "tool" (a command
+ * the AI runs).
+ */
+export type AITraceKind = 'status' | 'thinking-start' | 'thinking' | 'thinking-end' | 'text' | 'tool';
 
 /** A copy in a group of identical PDFs, with what its sidecar holds (to choose which to keep). */
 export interface DuplicatePaper extends PaperSummary {
@@ -327,6 +337,45 @@ export interface DuplicatePaper extends PaperSummary {
   hasNotes: boolean;
   annotationCount: number;
   summaryCount: number;
+}
+
+/** A paper in a synthesis (numbered as the synthesis cites it: #paper=N). */
+export interface SynthesisPaper {
+  n: number;
+  title: string;
+  authors: string[];
+  year?: string | number;
+  /** The PDF, relative to the library folder holding the Syntheses folder (absolute if elsewhere). */
+  path: string;
+  /** The paper in the library now (null if it is no longer found there). Not saved. */
+  id?: string | null;
+}
+
+/** What a synthesis file records about itself (in a comment at its top). */
+export interface SynthesisMeta {
+  /** What it is about, as shown: the tag, or the search that listed the papers. */
+  topic: string;
+  /** The search that listed the papers (e.g. tag:"frank-wolfe", or any other search). */
+  query: string;
+  createdAt: string;
+  /** The AI that wrote it (id and display name). */
+  ai: string;
+  aiName: string;
+  instructions: string;
+  papers: SynthesisPaper[];
+  /** Papers asked for but left out, and why (e.g. PDF missing). */
+  skipped?: { title: string; reason: string }[];
+}
+
+/** A saved synthesis (without its text). */
+export interface SynthesisInfo extends SynthesisMeta {
+  /** The Markdown file (in <library folder>/Syntheses/). */
+  file: string;
+}
+
+export interface Synthesis extends SynthesisInfo {
+  /** The text, without the comment holding the metadata. */
+  markdown: string;
 }
 
 /** PDFs with the same content (same SHA-256). */
@@ -374,6 +423,16 @@ export interface OmoebaAPI {
    * not read). Progress is reported by "duplicates-progress" events.
    */
   findDuplicates(): Promise<DuplicateGroup[]>;
+  /**
+   * Summarize several papers together (at most MAX_SYNTHESIS_PAPERS), in one consistent
+   * notation, following the user's instructions. Saved as a new Markdown file in
+   * <first library folder>/Syntheses/ (never overwriting one).
+   */
+  summarizeTogether(ids: string[], topic: string, query: string, instructions: string, aiId?: string, jobId?: string): Promise<Synthesis>;
+  /** Saved syntheses, most recent first. */
+  listSyntheses(): Promise<SynthesisInfo[]>;
+  readSynthesis(file: string): Promise<Synthesis>;
+  revealSynthesis(file: string): Promise<void>;
   /** Record that a paper was seen: its page or PDF opened (history, ~/omoeba/history.json). */
   markOpened(id: string): Promise<void>;
   /**

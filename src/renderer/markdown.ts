@@ -123,15 +123,17 @@ export function renderMarkdown(src: string, opts: RenderOptions = {}): string {
 }
 
 /**
- * Page references ([p. 7](#page=7)) are shown in parentheses so that they read as citations:
+ * Page references ([p. 7](#page=7), and in a synthesis [Bach 2015, p. 4](#paper=3&page=4)) are
+ * shown in parentheses so that they read as citations:
  * "improves accuracy (p. 7)". Consecutive references share one pair: "(p. 3, p. 5)". References
  * already in parentheses are left as they are.
  */
 function parenthesizePageRefs(root: DocumentFragment) {
   const isRef = (n: Node | null): n is HTMLAnchorElement =>
-    n instanceof HTMLAnchorElement && /^#page=\d+/.test(n.getAttribute('href') ?? '');
+    n instanceof HTMLAnchorElement && /^#(page=\d+|paper=\d+&(amp;)?page=\d+)/.test(n.getAttribute('href') ?? '');
   const done = new Set<Node>();
-  for (const first of root.querySelectorAll<HTMLAnchorElement>('a[href^="#page="]')) {
+  for (const first of root.querySelectorAll<HTMLAnchorElement>('a[href^="#page="], a[href^="#paper="]')) {
+    if (!isRef(first)) continue;
     if (done.has(first)) continue;
     // Extend the run over references separated only by spaces, commas, semicolons or "and".
     let last: HTMLAnchorElement = first;
@@ -164,6 +166,8 @@ export function mountMarkdown(
   src: string,
   opts: RenderOptions & {
     onPageLink?: (page: number) => void;
+    /** Citations of a paper of a synthesis: [Bach 2015, p. 4](#paper=3&page=4) (page optional). */
+    onPaperLink?: (paper: number, page?: number) => void;
     onExternal?: (url: string) => void;
     /**
      * Renders a figure of the paper `pixelWidth` pixels wide; resolves to an image URL, or
@@ -247,9 +251,12 @@ export function mountMarkdown(
   for (const a of el.querySelectorAll<HTMLAnchorElement>('a[href]')) {
     const href = a.getAttribute('href')!;
     const m = /^#page=(\d+)/.exec(href);
+    const paper = /^#paper=(\d+)(?:&(?:amp;)?page=(\d+))?/.exec(href);
+    if (paper) a.classList.add('paper-ref');
     a.addEventListener('click', (e) => {
       e.preventDefault();
       if (m) opts.onPageLink?.(Number(m[1]));
+      else if (paper) opts.onPaperLink?.(Number(paper[1]), paper[2] ? Number(paper[2]) : undefined);
       else if (/^https?:/i.test(href)) opts.onExternal?.(href);
     });
   }

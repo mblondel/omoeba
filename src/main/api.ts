@@ -11,8 +11,13 @@ import type {
   Annotation,
   AnnotationSources,
   ChatMessage,
+  AITraceKind,
   Config,
   DuplicateGroup,
+  Synthesis,
+  SynthesisInfo,
+  SynthesisMeta,
+  SynthesisPaper,
   IndexStatus,
   OmoebaAPI,
   OmoebaEvent,
@@ -29,6 +34,7 @@ import {
   ScannedFile,
   buildSummary,
   statPaper,
+  isCloudPlaceholder,
   jsonPathOf,
   pdfPathOf,
   readSidecar,
@@ -51,7 +57,19 @@ import {
   runAI,
   stripFences,
   summaryPrompt,
+  synthesisPrompt,
+  type SynthesisSource,
 } from './ai';
+import { MAX_SYNTHESIS_PAPERS } from '../shared/synthesis';
+import {
+  formatSynthesis,
+  libraryFolderOf,
+  listSynthesisFiles,
+  readSynthesisFile,
+  synthesesDir,
+  synthesisFileName,
+  writeNewFile,
+} from './syntheses';
 import { downloadPdf, uniquePath, writeFileAtomic } from './download';
 import { fileNameForTitle, matchLibrary, parseRelated, pdfCandidates, relatedPrompt } from './related';
 import {
@@ -484,6 +502,156 @@ export class OmoebaService implements OmoebaAPI {
     await updateSidecar(jsonPathOf(pdfPath), { source: { url, downloadedAt: new Date().toISOString() } });
     this.newFiles(pdfPath);
     return this.getPaper(pdfPath);
+  }
+
+  // --- Syntheses (several papers summarized together) ---------------------------
+
+  /**
+   * Reports the steps of a job ("ai-trace" events). The answer and thinking arrive in many small
+   * pieces: consecutive pieces are sent together, a few times a second.
+   */
+  private tracer(jobId?: string) {
+    let pending: { kind: AITraceKind; text: string } | null = null;
+    let timer: NodeJS.Timeout | null = null;
+    const flush = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      if (pending && jobId) this.platform.emit({ type: 'ai-trace', jobId, ...pending });
+      pending = null;
+    };
+    const trace = (e: { kind: AITraceKind; text: string }) => {
+      if (!jobId) return;
+      if (e.kind === 'text' || e.kind === 'thinking') {
+        if (pending?.kind === e.kind) pending.text += e.text;
+        else {
+          flush();
+          pending = { ...e };
+        }
+        timer ??= setTimeout(flush, 250);
+        return;
+      }
+      flush();
+      this.platform.emit({ type: 'ai-trace', jobId, ...e });
+    };
+    return { trace, flush };
+  }
+
+  async summarizeTogether(ids: string[], topic: string, query: string, instructions: string, aiId?: string, jobId?: string): Promise<Synthesis> {
+    const { trace, flush } = this.tracer(jobId);
+    const home = this.config.folders[0];
+    if (!home) throw new Error('Add a library folder first (Settings).');
+    const pdfPaths = [...new Set(ids.map((id) => this.checkId(id)))];
+    if (!pdfPaths.length) throw new Error('No paper to summarize.');
+    if (pdfPaths.length > MAX_SYNTHESIS_PAPERS) throw new Error(`At most ${MAX_SYNTHESIS_PAPERS} papers can be summarized together.`);
+    const ai = this.aiFor(aiId);
+    const homeRoot = path.resolve(home);
+
+    // Papers whose text cannot be read (PDF missing, not downloaded from the cloud) are left out.
+    const sources: SynthesisSource[] = [];
+    const papers: SynthesisPaper[] = [];
+    const skipped: { title: string; reason: string }[] = [];
+    const skip = (title: string, reason: string) => {
+      skipped.push({ title, reason });
+      trace({ kind: 'status', text: `Left out “${title}”: ${reason}` });
+    };
+    for (const [i, pdfPath] of pdfPaths.entries()) {
+      if (jobId && this.cancelled.has(jobId)) throw new Error(`${ai.name} was stopped.`);
+      const d = await this.getPaper(pdfPath).catch(() => null);
+      const title = d?.title ?? path.basename(pdfPath);
+      trace({ kind: 'status', text: `Reading paper ${i + 1} of ${pdfPaths.length}: “${title}”` });
+      const st = await fs.stat(pdfPath).catch(() => null);
+      if (!d || !st) {
+        skip(title, 'PDF missing');
+        continue;
+      }
+      if (isCloudPlaceholder(st)) {
+        skip(title, 'PDF not downloaded from the cloud');
+        continue;
+      }
+      let pages: string[];
+      try {
+        pages = await this.paperPages(pdfPath);
+      } catch (e) {
+        skip(title, `text could not be read (${String((e as Error)?.message ?? e).slice(0, 120)})`);
+        continue;
+      }
+      const n = papers.length + 1;
+      const year = d.sidecar.year ?? d.year;
+      const last = (d.authors[0] ?? '').trim().split(/\s+/).pop() || title.split(/\s+/)[0];
+      const summaries = d.sidecar.summaries ?? {};
+      const summary = (summaries[ai.id] ?? Object.values(summaries)[0])?.markdown;
+      sources.push({ n, label: `${last}${year ? ` ${year}` : ''}`, title, authors: d.authors, year, pages, summary });
+      const rel = path.relative(homeRoot, pdfPath);
+      papers.push({
+        n,
+        title,
+        authors: d.authors,
+        ...(year !== undefined && year !== '' ? { year } : {}),
+        path: rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel.split(path.sep).join('/') : pdfPath,
+      });
+    }
+    if (!sources.length) throw new Error(`None of these papers can be read: ${skipped.map((x) => `${x.title} (${x.reason})`).join('; ')}`);
+
+    const prompt = synthesisPrompt(sources, topic, instructions ?? '');
+    trace({
+      kind: 'status',
+      text: `Sending ${sources.length} paper${sources.length === 1 ? '' : 's'} to ${ai.name} (${Math.round(prompt.length / 1000).toLocaleString('en')}k characters of text)`,
+    });
+    let out: string;
+    try {
+      out = await runAI(ai, prompt, { jobId, onTrace: trace, timeoutMs: 30 * 60_000 });
+    } finally {
+      flush();
+      if (jobId) this.cancelled.delete(jobId);
+    }
+    trace({ kind: 'status', text: 'Saving the synthesis' });
+    const now = new Date();
+    const meta: SynthesisMeta = {
+      topic,
+      query: (query ?? '').trim(),
+      createdAt: now.toISOString(),
+      ai: ai.id,
+      aiName: ai.name,
+      instructions: (instructions ?? '').trim(),
+      papers,
+      ...(skipped.length ? { skipped } : {}),
+    };
+    // The list of papers is added by the app (the AI cites them by number).
+    const list = papers
+      .map((p) => `${p.n}. [${p.title.replace(/[[\]]/g, '')}](#paper=${p.n}) — ${p.authors.join(', ') || 'unknown authors'}${p.year ? ` (${p.year})` : ''}`)
+      .join('\n');
+    const left = skipped.length ? `\n\nLeft out: ${skipped.map((x) => `${x.title} (${x.reason})`).join('; ')}.` : '';
+    const markdown = `# ${topic}: synthesis of ${papers.length} papers\n\n${stripFences(out)}\n\n## Papers\n\n${list}${left}\n`;
+    const file = await writeNewFile(synthesesDir(homeRoot), synthesisFileName(topic, now), formatSynthesis(meta, markdown));
+    this.platform.emit({ type: 'syntheses-changed' });
+    return this.readSynthesis(file);
+  }
+
+  async listSyntheses(): Promise<SynthesisInfo[]> {
+    return listSynthesisFiles(this.config.folders);
+  }
+
+  async readSynthesis(file: string): Promise<Synthesis> {
+    const root = libraryFolderOf(file, this.config.folders);
+    if (!root) throw new Error('Not a synthesis of your library.');
+    const syn = await readSynthesisFile(path.resolve(file));
+    // Where each paper is now (null if it is no longer in the library).
+    for (const p of syn.papers) {
+      const abs = path.isAbsolute(p.path) ? p.path : path.resolve(root, ...p.path.split('/'));
+      let id: string | null = null;
+      try {
+        id = (await fs.stat(abs).catch(() => null)) ? this.checkId(abs) : null;
+      } catch {
+        id = null;
+      }
+      p.id = id;
+    }
+    return syn;
+  }
+
+  async revealSynthesis(file: string): Promise<void> {
+    if (!libraryFolderOf(file, this.config.folders)) throw new Error('Not a synthesis of your library.');
+    await this.platform.revealInFolder(path.resolve(file));
   }
 
   // --- History of papers seen (~/omoeba/history.json) ------------------------

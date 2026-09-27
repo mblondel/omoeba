@@ -3,6 +3,7 @@ import type { Config } from '../shared/types';
 import { api } from './api';
 import { clear, errorMessage, h, icon, installTooltips, promptDialog, toast } from './dom';
 import { mountDuplicates } from './views/duplicates';
+import { mountSyntheses, mountSynthesis, type SynthesisRun } from './views/synthesis';
 import { mountList } from './views/list';
 import { mountPaper } from './views/paper';
 import { mountReader } from './views/reader';
@@ -33,7 +34,7 @@ export function applyAppearance(cfg: Config) {
  */
 export type ViewHandle = (() => void) & { onShow?: () => void; goToPage?: (page: number) => void };
 
-type TabKind = 'library' | 'paper' | 'read' | 'settings' | 'search' | 'duplicates' | 'recent';
+type TabKind = 'library' | 'paper' | 'read' | 'settings' | 'search' | 'duplicates' | 'recent' | 'synthesis' | 'syntheses';
 
 interface Tab {
   key: string;
@@ -41,6 +42,9 @@ interface Tab {
   paperId?: string;
   /** Search tabs: the query. */
   query?: string;
+  /** Synthesis tabs: the saved file, or what to make (until it is saved). */
+  file?: string;
+  run?: SynthesisRun;
   title: string;
   panel: HTMLElement;
   button: HTMLElement;
@@ -58,7 +62,7 @@ let setupCleanup: (() => void) | null = null;
 /** True while tabs are being restored at startup (the saved session must not be overwritten). */
 let restoring = false;
 
-const TAB_ICON: Record<TabKind, string> = { library: 'list', paper: 'note', read: 'book', settings: 'settings', search: 'search', duplicates: 'copy', recent: 'book' };
+const TAB_ICON: Record<TabKind, string> = { library: 'list', paper: 'note', read: 'book', settings: 'settings', search: 'search', duplicates: 'copy', recent: 'book', synthesis: 'sparkle', syntheses: 'sparkle' };
 
 /** Whether an element belongs to the tab currently shown (views use it to gate shortcuts). */
 export function isActiveView(el: Element): boolean {
@@ -67,7 +71,7 @@ export function isActiveView(el: Element): boolean {
 }
 
 function keyFor(kind: TabKind, arg?: string) {
-  return kind === 'library' || kind === 'settings' || kind === 'duplicates' || kind === 'recent' ? kind : `${kind}:${arg}`;
+  return kind === 'library' || kind === 'settings' || kind === 'duplicates' || kind === 'recent' || kind === 'syntheses' ? kind : `${kind}:${arg}`;
 }
 
 function mountTab(tab: Tab) {
@@ -78,6 +82,26 @@ function mountTab(tab: Tab) {
     else if (tab.kind === 'search') tab.handle = mountList(tab.panel, { query: tab.query ?? '' });
     else if (tab.kind === 'duplicates') tab.handle = mountDuplicates(tab.panel);
     else if (tab.kind === 'recent') tab.handle = mountList(tab.panel, { recent: true });
+    else if (tab.kind === 'syntheses') tab.handle = mountSyntheses(tab.panel);
+    else if (tab.kind === 'synthesis')
+      tab.handle = mountSynthesis(
+        tab.panel,
+        { file: tab.file, run: tab.run },
+        {
+          // Once made, the tab shows the saved file (and is restored at startup).
+          onSaved: (file, title) => {
+            const other = tabs.find((t) => t !== tab && t.key === keyFor('synthesis', file));
+            if (other) closeTab(other);
+            tab.key = keyFor('synthesis', file);
+            tab.file = file;
+            tab.run = undefined;
+            tab.title = title;
+            renderTabButton(tab);
+            if (active === tab) document.title = `${title} — Omoeba`;
+            saveSession();
+          },
+        },
+      );
     else if (tab.kind === 'paper') tab.handle = mountPaper(tab.panel, tab.paperId!);
     else tab.handle = mountReader(tab.panel, tab.paperId!, tab.initialPage);
   } catch (e) {
@@ -133,9 +157,9 @@ function activate(tab: Tab) {
 function openTab(
   kind: TabKind,
   paperId?: string,
-  opts: { page?: number; background?: boolean; query?: string; title?: string } = {},
+  opts: { page?: number; background?: boolean; query?: string; title?: string; file?: string; run?: SynthesisRun } = {},
 ): Tab {
-  const key = keyFor(kind, kind === 'search' ? opts.query : paperId);
+  const key = keyFor(kind, kind === 'search' ? opts.query : kind === 'synthesis' ? (opts.file ?? `run-${++synthesisRuns}`) : paperId);
   let tab = tabs.find((t) => t.key === key);
   if (tab) {
     if (opts.page && tab.handle?.goToPage) tab.handle.goToPage(opts.page);
@@ -159,7 +183,9 @@ function openTab(
       kind,
       paperId,
       query: opts.query,
-      title: kind === 'settings' ? 'Settings' : kind === 'library' ? 'Library' : kind === 'duplicates' ? 'Duplicates' : kind === 'recent' ? 'Recently Seen' : kind === 'search' ? opts.title || opts.query || 'Search' : 'Loading…',
+      file: opts.file,
+      run: opts.run,
+      title: kind === 'settings' ? 'Settings' : kind === 'library' ? 'Library' : kind === 'duplicates' ? 'Duplicates' : kind === 'recent' ? 'Recently Seen' : kind === 'syntheses' ? 'Syntheses' : kind === 'synthesis' ? opts.title || (opts.run ? `Synthesis: ${opts.run.topic}` : 'Synthesis') : kind === 'search' ? opts.title || opts.query || 'Search' : 'Loading…',
       panel,
       button,
       handle: null,
@@ -218,7 +244,15 @@ function saveSession() {
       JSON.stringify({
         tabs: tabs
           .filter((t) => t.kind !== 'library')
-          .map((t) => (t.kind === 'search' ? { kind: t.kind, query: t.query, title: t.title } : { kind: t.kind, paperId: t.paperId })),
+          // (A synthesis still being made is not restored: it is saved, and listed, when done.)
+          .filter((t) => t.kind !== 'synthesis' || t.file)
+          .map((t) =>
+            t.kind === 'search'
+              ? { kind: t.kind, query: t.query, title: t.title }
+              : t.kind === 'synthesis'
+                ? { kind: t.kind, file: t.file, title: t.title }
+                : { kind: t.kind, paperId: t.paperId },
+          ),
         active: active?.key,
       }),
     );
@@ -228,7 +262,7 @@ function saveSession() {
 }
 
 function restoreSession() {
-  let saved: { tabs: { kind: TabKind; paperId?: string; query?: string; title?: string }[]; active?: string } | null = null;
+  let saved: { tabs: { kind: TabKind; paperId?: string; query?: string; title?: string; file?: string }[]; active?: string } | null = null;
   try {
     saved = JSON.parse(localStorage.getItem('omoeba.tabs') || 'null');
   } catch {
@@ -236,7 +270,8 @@ function restoreSession() {
   }
   restoring = true;
   for (const t of saved?.tabs ?? []) {
-    if (['paper', 'read', 'settings', 'duplicates', 'recent'].includes(t.kind)) openTab(t.kind, t.paperId, { background: true });
+    if (['paper', 'read', 'settings', 'duplicates', 'recent', 'syntheses'].includes(t.kind)) openTab(t.kind, t.paperId, { background: true });
+    else if (t.kind === 'synthesis' && typeof t.file === 'string') openTab('synthesis', undefined, { background: true, file: t.file, title: t.title });
     else if (t.kind === 'search' && typeof t.query === 'string') openTab('search', undefined, { background: true, query: t.query, title: t.title });
   }
   const want = tabs.find((t) => t.key === saved?.active) ?? tabs[0];
@@ -254,6 +289,18 @@ export function navigate(route: string) {
   else if ((m = /^#\/paper\/(.+)$/.exec(route))) openTab('paper', decodeURIComponent(m[1]));
   else if ((m = /^#\/read\/([^?]+)(?:\?page=(\d+))?$/.exec(route)))
     openTab('read', decodeURIComponent(m[1]), { page: m[2] ? Number(m[2]) : undefined });
+}
+
+let synthesisRuns = 0;
+
+/** Open a synthesis: a saved one (`file`), or one to make (`run`). */
+export function openSynthesisTab(opts: { file?: string; run?: SynthesisRun; title?: string }) {
+  openTab('synthesis', undefined, opts);
+}
+
+/** Open (or switch to) the list of saved syntheses. */
+export function openSynthesesTab() {
+  openTab('syntheses');
 }
 
 /** Open (or switch to) the tab listing identical PDFs. */
@@ -412,6 +459,7 @@ api.onMenu((action) => {
   else if (action === 'add-url') addPaperFromUrl();
   else if (action === 'duplicates') openDuplicatesTab();
   else if (action === 'recent') openTab('recent');
+  else if (action === 'syntheses') openTab('syntheses');
   else if (action === 'close-tab') active && closeTab(active);
   else if (action === 'next-tab') cycleTab(1);
   else if (action === 'prev-tab') cycleTab(-1);

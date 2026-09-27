@@ -16,7 +16,8 @@ import {
   tagColor,
   setTagPalette,
 } from '../dom';
-import { navigate, state, addPaperFromUrl, isActiveView, retargetSearchTab } from '../app';
+import { navigate, state, addPaperFromUrl, isActiveView, openSynthesesTab as navigateToSyntheses, openSynthesisTab, retargetSearchTab } from '../app';
+import { openSummarizeDialog } from './synthesis';
 import { renderThumbnail } from '../thumbnail';
 import { sameAuthor, sameInstitution, tagQuery } from '../authors';
 
@@ -135,11 +136,62 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
     icon('edit'),
     'Rename tag…',
   );
+  // The papers a search lists can be summarized together (a synthesis); earlier syntheses made
+  // from the same search are linked.
+  const summarizeBtn = h(
+    'button',
+    { class: 'btn', hidden: true, onclick: () => summarizeTogether() },
+    icon('sparkle', 13),
+    'Summarize together…',
+  );
+  const synthLink = h('button', { class: 'link-btn', hidden: true });
+  const normQuery = (q: string) => q.trim().replace(/\s+/g, ' ').toLowerCase();
+  let synthQuery: string | null = null;
   const updateRenameBtn = () => {
     const t = shownTag();
     renameBtn.hidden = !t;
     if (t) renameBtn.title = `Rename the tag “${t}” in all papers`;
   };
+  /** After each search: the button (for any search listing papers) and the link. */
+  const updateSummarize = () => {
+    const q = search.value.trim();
+    summarizeBtn.hidden = !q || !visible.length;
+    summarizeBtn.title = `Summarize the ${visible.length} paper${visible.length === 1 ? '' : 's'} listed together, in one notation (an AI synthesis, saved in your library)`;
+    const key = q ? normQuery(q) : null;
+    if (key !== synthQuery) {
+      synthQuery = key;
+      updateSynthLink();
+    }
+  };
+  async function updateSynthLink() {
+    const key = synthQuery;
+    synthLink.hidden = true;
+    if (!key) return;
+    const list = (await api.listSyntheses().catch(() => [])).filter((x) => normQuery(x.query) === key);
+    if (key !== synthQuery || !list.length) return;
+    synthLink.hidden = false;
+    synthLink.textContent = list.length === 1 ? '1 synthesis' : `${list.length} syntheses`;
+    synthLink.title = `Earlier syntheses of “${list[0].topic}”`;
+    synthLink.onclick = () =>
+      list.length === 1 ? openSynthesisTab({ file: list[0].file, title: `Synthesis: ${list[0].topic}` }) : navigateToSyntheses();
+  }
+  const offSyntheses = api.onEvent((e) => {
+    if (e.type === 'syntheses-changed') updateSynthLink();
+  });
+
+  async function summarizeTogether() {
+    const query = search.value.trim();
+    if (!query || !visible.length) return;
+    // Named after the tag when the list shows one (with its spelling), else after the search.
+    const t = shownTag();
+    const tag = t ? visible[0]?.tags.find((x) => x.trim().toLowerCase() === t.toLowerCase())?.trim() ?? t : null;
+    try {
+      const run = await openSummarizeDialog({ topic: tag ?? query, query, papers: visible });
+      if (run) openSynthesisTab({ run });
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+    }
+  }
 
   // When the list shows a folder (folder: in the search), a tag can be added to all its papers.
   const tagAllBtn = h(
@@ -227,6 +279,8 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
     h(
       'div',
       { class: 'topbar-actions' },
+      synthLink,
+      summarizeBtn,
       tagAllBtn,
       renameBtn,
       iconButton('plus', 'Add paper from URL…', () => addPaperFromUrl()),
@@ -556,6 +610,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
     visible = sortPapers(list);
     renderRows(keep);
     updateTagAllBtn();
+    updateSummarize();
   }
 
 
@@ -677,6 +732,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
     offEvent();
     window.removeEventListener('keydown', onKey);
     window.removeEventListener('omoeba-menu', onMenu);
+    offSyntheses();
     window.clearInterval(statusTimer);
   };
 }

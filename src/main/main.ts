@@ -145,6 +145,7 @@ function buildMenu() {
         { type: 'separator' },
         { label: 'Library', accelerator: 'CmdOrCtrl+L', click: send('library') },
         { label: 'Recently Seen', accelerator: 'CmdOrCtrl+Shift+R', click: send('recent') },
+        { label: 'Syntheses', click: send('syntheses') },
         { label: 'Find Duplicates', click: send('duplicates') },
         { type: 'separator' },
         ...(isMac ? [] : [{ label: 'Settings…', accelerator: 'Ctrl+,', click: send('settings') }]),

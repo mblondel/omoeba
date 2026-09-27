@@ -5,14 +5,23 @@ import path from 'node:path';
 import type { AIProvider, ChatMessage } from '../shared/types';
 import { childEnv, which } from './shellenv';
 import { aiWorkDir } from './config';
+import { StreamParser, isUnknownOptionError, streamingInvocation, type StreamFormat, type TraceEvent } from './aistream';
 
 const running = new Map<string, ChildProcess>();
 
 export interface RunOptions {
   jobId?: string;
   onChunk?: (text: string) => void;
+  /**
+   * Follow what the AI does (thinking, writing, tools) while it works. Claude Code and Codex are
+   * then run with their progress reported as JSON events (see aistream.ts).
+   */
+  onTrace?: (e: TraceEvent) => void;
   timeoutMs?: number;
 }
+
+/** The CLI did not accept the options that report its progress (e.g. an older version). */
+class UnknownOptionError extends Error {}
 
 export async function resolveAI(ai: AIProvider): Promise<string | null> {
   return which(ai.command);
@@ -28,6 +37,20 @@ export function cleanPrompt(prompt: string): string {
 }
 
 export async function runAI(ai: AIProvider, rawPrompt: string, opts: RunOptions = {}): Promise<string> {
+  if (!opts.onTrace) return runOnce(ai, rawPrompt, opts, 'text');
+  const inv = streamingInvocation(ai);
+  if (inv.format === 'text') return runOnce(ai, rawPrompt, opts, 'text');
+  try {
+    return await runOnce({ ...ai, args: inv.args }, rawPrompt, opts, inv.format);
+  } catch (e) {
+    if (!(e instanceof UnknownOptionError)) throw e;
+    // An older CLI: run it as usual (only its final answer is shown).
+    opts.onTrace({ kind: 'status', text: `${ai.name} cannot report its progress (an older version?): waiting for its answer` });
+    return runOnce(ai, rawPrompt, opts, 'text');
+  }
+}
+
+async function runOnce(ai: AIProvider, rawPrompt: string, opts: RunOptions, format: StreamFormat): Promise<string> {
   const prompt = cleanPrompt(rawPrompt);
   if (!ai.enabled) throw new Error(`${ai.name} is not authorized. Enable it in Settings.`);
   const exe = await resolveAI(ai);
@@ -63,9 +86,11 @@ export async function runAI(ai: AIProvider, rawPrompt: string, opts: RunOptions 
     }, opts.timeoutMs ?? 15 * 60_000);
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
+    const parser = opts.onTrace ? new StreamParser(format, opts.onTrace) : null;
     child.stdout.on('data', (d: string) => {
       out += d;
-      opts.onChunk?.(d);
+      if (format === 'text') opts.onChunk?.(d);
+      parser?.push(d);
     });
     child.stderr.on('data', (d: string) => {
       err += d;
@@ -81,7 +106,16 @@ export async function runAI(ai: AIProvider, rawPrompt: string, opts: RunOptions 
       clearTimeout(timer);
       removePromptFile();
       if (opts.jobId) running.delete(opts.jobId);
-      if (code === 0 && out.trim()) resolve(out.trim());
+      const parsed = parser?.end();
+      if (format !== 'text' && parsed) {
+        // The answer is in the events; an error event without an answer is the failure.
+        if (code === 0 && parsed.final?.trim()) return resolve(parsed.final.trim());
+        if (!killedByTimeout && !signal && code !== 0 && isUnknownOptionError(err)) {
+          return reject(new UnknownOptionError(err.trim().split('\n').slice(-3).join('\n')));
+        }
+        if (!killedByTimeout && !signal && parsed.error) return reject(new Error(`${ai.name}: ${parsed.error}`));
+      }
+      if (code === 0 && out.trim() && format === 'text') resolve(out.trim());
       else if (killedByTimeout) reject(new Error(`${ai.name} timed out.`));
       else if (signal) reject(new Error(`${ai.name} was stopped.`));
       else {
@@ -184,6 +218,85 @@ Guidelines:
 
 PAPER TEXT:
 ${paperTextBlock(pages)}`;
+}
+
+/** Paper text sent for a synthesis, in all (shared by the papers). About 100k tokens. */
+export const SYNTHESIS_TEXT_BUDGET = 400_000;
+/** Of which, at most, for one paper's existing summary (given as context). */
+const SYNTHESIS_SUMMARY_CHARS = 5_000;
+
+export interface SynthesisSource {
+  /** Number used to cite the paper: [Label, p. 3](#paper=N&page=3). */
+  n: number;
+  /** Short name, e.g. "Bach 2015". */
+  label: string;
+  title: string;
+  authors: string[];
+  year?: string | number;
+  pages: string[];
+  /** An existing summary of the paper (Markdown), given as context. */
+  summary?: string;
+}
+
+/**
+ * Prompt for a joint summary ("synthesis") of several papers, in one notation. The paper text
+ * budget is shared equally; each paper's text keeps its "=== Page N ===" markers, for citations.
+ */
+export function synthesisPrompt(papers: SynthesisSource[], topic: string, instructions: string): string {
+  const each = Math.floor(SYNTHESIS_TEXT_BUDGET / Math.max(1, papers.length));
+  const blocks = papers.map((p) => {
+    const summary = p.summary?.trim() ? p.summary.trim().slice(0, SYNTHESIS_SUMMARY_CHARS) : '';
+    const text = paperTextBlock(p.pages, Math.max(5_000, each - summary.length));
+    const who = p.authors.length ? p.authors.join(', ') : 'unknown authors';
+    return [
+      `######## PAPER [${p.n}] (cite as "${p.label}", #paper=${p.n}): ${p.title} — ${who}${p.year ? ` (${p.year})` : ''}`,
+      summary ? `An earlier summary of this paper, for context (cite the paper's pages, not this):\n"""\n${summary}\n"""` : '',
+      `Text of paper [${p.n}]:\n${text}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+  });
+  const extra = instructions.trim()
+    ? `\nThe researcher's own instructions. Follow them; they take precedence over the list of
+sections above, but always keep a single consistent notation and the citation format:
+"""
+${instructions.trim()}
+"""
+`
+    : '';
+  return `Write a joint synthesis of the ${papers.length} research papers below, which a researcher selected
+together ("${topic}"). It is for a researcher who knows the field.
+
+Write in Markdown, with these sections:
+## Notation
+A table (| Symbol | Meaning | Notes |) fixing ONE notation, chosen to fit all the papers, used
+throughout this document. When a paper uses other symbols for the same object, say so in the Notes
+column (e.g. "[${papers[0]?.label ?? 'Author Year'}] writes $\\gamma_t$").
+## Overview
+What the papers address, and how they relate (which builds on which, which compete, which are
+complementary).
+## Papers
+One subsection per paper, in the order given, titled "### [N] Short title (Label)": the problem,
+the method and the key results, restated in the notation of the Notation section.
+## Comparison
+Assumptions, guarantees (e.g. rates, complexity) and experimental findings side by side, with a
+table where it helps.
+## Open questions
+Gaps, disagreements between the papers, and natural next steps.
+
+Rules:
+- Use the notation of the Notation section everywhere: rewrite each paper's formulas in it; never
+  switch to a paper's own symbols.
+- Use LaTeX for math: $...$ inline and $$...$$ for display equations.
+- Cite every claim, result, equation or definition with a Markdown link to the paper and page it
+  comes from: [Label, p. N](#paper=K&page=N), where K is the paper's number and N the page from the
+  "=== Page N ===" markers of that paper's text (e.g. [${papers[0]?.label ?? 'Bach 2015'}, p. 4](#paper=1&page=4)).
+  To refer to a paper as a whole: [Label](#paper=K).
+- Only state what the papers' text supports. A paper's text may be cut short: do not guess what
+  its missing pages say.
+- Output only the Markdown, with no preamble and no code fences.
+${extra}
+${blocks.join('\n\n')}`;
 }
 
 export function askPrompt(
