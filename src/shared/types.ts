@@ -187,6 +187,11 @@ export interface PaperSummary {
   annotationCount?: number;
   /** URL of the first-page thumbnail (served from the thumbnail cache), if up to date. */
   thumbnail?: string;
+  /**
+   * The PDF is not downloaded to this computer (a cloud placeholder, e.g. Google Drive in
+   * streaming mode): no thumbnail is made, since reading it would download it.
+   */
+  cloudOnly?: boolean;
 }
 
 export interface PaperDetail extends PaperSummary {
@@ -279,6 +284,10 @@ export interface IndexStatus {
   lastSync: string | null;
   documents: number;
   terms: number;
+  /** Papers whose PDF text is not indexed yet. */
+  pendingPdfs?: number;
+  /** Progress of the running sync: listing files, then reading PDFs. */
+  progress?: { phase: 'files' | 'pdf'; done: number; total: number };
   error?: string;
 }
 

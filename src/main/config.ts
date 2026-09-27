@@ -10,7 +10,9 @@ export function appDir(): string {
 }
 
 export const configPath = () => path.join(appDir(), 'config.json');
-export const indexPath = () => path.join(appDir(), 'index.json');
+/** The index of earlier versions (one JSON file); removed once the database exists. */
+export const legacyIndexPath = () => path.join(appDir(), 'index.json');
+export const indexDbPath = () => path.join(appDir(), 'index.sqlite');
 export const thumbnailsPath = () => path.join(appDir(), 'thumbnails.cache');
 /** Empty working directory in which AI CLIs are run. */
 export const aiWorkDir = () => path.join(appDir(), 'ai-workdir');

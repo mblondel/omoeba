@@ -782,6 +782,13 @@ input.paper-institutions {
   gap: 4px;
   margin-top: 8px;
 }
+/* Paper list: marker row that renders the next rows when scrolled into view */
+.papers tr.list-sentinel td {
+  height: 1px;
+  padding: 0;
+  border: 0;
+}
+
 /* Related work: the most relevant cited papers */
 .related {
   border-top: 1px solid var(--border);

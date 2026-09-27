@@ -13,7 +13,7 @@ import {
   skimDictToAnnotation,
   writeSkimFile,
 } from '../src/main/skim';
-import { SearchIndex, docFields, parseQuery } from '../src/main/searchindex';
+import { parseQuery } from '../src/main/searchindex';
 import { scanFolders, readSidecar, updateSidecar, buildSummary } from '../src/main/library';
 import { parseJsonObject, stripFences } from '../src/main/ai';
 import { toPdfUrl } from '../src/main/download';
@@ -154,45 +154,6 @@ test('xml plist and rtf helpers', () => {
   assert.equal(a.type, 'Underline');
   assert.deepEqual(a.bounds, [1, 2, 3, 4]);
   assert.equal(rtfToText('{\\rtf1\\ansi{\\fonttbl\\f0 Helvetica;}\\f0 Hello\\par World \\u233?}'), 'Hello\nWorld é');
-});
-
-test('search index: fields, prefixes, negation', () => {
-  const idx = new SearchIndex({
-    version: 2,
-    builtAt: '',
-    docs: {
-      a: {
-        pdfMtime: 0,
-        jsonMtime: 0,
-        fields: docFields({
-          title: 'GFlowNet Foundations',
-          authors: ['Yoshua Bengio', 'Salem Lahlou'],
-          institutions: ['Mila'],
-          tags: ['gflownets', 'to read'],
-          keywords: ['generative flow networks'],
-        }),
-      },
-      b: {
-        pdfMtime: 0,
-        jsonMtime: 0,
-        fields: docFields({
-          title: 'Self-distilled reasoner',
-          authors: ['Jane Doe'],
-          institutions: ['Google DeepMind'],
-          tags: ['distillation'],
-          texts: ['We study reinforcement learning'],
-        }),
-      },
-    },
-  });
-  assert.deepEqual(idx.query('author:beng').sort(), ['a']);
-  assert.deepEqual(idx.query('inst:deepmind'), ['b']);
-  assert.deepEqual(idx.query('tag:"to read"'), ['a']);
-  assert.deepEqual(idx.query('reinforce'), ['b']);
-  assert.deepEqual(idx.query('-tag:distillation'), ['a']);
-  assert.deepEqual(idx.query('kw:flow title:found'), ['a']);
-  assert.deepEqual(idx.query('nothingmatches'), []);
-  assert.deepEqual(parseQuery('foo:bar'), [{ field: undefined, value: 'foo:bar', negate: false }]);
 });
 
 test('library: scan, sidecars, summaries', async () => {

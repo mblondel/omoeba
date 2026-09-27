@@ -42,16 +42,24 @@ const prefs = {
 // --- First-page thumbnails, generated in the background and cached in ~/omoeba/thumbnails.cache.
 
 const thumbQueue: { id: string; pdfMtime: number }[] = [];
+const thumbQueued = new Set<string>();
+const THUMB_QUEUE_MAX = 400;
 const thumbFailed = new Set<string>();
 let thumbRunning = false;
 /** Mounted lists (the Library and search tabs) waiting for new thumbnails. */
 const thumbListeners = new Set<(id: string, png: string) => void>();
 
+/**
+ * Make the missing thumbnails of these papers (the rows being shown). PDFs that are not on this
+ * computer (cloud placeholders) get none: reading them would download them.
+ */
 function queueThumbnails(papers: PaperSummary[]) {
-  for (const p of papers) {
-    if (!p.hasPdf || p.thumbnail || thumbFailed.has(p.id) || thumbQueue.some((q) => q.id === p.id)) continue;
-    thumbQueue.push({ id: p.id, pdfMtime: p.pdfMtime });
-  }
+  const add = papers.filter((p) => p.hasPdf && !p.cloudOnly && !p.thumbnail && !thumbFailed.has(p.id) && !thumbQueued.has(p.id));
+  // The rows shown last are made first (they are the ones on screen); rows scrolled past long ago
+  // are dropped from the queue (made again when shown again).
+  thumbQueue.unshift(...add.map((p) => ({ id: p.id, pdfMtime: p.pdfMtime })));
+  add.forEach((p) => thumbQueued.add(p.id));
+  for (const q of thumbQueue.splice(THUMB_QUEUE_MAX)) thumbQueued.delete(q.id);
   if (!thumbRunning) void runThumbnails();
 }
 
@@ -59,6 +67,7 @@ async function runThumbnails() {
   thumbRunning = true;
   while (thumbQueue.length) {
     const { id, pdfMtime } = thumbQueue.shift()!;
+    thumbQueued.delete(id);
     try {
       const png = await renderThumbnail(await api.readPdf(id));
       await api.setThumbnail(id, png, pdfMtime);
@@ -289,74 +298,129 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
     return [...list].sort((a, b) => sort.dir * collator.compare(key(a), key(b)));
   }
 
-  function renderRows() {
-    clear(tbody);
+  /**
+   * Rows are rendered in chunks, as the list is scrolled: a library of thousands of papers
+   * does not create thousands of rows (nor thumbnails) at once.
+   */
+  const CHUNK = 200;
+  let rendered = 0;
+  const sentinel = h('tr', { class: 'list-sentinel' }, h('td', { colSpan: 5 }));
+  const moreObserver = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && renderMore(), {
+    root: wrap,
+    rootMargin: '800px 0px',
+  });
+  moreObserver.observe(sentinel);
+
+  /** Render the next rows (at least up to row `upTo`). */
+  function renderMore(upTo = rendered + CHUNK) {
+    const start = rendered;
+    const end = Math.min(visible.length, Math.max(upTo, rendered + 1));
+    if (start >= end) return;
     const frag = document.createDocumentFragment();
-    for (const p of visible) {
-      const tr = h(
-        'tr',
-        {
-          class: `${p.id === selected ? 'selected' : ''} ${p.hasPdf ? '' : 'missing'}`,
-          tabIndex: -1,
-          dataset: { id: p.id },
-          ondblclick: () => open(p),
-          onclick: () => {
-            select(p.id);
-            open(p);
-          },
-        },
-        thumbCell(p),
-        h(
-          'td',
-          { class: 'c-title', title: p.title },
-          !p.hasPdf ? h('span', { class: 'warn', title: 'PDF missing' }, icon('warn', 14)) : null,
-          h('span', null, p.title),
-          p.titleIsFallback
-            ? h(
-                'span',
-                { class: 'unknown-title', title: 'Title not extracted yet — showing the file name. Open the paper to extract it.' },
-                icon('help', 13),
-              )
-            : null,
-          p.year ? h('span', { class: 'year' }, String(p.year)) : null,
-        ),
-        h('td', { class: 'c-authors', title: p.authors.join(', ') }, formatAuthors(p.authors)),
-        h('td', { class: 'c-folder', title: p.pdfPath }, p.folder),
-        h(
-          'td',
-          { class: 'c-tags' },
-          p.tags.map((t) =>
-            h(
-              'span',
-              {
-                class: 'tag',
-                dataset: { c: tagColor(t) },
-                onclick: (e: Event) => {
-                  e.stopPropagation();
-                  search.value = tagQuery(t);
-                  onSearch();
-                },
-              },
-              t,
-            ),
-          ),
-        ),
-      );
-      frag.appendChild(tr);
-    }
+    for (let i = start; i < end; i++) frag.appendChild(rowFor(visible[i]));
+    rendered = end;
+    sentinel.remove();
     tbody.appendChild(frag);
+    if (rendered < visible.length) tbody.appendChild(sentinel);
+  }
+
+  /** Thumbnails are made for the rows that come into view (most recently shown first). */
+  const byId = new Map<string, PaperSummary>();
+  const thumbObserver = new IntersectionObserver(
+    (entries) => {
+      const shown: PaperSummary[] = [];
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        thumbObserver.unobserve(e.target);
+        const p = byId.get((e.target as HTMLElement).dataset.id ?? '');
+        if (p) shown.push(p);
+      }
+      if (shown.length) queueThumbnails(shown);
+    },
+    { root: wrap, rootMargin: '300px 0px' },
+  );
+
+  /** `keep`: render as many rows as before (a refresh while scrolled down; not a new search). */
+  function renderRows(keep = false) {
+    const upTo = keep ? Math.max(CHUNK, rendered) : CHUNK;
+    thumbObserver.disconnect();
+    byId.clear();
+    for (const p of visible) byId.set(p.id, p);
+    clear(tbody);
+    rendered = 0;
+    renderMore(upTo);
     count.textContent =
       visible.length === papers.length ? `${papers.length} papers` : `${visible.length} of ${papers.length} papers`;
     empty.style.display = visible.length ? 'none' : '';
     clear(empty);
     if (!visible.length) {
       if (!papers.length) {
-        empty.append(
-          h('p', null, 'No PDFs found in your library folders.'),
-          h('button', { class: 'btn', onclick: () => navigate('#/settings') }, 'Manage folders'),
-        );
+        if (indexStatus?.running) empty.append(h('p', null, 'Indexing your library…'));
+        else
+          empty.append(
+            h('p', null, 'No PDFs found in your library folders.'),
+            h('button', { class: 'btn', onclick: () => navigate('#/settings') }, 'Manage folders'),
+          );
       } else empty.append(h('p', null, 'No papers match your search.'));
     }
+  }
+
+  function rowFor(p: PaperSummary): HTMLTableRowElement {
+    const tr = rowElement(p);
+    if (p.hasPdf && !p.cloudOnly && !p.thumbnail) thumbObserver.observe(tr);
+    return tr;
+  }
+
+  function rowElement(p: PaperSummary): HTMLTableRowElement {
+    return h(
+      'tr',
+      {
+        class: `${p.id === selected ? 'selected' : ''} ${p.hasPdf ? '' : 'missing'}`,
+        tabIndex: -1,
+        dataset: { id: p.id },
+        ondblclick: () => open(p),
+        onclick: () => {
+          select(p.id);
+          open(p);
+        },
+      },
+      thumbCell(p),
+      h(
+        'td',
+        { class: 'c-title', title: p.title },
+        !p.hasPdf ? h('span', { class: 'warn', title: 'PDF missing' }, icon('warn', 14)) : null,
+        h('span', null, p.title),
+        p.titleIsFallback
+          ? h(
+              'span',
+              { class: 'unknown-title', title: 'Title not extracted yet — showing the file name. Open the paper to extract it.' },
+              icon('help', 13),
+            )
+          : null,
+        p.year ? h('span', { class: 'year' }, String(p.year)) : null,
+      ),
+      h('td', { class: 'c-authors', title: p.authors.join(', ') }, formatAuthors(p.authors)),
+      h('td', { class: 'c-folder', title: p.pdfPath }, p.folder),
+      h(
+        'td',
+        { class: 'c-tags' },
+        p.tags.map((t) =>
+          h(
+            'span',
+            {
+              class: 'tag',
+              dataset: { c: tagColor(t) },
+              onclick: (e: Event) => {
+                e.stopPropagation();
+                search.value = tagQuery(t);
+                onSearch();
+              },
+            },
+            t,
+          ),
+        ),
+      ),
+    );
   }
 
   function select(id: string | null) {
@@ -410,7 +474,7 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
       .every((t) => hay.includes(t.replace(/"/g, '')));
   }
 
-  async function applyFilter() {
+  async function applyFilter(keep = false) {
     const seq = ++searchSeq;
     const q = search.value.trim();
     if (!isSearchTab) state.listQuery = q;
@@ -432,16 +496,13 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
       if (seq !== searchSeq) return;
       if (ids) {
         const set = new Set(ids);
-        // Papers not yet indexed are matched by the simple fallback.
-        list = list.filter((p) => set.has(p.id) || (!indexKnows(p) && fallbackMatch(p, rest)));
-      } else list = list.filter((p) => fallbackMatch(p, rest));
+        list = list.filter((p) => set.has(p.id));
+      } else list = list.filter((p) => fallbackMatch(p, rest)); // no index
     }
     visible = sortPapers(list);
-    renderRows();
+    renderRows(keep);
   }
 
-  let indexedIds: Set<string> | null = null;
-  const indexKnows = (p: PaperSummary) => indexedIds?.has(p.id) ?? false;
 
   const onSearch = debounce(() => applyFilter(), 120);
   search.addEventListener('input', onSearch);
@@ -461,7 +522,9 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
   function moveSelection(delta: number) {
     if (!visible.length) return;
     const i = visible.findIndex((p) => p.id === selected);
-    const next = visible[Math.max(0, Math.min(visible.length - 1, i + delta))];
+    const j = Math.max(0, Math.min(visible.length - 1, i + delta));
+    if (j >= rendered) renderMore(j + CHUNK);
+    const next = visible[j];
     select(next.id);
     tbody.querySelector(`tr.selected`)?.scrollIntoView({ block: 'nearest' });
   }
@@ -488,12 +551,18 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
   function renderIndexStatus() {
     const s = indexStatus;
     if (!s) return;
+    const n = (x: number) => x.toLocaleString();
+    const pending = s.pendingPdfs ? ` · ${n(s.pendingPdfs)} PDF${s.pendingPdfs > 1 ? 's' : ''} to read` : '';
     indexInfo.textContent = s.running
-      ? 'Indexing…'
+      ? s.progress?.phase === 'pdf'
+        ? `Indexing PDFs ${n(s.progress.done)} / ${n(s.progress.total)}…`
+        : 'Indexing…'
       : s.error
         ? 'Index error'
-        : `Index: ${s.documents} docs · synced ${relTime(s.lastSync)}`;
-    indexInfo.title = s.error ?? `${s.terms} terms`;
+        : `Index: ${n(s.documents)} papers · synced ${relTime(s.lastSync)}${pending}`;
+    indexInfo.title =
+      s.error ??
+      `${n(s.terms)} terms${s.pendingPdfs ? ` · the text of ${n(s.pendingPdfs)} PDFs is not indexed yet (PDFs not downloaded from the cloud are read once they are on this computer)` : ''}`;
     indexInfo.classList.toggle('busy', s.running);
   }
 
@@ -503,13 +572,10 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
       const counts = new Map<string, number>();
       for (const p of papers) for (const t of p.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
       setTagPalette([...counts].map(([tag, count]) => ({ tag, count })));
-      indexedIds = new Set((await api.search('').catch(() => null)) ?? []);
     } catch (e) {
       toast(errorMessage(e), 'error');
     }
-    await applyFilter();
-    // Missing thumbnails: visible papers first, in display order.
-    queueThumbnails([...visible, ...papers]);
+    await applyFilter(true);
   }
 
   const onThumbnail = (id: string, png: string) => {
@@ -541,6 +607,8 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
   });
   load().then(() => {
     if (isSearchTab) return;
+    // Render enough rows to get back to where the list was.
+    while (rendered < visible.length && wrap.scrollHeight < savedScroll + wrap.clientHeight) renderMore();
     wrap.scrollTop = savedScroll;
     if (!state.listQuery) search.focus();
   });
@@ -549,6 +617,8 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
     if (!isSearchTab) savedScroll = wrap.scrollTop;
     thumbListeners.delete(onThumbnail);
     tagBarObserver.disconnect();
+    moreObserver.disconnect();
+    thumbObserver.disconnect();
     offEvent();
     window.removeEventListener('keydown', onKey);
     window.removeEventListener('omoeba-menu', onMenu);

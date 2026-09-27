@@ -12,31 +12,71 @@ export interface ScannedFile {
   hasSkim: boolean;
   pdfMtime: number;
   pdfBirth: number;
+  pdfSize: number;
+  /**
+   * The PDF is a cloud placeholder, not downloaded to this computer (e.g. Google Drive in
+   * streaming mode): reading it would download it. Detected as a non-empty file using no disk
+   * blocks (macOS "dataless" files).
+   */
+  pdfCloud: boolean;
   jsonMtime: number;
 }
 
+/** Whether a file is a cloud placeholder whose content is not on this computer. */
+export function isCloudPlaceholder(st: { size: number; blocks?: number }): boolean {
+  return st.size > 0 && st.blocks === 0;
+}
+
 const SKIP_DIRS = new Set(['node_modules', '.git', '.Trash', '__MACOSX']);
+const MAX_DEPTH = 12;
+const skipDir = (name: string) => name.startsWith('.') || SKIP_DIRS.has(name) || name.endsWith('.app');
+
+/**
+ * Whether the library scan looks at this file (same rules as scanFolders: not hidden, not in
+ * a skipped folder, at most MAX_DEPTH folders deep).
+ */
+export function isScanned(file: string, root: string): boolean {
+  const rel = path.relative(root, file);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return false;
+  const parts = rel.split(path.sep);
+  const name = parts.pop()!;
+  return !name.startsWith('.') && parts.length <= MAX_DEPTH && !parts.some(skipDir);
+}
 
 /** Recursively lists PDFs and sidecars under the given roots. */
 export async function scanFolders(roots: string[]): Promise<ScannedFile[]> {
+  return (await scanFoldersDetailed(roots)).files;
+}
+
+/**
+ * Same, also listing the folders that could not be read, and the roots that list nothing at all
+ * (their papers are unknown, not gone: e.g. a cloud drive not ready yet).
+ */
+export async function scanFoldersDetailed(
+  roots: string[],
+): Promise<{ files: ScannedFile[]; unreadable: string[]; emptyRoots: string[] }> {
   const found = new Map<string, ScannedFile>();
+  const unreadable: string[] = [];
+  const emptyRoots: string[] = [];
   const pdfExt = /\.pdf$/i;
 
   async function walk(dir: string, root: string, depth: number) {
-    if (depth > 12) return;
+    if (depth > MAX_DEPTH) return;
     let entries: Dirent[];
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
     } catch {
+      unreadable.push(dir);
       return;
     }
+    if (depth === 0 && entries.length === 0) emptyRoots.push(root);
     const jsonCandidates: string[] = [];
     await Promise.all(
       entries.map(async (e) => {
         if (e.name.startsWith('.')) return;
         const full = path.join(dir, e.name);
         if (e.isDirectory()) {
-          if (!SKIP_DIRS.has(e.name) && !e.name.endsWith('.app')) await walk(full, root, depth + 1);
+          if (!skipDir(e.name)) await walk(full, root, depth + 1);
           return;
         }
         if (!e.isFile() && !e.isSymbolicLink()) return;
@@ -48,6 +88,8 @@ export async function scanFolders(roots: string[]): Promise<ScannedFile[]> {
           rec.hasPdf = true;
           rec.pdfMtime = st.mtimeMs;
           rec.pdfBirth = st.birthtimeMs || st.ctimeMs;
+          rec.pdfSize = st.size;
+          rec.pdfCloud = isCloudPlaceholder(st);
           found.set(base, rec);
         } else if (e.name.endsWith('.json')) {
           jsonCandidates.push(full);
@@ -79,11 +121,32 @@ export async function scanFolders(roots: string[]): Promise<ScannedFile[]> {
 
   for (const r of roots) await walk(r, r, 0);
   // Drop .skim-only entries (no PDF and no sidecar).
-  return [...found.values()].filter((f) => f.hasPdf || f.hasJson);
+  return { files: [...found.values()].filter((f) => f.hasPdf || f.hasJson), unreadable, emptyRoots };
+}
+
+/** File state of one paper (`base`: path without extension); null if neither PDF nor sidecar exists. */
+export async function statPaper(base: string, root: string): Promise<ScannedFile | null> {
+  const [pdf, json, skim] = await Promise.all(
+    [base + '.pdf', base + '.json', base + '.skim'].map((p) => fs.stat(p).catch(() => null)),
+  );
+  const f = blank(base, root);
+  if (pdf?.isFile()) {
+    f.hasPdf = true;
+    f.pdfMtime = pdf.mtimeMs;
+    f.pdfBirth = pdf.birthtimeMs || pdf.ctimeMs;
+    f.pdfSize = pdf.size;
+    f.pdfCloud = isCloudPlaceholder(pdf);
+  }
+  if (json?.isFile() && (f.hasPdf || (await isOmoebaJson(base + '.json')))) {
+    f.hasJson = true;
+    f.jsonMtime = json.mtimeMs;
+  }
+  f.hasSkim = !!skim?.isFile();
+  return f.hasPdf || f.hasJson ? f : null;
 }
 
 function blank(base: string, root: string): ScannedFile {
-  return { base, root, hasPdf: false, hasJson: false, hasSkim: false, pdfMtime: 0, pdfBirth: 0, jsonMtime: 0 };
+  return { base, root, hasPdf: false, hasJson: false, hasSkim: false, pdfMtime: 0, pdfBirth: 0, pdfSize: 0, pdfCloud: false, jsonMtime: 0 };
 }
 
 async function isOmoebaJson(file: string): Promise<boolean> {

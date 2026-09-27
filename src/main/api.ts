@@ -27,6 +27,7 @@ import { ThumbCache } from './thumbcache';
 import {
   ScannedFile,
   buildSummary,
+  statPaper,
   jsonPathOf,
   pdfPathOf,
   readSidecar,
@@ -101,19 +102,20 @@ export class OmoebaService implements OmoebaAPI {
   constructor(private platform: Platform) {
     this.index = new IndexManager(
       platform.workerScript,
-      cfg.indexPath(),
+      cfg.indexDbPath(),
       () => this.config.folders,
       (status, changed) => {
         platform.emit({ type: 'index-status', status });
         if (changed) platform.emit({ type: 'library-changed' });
       },
+      cfg.legacyIndexPath(),
     );
   }
 
   async init(): Promise<void> {
     this.firstRun = !(await cfg.configExists());
     this.config = await cfg.loadConfig();
-    await this.index.loadFromDisk();
+    await this.index.open();
     await this.thumbs.open();
     this.index.startPeriodic(this.config.indexIntervalMinutes);
     this.watchFolders();
@@ -132,11 +134,14 @@ export class OmoebaService implements OmoebaAPI {
     for (const folder of this.config.folders) {
       try {
         // Recursive watching is supported on macOS and Windows (and Linux on recent Node).
+        // Only the files that changed are indexed again (the list is refreshed once they are).
         const w = watch(folder, { recursive: true }, (_ev, file) => {
           if (!file || /(^|[/\\])\.|\.tmp-|\.download-/.test(file)) return;
-          if (!/\.(pdf|json|skim)$/i.test(file)) return;
-          this.platform.emit({ type: 'library-changed' });
-          this.index.requestSync();
+          if (!this.index.available) {
+            if (/\.(pdf|json|skim)$/i.test(file)) this.platform.emit({ type: 'library-changed' });
+          } else if (/\.(pdf|json|skim)$/i.test(file)) this.index.refresh([path.join(folder, file)], 500);
+          // A folder moved or renamed: its papers are found by a full sync (quick: dates only).
+          else if (!path.extname(file)) this.index.requestSync(3000);
         });
         w.on('error', () => undefined);
         this.watchers.push(w);
@@ -204,11 +209,31 @@ export class OmoebaService implements OmoebaAPI {
     return sc;
   }
 
+  /**
+   * All papers. They come from the index, which is kept up to date in the background: listing
+   * a library of thousands of papers reads no folder and no sidecar. (Without an index, the
+   * folders are scanned.)
+   */
   async listPapers(): Promise<PaperSummary[]> {
-    const files = await scanFolders(this.config.folders);
-    const sidecars = await Promise.all(files.map((f) => this.sidecarFor(f)));
-    const out = files.map((f, i) => buildSummary(f, sidecars[i], this.index.docInfo(f.base + '.pdf'), this.thumbnailUrl(f)));
-    void this.pruneThumbnails(files);
+    const folders = new Set(this.config.folders.map((f) => path.resolve(f)));
+    // (Papers of a folder just removed from the settings until the index forgets them.)
+    const rows = this.index.list()?.filter((r) => folders.has(r.root)) ?? null;
+    let out: PaperSummary[];
+    let live: string[];
+    if (rows) {
+      out = rows.map((r) => {
+        const f: ScannedFile = { ...r, base: r.id.slice(0, -4) };
+        const sc = { omoeba: 1, ...r.meta } as Sidecar;
+        return { ...buildSummary(f, sc, r.info ?? undefined, this.thumbnailUrl(f)), cloudOnly: r.pdfCloud || undefined };
+      });
+      live = rows.filter((r) => r.hasPdf).map((r) => r.id);
+    } else {
+      const files = await scanFolders(this.config.folders);
+      const sidecars = await Promise.all(files.map((f) => this.sidecarFor(f)));
+      out = files.map((f, i) => ({ ...buildSummary(f, sidecars[i], undefined, this.thumbnailUrl(f)), cloudOnly: f.pdfCloud || undefined }));
+      live = files.filter((f) => f.hasPdf).map((f) => pdfPathOf(f.base));
+    }
+    void this.pruneThumbnails(live);
     return out.sort((a, b) => a.title.localeCompare(b.title));
   }
 
@@ -241,10 +266,10 @@ export class OmoebaService implements OmoebaAPI {
 
   /** Forget thumbnails of PDFs that no longer exist (checked at most every 10 minutes). */
   private lastPrune = 0;
-  private async pruneThumbnails(files: ScannedFile[]) {
+  private async pruneThumbnails(livePdfs: string[]) {
     if (Date.now() - this.lastPrune < 10 * 60_000 || !this.thumbs.count) return;
     this.lastPrune = Date.now();
-    const live = new Set(files.filter((f) => f.hasPdf).map((f) => pdfPathOf(f.base)));
+    const live = new Set(livePdfs);
     const gone: string[] = [];
     for (const key of [...this.thumbs.keys()]) {
       if (live.has(key)) continue;
@@ -289,21 +314,24 @@ export class OmoebaService implements OmoebaAPI {
     const existing = papers.flatMap((p) => p.tags).find((t) => t.trim().toLowerCase() === next.toLowerCase() && t.trim().toLowerCase() !== old);
     if (existing) next = existing.trim();
     let changed = 0;
+    const updated: string[] = [];
     for (const p of papers) {
       if (!p.tags.some((t) => t.trim().toLowerCase() === old)) continue;
+      // The tags as saved now (the list may lag behind an edit made a moment ago).
+      const current = (await readSidecar(p.jsonPath)).tags ?? [];
+      if (!current.some((t) => String(t).trim().toLowerCase() === old)) continue;
       const tags: string[] = [];
-      for (const t of p.tags) {
+      for (const t of current.map(String)) {
         const v = t.trim().toLowerCase() === old ? next : t;
         if (!tags.some((x) => x.toLowerCase() === v.toLowerCase())) tags.push(v);
       }
       await updateSidecar(p.jsonPath, { tags });
       this.platform.emit({ type: 'paper-updated', id: p.id });
+      updated.push(p.id);
       changed++;
     }
-    if (changed) {
-      this.index.requestSync(200);
-      this.platform.emit({ type: 'library-changed' });
-    }
+    // The list is refreshed once the index has them.
+    if (updated.length) this.index.refresh(updated, 0);
     return { changed };
   }
 
@@ -330,20 +358,8 @@ export class OmoebaService implements OmoebaAPI {
   async getPaper(id: string): Promise<PaperDetail> {
     const pdfPath = this.checkId(id);
     const base = pdfPath.slice(0, -4);
-    const [pdfSt, jsonSt, skimSt] = await Promise.all(
-      [pdfPath, base + '.json', base + '.skim'].map((p) => fs.stat(p).catch(() => null)),
-    );
-    const f: ScannedFile = {
-      base,
-      root: this.rootOf(pdfPath),
-      hasPdf: !!pdfSt,
-      hasJson: !!jsonSt,
-      hasSkim: !!skimSt,
-      pdfMtime: pdfSt?.mtimeMs ?? 0,
-      pdfBirth: pdfSt?.birthtimeMs ?? 0,
-      jsonMtime: jsonSt?.mtimeMs ?? 0,
-    };
-    if (!f.hasPdf && !f.hasJson) throw new Error('Paper not found: ' + pdfPath);
+    const f = await statPaper(base, this.rootOf(pdfPath));
+    if (!f) throw new Error('Paper not found: ' + pdfPath);
     const sc = f.hasJson ? await readSidecar(base + '.json') : ({ omoeba: 1 } as Sidecar);
     const info = this.index.docInfo(pdfPath);
     const summary = buildSummary(f, sc, info);
@@ -358,7 +374,7 @@ export class OmoebaService implements OmoebaAPI {
       clean.tags = [...new Set(clean.tags.map((t) => String(t).trim()).filter(Boolean))];
     }
     await updateSidecar(jsonPathOf(pdfPath), clean);
-    this.index.requestSync();
+    this.index.refresh([pdfPath]);
     this.platform.emit({ type: 'paper-updated', id: pdfPath });
     return this.getPaper(pdfPath);
   }
@@ -378,9 +394,14 @@ export class OmoebaService implements OmoebaAPI {
     await updateSidecar(jsonPathOf(pdfPath), {
       source: { url, downloadedAt: new Date().toISOString() },
     });
-    this.platform.emit({ type: 'library-changed' });
-    this.index.requestSync();
+    this.newFiles(pdfPath);
     return this.getPaper(pdfPath);
+  }
+
+  /** A PDF (and its sidecar) was added or replaced: index it (the list follows). */
+  private newFiles(pdfPath: string) {
+    if (this.index.available) this.index.refresh([pdfPath], 0);
+    else this.platform.emit({ type: 'library-changed' });
   }
 
   /** Whether a folder is one of the library folders or inside one. */
@@ -416,8 +437,7 @@ export class OmoebaService implements OmoebaAPI {
     const pdfPath = await uniquePath(dir, fileName);
     await writeFileAtomic(pdfPath, data);
     await updateSidecar(jsonPathOf(pdfPath), { source: { url, downloadedAt: new Date().toISOString() } });
-    this.platform.emit({ type: 'library-changed' });
-    this.index.requestSync(200);
+    this.newFiles(pdfPath);
     return this.getPaper(pdfPath);
   }
 
@@ -441,7 +461,9 @@ export class OmoebaService implements OmoebaAPI {
 
   /** Saves to the .json sidecar, and to the .skim file if enabled in the settings. */
   async saveAnnotations(id: string, annotations: Annotation[]): Promise<void> {
-    await saveAnnotationsBoth(this.checkId(id), annotations, this.config.saveSkim);
+    const pdfPath = this.checkId(id);
+    await saveAnnotationsBoth(pdfPath, annotations, this.config.saveSkim);
+    this.index.refresh([pdfPath]);
   }
 
   // --- AI -------------------------------------------------------------------
@@ -569,20 +591,21 @@ export class OmoebaService implements OmoebaAPI {
     const pdfPath = this.checkId(id);
     const papers = (await readSidecar(jsonPathOf(pdfPath))).related?.papers ?? [];
     if (!papers.length) return [];
-    const files = await scanFolders(this.config.folders);
-    const library = await Promise.all(
-      files.map(async (f) => {
-        const sc = await this.sidecarFor(f);
-        const info = this.index.docInfo(pdfPathOf(f.base));
-        return {
-          id: pdfPathOf(f.base),
-          titles: [sc.title ?? '', info?.title ?? ''],
-          head: info?.head,
-          fileName: path.basename(f.base),
-          arxiv: (arxivIdOf(sc.source?.url) ?? arxivIdOf(info?.arxivId))?.id,
-        };
-      }),
-    );
+    const rows = this.index.list();
+    const library = rows
+      ? rows.map((r) => ({
+          id: r.id,
+          titles: [r.meta.title ?? '', r.info?.title ?? ''],
+          head: r.info?.head,
+          fileName: path.basename(r.id, '.pdf'),
+          arxiv: r.meta.arxiv ?? arxivIdOf(r.info?.arxivId)?.id,
+        }))
+      : await Promise.all(
+          (await scanFolders(this.config.folders)).map(async (f) => {
+            const sc = await this.sidecarFor(f);
+            return { id: pdfPathOf(f.base), titles: [sc.title ?? ''], fileName: path.basename(f.base), arxiv: arxivIdOf(sc.source?.url)?.id };
+          }),
+        );
     return matchLibrary(papers, library, pdfPath);
   }
 
@@ -618,8 +641,7 @@ export class OmoebaService implements OmoebaAPI {
         ...(p.venue ? { venue: p.venue } : {}),
         metadataSource: 'reference',
       });
-      this.platform.emit({ type: 'library-changed' });
-      this.index.requestSync(200);
+      this.newFiles(target);
       return target;
     }
     throw new Error(`Could not download “${p.title}”: ${(lastError as Error)?.message ?? 'unknown error'}`);
