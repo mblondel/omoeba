@@ -1,8 +1,10 @@
 /** Electron main process entry point. */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, safeStorage, shell } from 'electron';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { OmoebaService } from './api';
+import { appDir } from './config';
+import { fileSecretStore } from './secrets';
 import { API_METHODS } from '../shared/api-methods';
 import type { Config, OmoebaEvent, Theme } from '../shared/types';
 
@@ -250,6 +252,12 @@ app.whenReady().then(async () => {
     async trashItem(p: string) {
       await shell.trashItem(p);
     },
+    // The Gemini API key, encrypted with a key kept in the macOS Keychain.
+    secrets: fileSecretStore(path.join(appDir(), 'secrets.json'), {
+      available: () => safeStorage.isEncryptionAvailable(),
+      encrypt: (text) => safeStorage.encryptString(text),
+      decrypt: (data) => safeStorage.decryptString(data),
+    }),
   });
   await service.init();
   applyTheme((await service.getConfig()).theme);

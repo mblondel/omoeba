@@ -220,6 +220,40 @@ PAPER TEXT:
 ${paperTextBlock(pages)}`;
 }
 
+/**
+ * Script of an audio summary: a conversation between two hosts (read aloud by two voices), about
+ * 6 to 8 minutes long, in `language`. One line per turn, "Name: text".
+ */
+export function audioScriptPrompt(pages: string[], title: string, authors: string[], language: string, hosts: [string, string]): string {
+  const [a, b] = hosts;
+  return `Write the script of a short podcast-style conversation between two hosts, ${a} and ${b}, about the
+research paper "${title}"${authors.length ? ` by ${authors.join(', ')}` : ''}. It will be read aloud by two
+text-to-speech voices, for a researcher listening (for instance while walking), who cannot see any
+text or formula.
+
+The conversation:
+- ${a} has read the paper closely and explains it; ${b} is a sharp colleague from a neighbouring
+  field who asks the questions a listener would ask, pushes back, asks for intuition and examples,
+  and sums up now and then.
+- Cover: what problem the paper tackles and why it matters, the key idea of the method (with an
+  intuition or analogy), the main results, and the limitations or open questions. End with a short
+  take-away.
+- Be accurate: only say what the paper supports. Stay concrete and technical; no filler, no hype.
+- About 900 to 1,200 words (6 to 8 minutes), in ${language}. Turns of one to four sentences, a
+  natural back-and-forth.
+
+Format (strictly):
+- One line per turn, starting with the host's name and a colon: "${a}: …" or "${b}: …".
+- Plain spoken text only: no Markdown, no stage directions, no sound effects, no links, no page
+  numbers or citations.
+- No LaTeX or symbols: say formulas in words, simply (e.g. "a rate of one over t"), and only when
+  they matter; prefer explaining what they mean.
+- Output only the script.
+
+PAPER TEXT:
+${paperTextBlock(pages)}`;
+}
+
 /** Paper text sent for a synthesis, in all (shared by the papers). About 100k tokens. */
 export const SYNTHESIS_TEXT_BUDGET = 400_000;
 /** Of which, at most, for one paper's existing summary (given as context). */

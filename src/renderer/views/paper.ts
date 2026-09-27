@@ -1,5 +1,5 @@
 /** Paper view: metadata, tags, summaries, download location. */
-import type { AIProvider, Config, FigureRef, PaperDetail, RelatedPaper, Sidecar, SourceCheckResult, SummaryEntry } from '../../shared/types';
+import type { AIProvider, Config, FigureRef, JobStep, PaperDetail, RelatedPaper, Sidecar, SourceCheckResult, SummaryEntry } from '../../shared/types';
 import { api, newJobId } from '../api';
 import { clear, confirmDialog, errorMessage, formatAuthors, h, icon, iconButton, toast, tagColor, setTagPalette } from '../dom';
 import { mountMarkdown } from '../markdown';
@@ -14,6 +14,14 @@ const inflight = new Map<string, Map<string, { label: string; jobId: string; pro
 
 /** Fires 'change' whenever a job starts or ends (views re-render). */
 const jobEvents = new EventTarget();
+
+/** Jobs made of several steps (audio summaries) report them as they go, by job id. */
+const jobSteps = new Map<string, JobStep[]>();
+api.onEvent((e) => {
+  if (e.type !== 'job-steps') return;
+  jobSteps.set(e.jobId, e.steps);
+  jobEvents.dispatchEvent(new Event('change'));
+});
 
 function jobsFor(id: string) {
   let m = inflight.get(id);
@@ -306,13 +314,32 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
           'div',
           { class: 'job-bar' },
           [...jobs.entries()].map(([, j]) =>
-            h(
-              'div',
-              { class: 'job' },
-              h('span', { class: 'spinner' }),
-              j.label,
-              h('button', { class: 'link-btn', onclick: () => api.cancelAI(j.jobId) }, 'Stop'),
-            ),
+            jobSteps.get(j.jobId)?.length
+              ? h(
+                  'div',
+                  { class: 'job job-steps' },
+                  h(
+                    'ol',
+                    null,
+                    jobSteps.get(j.jobId)!.map((s) =>
+                      h(
+                        'li',
+                        { class: `job-step ${s.state}` },
+                        s.state === 'active' ? h('span', { class: 'spinner' }) : h('span', { class: 'job-step-mark' }, s.state === 'done' ? '✓' : '○'),
+                        h('span', null, s.label, s.state === 'active' ? '…' : ''),
+                        s.detail ? h('span', { class: 'muted small' }, s.detail) : null,
+                      ),
+                    ),
+                  ),
+                  h('button', { class: 'link-btn', onclick: () => api.cancelAI(j.jobId) }, 'Stop'),
+                )
+              : h(
+                  'div',
+                  { class: 'job' },
+                  h('span', { class: 'spinner' }),
+                  j.label,
+                  h('button', { class: 'link-btn', onclick: () => api.cancelAI(j.jobId) }, 'Stop'),
+                ),
           ),
         )
       : null;
@@ -418,6 +445,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       ),
       summarySection(p),
       relatedSection(p),
+      audioSection(p),
       askSection(),
     );
     if (!ais.length)
@@ -788,6 +816,127 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     }
   }
 
+  // --- Audio summary: a conversation between two hosts, made only when asked.
+
+  /** The player, kept across renders (so that the page redrawing does not stop playback). */
+  let audio: { key: string; el: HTMLAudioElement; url: string | null } | null = null;
+  /** Whether audio summaries can be made here (macOS), and with a Gemini key; null until known. */
+  let audioOk: { available: boolean; hasKey: boolean } | null = null;
+  const refreshAudioStatus = () =>
+    api
+      .audioStatus()
+      .then((st) => {
+        audioOk = { available: st.available, hasKey: st.key.saved || st.key.fromEnvironment };
+        render();
+      })
+      .catch(() => (audioOk = { available: false, hasKey: false }));
+  refreshAudioStatus();
+
+  function audioPlayer(key: string): HTMLAudioElement {
+    if (audio?.key === key) return audio.el;
+    if (audio?.url) URL.revokeObjectURL(audio.url);
+    const el = h('audio', { controls: true, preload: 'metadata', class: 'audio-player' });
+    const current: { key: string; el: HTMLAudioElement; url: string | null } = { key, el, url: null };
+    audio = current;
+    api
+      .readAudioSummary(id)
+      .then((data) => {
+        if (audio !== current) return;
+        if (!data) {
+          el.replaceWith(h('p', { class: 'muted' }, 'The audio file is missing (it is saved next to the PDF). Make it again to listen.'));
+          return;
+        }
+        const url = URL.createObjectURL(new Blob([data as unknown as BlobPart], { type: 'audio/mp4' }));
+        current.url = url;
+        el.src = url;
+      })
+      .catch((e) => toast(errorMessage(e), 'error'));
+    return el;
+  }
+
+  function runAudio(aiId: string) {
+    return track('audio', `Writing a conversation about this paper with ${aiName(aiId)} and recording it (a few minutes)…`, (jobId) =>
+      api.generateAudioSummary(id, aiId, jobId),
+    );
+  }
+
+  async function deleteAudio() {
+    if (!(await confirmDialog('Delete the audio summary?', 'The audio file is moved to the Trash, and its transcript is removed from the paper.', 'Delete', true))) return;
+    try {
+      paper = await api.deleteAudioSummary(id);
+      render();
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+    }
+  }
+
+  function audioSection(p: PaperDetail): HTMLElement | string {
+    const a = p.sidecar.audioSummary;
+    const ais = enabledAIs();
+    const running = jobsFor(id).has('audio');
+    if (!a && (!ais.length || audioOk?.available === false)) return '';
+    const canMake = !!audioOk?.available && audioOk.hasKey;
+    const aiId = cfg?.defaultAI ?? ais[0]?.id;
+    const head = h(
+      'div',
+      { class: 'section-head audio-head' },
+      collapsibleHeading('audio', 'Audio summary'),
+      h('div', { class: 'spacer' }),
+      a && aiId && canMake
+        ? (() => {
+            const b = iconButton('refresh', `Make it again with ${aiName(aiId)}`, () => runAudio(aiId));
+            b.disabled = running || !p.hasPdf;
+            return b;
+          })()
+        : null,
+      a ? iconButton('trash', 'Delete the audio summary', () => deleteAudio(), 'danger') : null,
+    );
+    const body = h('div', { class: 'audio-body' });
+    if (!a) {
+      body.append(
+        h(
+          'p',
+          { class: 'muted' },
+          running
+            ? 'Writing the conversation and recording it…'
+            : 'A conversation between two hosts about this paper (about 7 minutes), read by Gemini’s voices. Made only when you ask.',
+        ),
+      );
+      if (!running && aiId && audioOk && !audioOk.hasKey)
+        body.append(
+          h('button', { class: 'btn', onclick: () => navigate('#/settings') }, icon('settings', 13), 'Add a Gemini API key…'),
+        );
+      else if (!running && aiId)
+        body.append(
+          h(
+            'button',
+            { class: 'btn', disabled: !p.hasPdf || !canMake, onclick: () => runAudio(aiId) },
+            icon('sparkle', 13),
+            'Generate audio summary',
+          ),
+        );
+    } else {
+      body.append(audioPlayer(`${a.createdAt}`));
+      const turns = Array.isArray(a.turns) ? a.turns : [];
+      body.append(
+        h(
+          'details',
+          { class: 'audio-transcript' },
+          h('summary', null, 'Transcript'),
+          turns.length
+            ? turns.map((t) => h('p', null, h('strong', null, `${a.hosts?.[t.host]?.name ?? (t.host ? 'B' : 'A')}: `), t.text))
+            : h('p', { class: 'pre-line' }, a.transcript),
+        ),
+        h(
+          'div',
+          { class: 'muted small' },
+          `Written by ${aiName(a.ai)}${a.hosts?.length ? `, read by ${a.hosts.map((x) => x.voice).join(' and ')}` : ''} · ${new Date(a.createdAt).toLocaleDateString()}`,
+        ),
+      );
+    }
+    return h('section', { class: `audio collapsible ${isCollapsed('audio') ? 'collapsed' : ''}` }, head, body);
+  }
+
   function relatedSection(p: PaperDetail): HTMLElement | string {
     const related = p.sidecar.related;
     const ais = enabledAIs();
@@ -930,6 +1079,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       })
       .finally(() => {
         jobs.delete(key);
+        jobSteps.delete(jobId);
         jobEvents.dispatchEvent(new Event('change'));
       });
     jobs.set(key, { label, jobId, promise });
@@ -1016,6 +1166,8 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
   const offEvent = api.onEvent((e) => {
     // A related paper may have been added to (or removed from) the library.
     if (e.type === 'library-changed') refreshRelatedMatches();
+    // A Gemini API key saved or removed in the settings.
+    if (e.type === 'config-changed') refreshAudioStatus();
     if (e.type === 'paper-updated' && e.id === id && !editingSummary) {
       api.getPaper(id).then((d) => {
         paper = d;
@@ -1056,6 +1208,8 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
 
   return () => {
     disposed = true;
+    if (audio?.url) URL.revokeObjectURL(audio.url);
+    audio?.el.pause();
     figures.dispose();
     offEvent();
     jobEvents.removeEventListener('change', onJobs);

@@ -167,6 +167,8 @@ async function isOmoebaJson(file: string): Promise<boolean> {
 export const pdfPathOf = (base: string) => base + '.pdf';
 export const jsonPathOf = (pdfPath: string) => pdfPath.replace(/\.pdf$/i, '') + '.json';
 export const skimPathOf = (pdfPath: string) => pdfPath.replace(/\.pdf$/i, '') + '.skim';
+/** The audio summary of a paper (AAC audio; see audio.ts). */
+export const audioPathOf = (pdfPath: string) => pdfPath.replace(/\.pdf$/i, '') + '.m4a';
 
 // ---------------------------------------------------------------------------
 // Sidecar I/O with per-file serialization.

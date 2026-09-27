@@ -2320,3 +2320,72 @@ table.syntheses[hidden],
   padding-top: 8px;
   margin-bottom: 14px;
 }
+
+/* ---------------------------------------------------------------- audio summaries */
+.audio {
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+  margin-top: 18px;
+}
+.audio-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.audio-head h2 {
+  font-size: 16px;
+  margin: 0;
+}
+.audio-player {
+  width: 100%;
+  margin: 4px 0 8px;
+}
+.audio-transcript {
+  margin: 4px 0 8px;
+  font-size: 13.5px;
+}
+.audio-transcript p {
+  margin: 6px 0;
+  line-height: 1.5;
+}
+.audio-engine-box[hidden] {
+  display: none;
+}
+.key-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.key-input {
+  flex: 1;
+  min-width: 0;
+}
+.job-steps {
+  align-items: flex-start;
+}
+.job-steps ol {
+  flex: 1;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.job-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.job-step.pending {
+  color: var(--muted);
+}
+.job-step-mark {
+  width: 16px;
+  text-align: center;
+  flex: none;
+}
+.job-step.done .job-step-mark {
+  color: var(--accent);
+}

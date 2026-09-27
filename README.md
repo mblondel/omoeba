@@ -16,7 +16,7 @@
 - PDF annotations (compatible with Skim).
 - Markdown notes.
 - Tags.
-- AI: ask questions, summaries, tagging, related work, ...
+- AI: ask questions, summaries, tagging, related work, audio, ...
 - Metadata are stored in a .json file along the .pdf file.
 - Easy to sync via gdrive or git.
 

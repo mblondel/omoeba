@@ -40,6 +40,13 @@ export interface Config {
    * in the .json sidecar, and a .skim file is only read to import it into a paper that has none.
    */
   saveSkim: boolean;
+  /**
+   * Audio summaries (read by Gemini's voices; see setGeminiKey): the voices of the two hosts
+   * (see GEMINI_VOICES), and the language of the conversation.
+   */
+  geminiVoice?: string;
+  geminiVoice2?: string;
+  audioLanguage?: string;
 }
 
 export type Theme = 'system' | 'light' | 'dark';
@@ -146,6 +153,22 @@ export interface Sidecar {
   };
   /** Who produced title/authors/institutions ("pdf", "user", "ai:<id>", "reference": from the reference list of a paper citing it). */
   metadataSource?: string;
+  /**
+   * An audio summary: a conversation between two hosts, written by an AI and read by two voices
+   * into an .m4a file next to the PDF (`file`: its name, in the PDF's folder).
+   */
+  audioSummary?: {
+    /** The conversation as text ("Ava: …" paragraphs). */
+    transcript: string;
+    /** The hosts' names and voices, and who says what. */
+    hosts: { name: string; voice: string }[];
+    turns: { host: 0 | 1; text: string }[];
+    file: string;
+    ai: string;
+    /** What read it ("macos": macOS's voices, in the first version). */
+    engine?: 'gemini' | 'macos';
+    createdAt: string;
+  };
   /** The most relevant papers this paper cites, most relevant first (chosen by an AI). */
   related?: {
     papers: RelatedPaper[];
@@ -322,7 +345,16 @@ export type OmoebaEvent =
   | { type: 'duplicates-progress'; done: number; total: number }
   | { type: 'syntheses-changed' }
   /** What an AI job is doing (see AITraceKind), for jobs followed step by step (syntheses). */
-  | { type: 'ai-trace'; jobId: string; kind: AITraceKind; text: string };
+  | { type: 'ai-trace'; jobId: string; kind: AITraceKind; text: string }
+  /** The steps of a job made of several (e.g. an audio summary: the conversation, then the audio). */
+  | { type: 'job-steps'; jobId: string; steps: JobStep[] };
+
+export interface JobStep {
+  label: string;
+  state: 'done' | 'active' | 'pending';
+  /** e.g. "2 of 4 parts". */
+  detail?: string;
+}
 
 /**
  * Steps of an AI job: "status" (e.g. reading the papers), thinking ("thinking-start", its text
@@ -349,6 +381,13 @@ export interface SynthesisPaper {
   path: string;
   /** The paper in the library now (null if it is no longer found there). Not saved. */
   id?: string | null;
+}
+
+export interface GeminiKeyStatus {
+  /** A key is saved (encrypted, in the keychain's care). */
+  saved: boolean;
+  /** No saved key, but GEMINI_API_KEY is set in the app's environment. */
+  fromEnvironment: boolean;
 }
 
 /** What a synthesis file records about itself (in a comment at its top). */
@@ -433,6 +472,21 @@ export interface OmoebaAPI {
   listSyntheses(): Promise<SynthesisInfo[]>;
   readSynthesis(file: string): Promise<Synthesis>;
   revealSynthesis(file: string): Promise<void>;
+  /**
+   * Make an audio summary of a paper (only when asked): the AI writes a script, a macOS voice reads
+   * it into <paper>.m4a next to the PDF, and the transcript is saved in the .json sidecar.
+   */
+  generateAudioSummary(id: string, aiId?: string, jobId?: string): Promise<PaperDetail>;
+  /** The audio of a paper's audio summary (null if there is none). */
+  readAudioSummary(id: string): Promise<Uint8Array | null>;
+  /** Move the audio to the Trash and forget the summary. */
+  deleteAudioSummary(id: string): Promise<PaperDetail>;
+  /** Whether audio summaries can be made here (macOS), and whether a Gemini API key is available. */
+  audioStatus(): Promise<{ available: boolean; key: GeminiKeyStatus }>;
+  /** Whether a Gemini API key is available (the key itself never leaves the main process). */
+  geminiKeyStatus(): Promise<GeminiKeyStatus>;
+  /** Save the Gemini API key (checked with Google first), or remove it (null). */
+  setGeminiKey(key: string | null): Promise<GeminiKeyStatus>;
   /** Record that a paper was seen: its page or PDF opened (history, ~/omoeba/history.json). */
   markOpened(id: string): Promise<void>;
   /**

@@ -1,5 +1,6 @@
 /** Settings (and first-run setup). */
-import type { AIProvider, Config, Theme } from '../../shared/types';
+import type { AIProvider, Config, GeminiKeyStatus, Theme } from '../../shared/types';
+import { AUDIO_LANGUAGES, DEFAULT_GEMINI_VOICES, GEMINI_VOICES } from '../../shared/audio';
 import { api } from '../api';
 import { clear, errorMessage, h, icon, iconButton, relTime, toast } from '../dom';
 import { navigate, refreshConfig, state, applyAppearance } from '../app';
@@ -223,6 +224,81 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
         ),
       ),
     );
+
+    // --- Audio summaries: read by Gemini's voices (API key, the hosts' voices, language).
+    if (!opts.firstRun) {
+      const geminiSelect = (key: 'geminiVoice' | 'geminiVoice2', fallback: string) => {
+        const sel = h(
+          'select',
+          {
+            onchange: () => {
+              c[key] = sel.value === fallback ? undefined : sel.value;
+              markDirty();
+            },
+          },
+          GEMINI_VOICES.map((v) => h('option', { value: v.name, selected: v.name === (c[key] ?? fallback) }, `${v.name} — ${v.style}`)),
+        );
+        return sel;
+      };
+      const language = h(
+        'select',
+        {
+          onchange: () => {
+            c.audioLanguage = language.value === 'English' ? undefined : language.value;
+            markDirty();
+          },
+        },
+        [...new Set([...AUDIO_LANGUAGES, c.audioLanguage ?? 'English'])].map((l) => h('option', { value: l, selected: l === (c.audioLanguage ?? 'English') }, l)),
+      );
+      const keyInput = h('input', { type: 'password', placeholder: 'Paste your Gemini API key', autocomplete: 'off', spellcheck: false, class: 'key-input' });
+      const keyStatus = h('span', { class: 'muted small' });
+      const saveKey = h('button', { class: 'btn', onclick: () => storeKey(keyInput.value) }, 'Save key');
+      const removeKey = h('button', { class: 'btn', hidden: true, onclick: () => storeKey(null) }, 'Remove');
+      const showStatus = (st: GeminiKeyStatus) => {
+        keyStatus.textContent = st.saved
+          ? '✓ A key is saved (encrypted, with the macOS Keychain).'
+          : st.fromEnvironment
+            ? '✓ Using GEMINI_API_KEY from the environment.'
+            : 'No key yet.';
+        removeKey.hidden = !st.saved;
+      };
+      async function storeKey(key: string | null) {
+        saveKey.disabled = true;
+        keyStatus.textContent = key ? 'Checking the key with Google…' : '';
+        try {
+          showStatus(await api.setGeminiKey(key));
+          keyInput.value = '';
+          if (key) toast('Gemini API key saved');
+        } catch (e) {
+          keyStatus.textContent = errorMessage(e);
+        } finally {
+          saveKey.disabled = false;
+        }
+      }
+      api.geminiKeyStatus().then(showStatus).catch(() => undefined);
+      const getKey = h(
+        'a',
+        { href: '#', onclick: (e: Event) => (e.preventDefault(), api.openExternal('https://aistudio.google.com/apikey')) },
+        'Get a key from Google AI Studio',
+      );
+      const geminiBox = h(
+        'div',
+        { class: 'audio-engine-box' },
+        h('div', { class: 'field' }, 'Gemini API key', h('div', { class: 'key-row' }, keyInput, saveKey, removeKey), h('div', null, keyStatus, ' ', getKey)),
+        h('label', { class: 'field inline' }, 'First host’s voice (explains)', geminiSelect('geminiVoice', DEFAULT_GEMINI_VOICES[0])),
+        h('label', { class: 'field inline' }, 'Second host’s voice (asks)', geminiSelect('geminiVoice2', DEFAULT_GEMINI_VOICES[1])),
+        h('label', { class: 'field inline' }, 'Language of the conversation', language),
+        h('p', { class: 'muted small' }, 'The script of the conversation is sent to Google to be read; usage is billed to the key’s Google account beyond its free allowance.'),
+      );
+
+      body.append(
+        section(
+          'Audio summaries',
+          'A conversation between two hosts about a paper, made when you ask on its page, read by Gemini’s voices, and saved as an .m4a file next to the PDF.',
+          geminiBox,
+        ),
+      );
+    }
 
     if (!opts.firstRun) {
       const idx = h('p', { class: 'muted' }, 'Loading…');

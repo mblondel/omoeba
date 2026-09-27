@@ -84,6 +84,10 @@ function normalize(raw: Partial<Config>): Config {
     saveSkim: typeof raw.saveSkim === 'boolean' ? raw.saveSkim : d.saveSkim,
   };
   if (typeof raw.userName === 'string' && raw.userName.trim()) cfg.userName = raw.userName.trim();
+  for (const k of ['geminiVoice', 'geminiVoice2', 'audioLanguage'] as const) {
+    const v = raw[k];
+    if (typeof v === 'string' && v.trim()) cfg[k] = v.trim();
+  }
   const enabled = cfg.ais.filter((a) => a.enabled);
   if (!cfg.defaultAI || !enabled.some((a) => a.id === cfg.defaultAI)) cfg.defaultAI = enabled[0]?.id ?? null;
   return cfg;

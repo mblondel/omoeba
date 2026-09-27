@@ -14,6 +14,8 @@ import type {
   AITraceKind,
   Config,
   DuplicateGroup,
+  GeminiKeyStatus,
+  JobStep,
   Synthesis,
   SynthesisInfo,
   SynthesisMeta,
@@ -41,6 +43,7 @@ import {
   readSidecarStrict,
   scanFolders,
   skimPathOf,
+  audioPathOf,
   updateSidecar,
 } from './library';
 import { loadAnnotationSources, saveAnnotationsBoth, skimMtimeOf } from './annostore';
@@ -57,10 +60,15 @@ import {
   runAI,
   stripFences,
   summaryPrompt,
+  audioScriptPrompt,
   synthesisPrompt,
   type SynthesisSource,
 } from './ai';
 import { MAX_SYNTHESIS_PAPERS } from '../shared/synthesis';
+import { GeminiError, cancelGemini, checkGeminiKey, geminiSpeak } from './gemini';
+import { DEFAULT_GEMINI_VOICES, GEMINI_HOST_NAMES } from '../shared/audio';
+import { memorySecretStore, type SecretStore } from './secrets';
+import { MACOS_AUDIO_TOOLS, cancelSpeech, encodeM4a, formatTranscript, parseDialog, type AudioTools } from './audio';
 import {
   formatSynthesis,
   libraryFolderOf,
@@ -94,6 +102,8 @@ export interface Platform {
   openExternal(url: string): Promise<void>;
   /** Move a file to the Trash (never deletes it outright; fails if there is no Trash). */
   trashItem(p: string): Promise<void>;
+  /** Where secrets (the Gemini API key) are kept; in memory only if absent. */
+  secrets?: SecretStore;
   emit(e: OmoebaEvent): void;
   /** Absolute path of the compiled index worker script. */
   workerScript: string;
@@ -731,7 +741,7 @@ export class OmoebaService implements OmoebaAPI {
     this.skimSeen.delete(pdfPath);
     await this.platform.trashItem(pdfPath);
     // Its notes and annotations go with it (to the Trash, where they can be restored from).
-    for (const p of [jsonPathOf(pdfPath), skimPathOf(pdfPath)]) {
+    for (const p of [jsonPathOf(pdfPath), skimPathOf(pdfPath), audioPathOf(pdfPath)]) {
       if (await fs.stat(p).catch(() => null)) await this.platform.trashItem(p);
     }
     if (this.index.available) this.index.refresh([pdfPath], 0);
@@ -978,6 +988,134 @@ export class OmoebaService implements OmoebaAPI {
   async cancelAI(jobId: string): Promise<void> {
     this.cancelled.add(jobId);
     cancelAIJob(jobId);
+    cancelSpeech(jobId);
+    cancelGemini(jobId);
+  }
+
+  // --- Gemini API key (for the voices of audio summaries) --------------------------
+
+  private get secrets(): SecretStore {
+    return (this.platform.secrets ??= memorySecretStore());
+  }
+
+  /** The key: saved, else from the environment (GEMINI_API_KEY), else null. */
+  private async geminiKey(): Promise<string | null> {
+    return (await this.secrets.get('gemini-api-key')) ?? (process.env.GEMINI_API_KEY?.trim() || null);
+  }
+
+  async geminiKeyStatus(): Promise<GeminiKeyStatus> {
+    const saved = !!(await this.secrets.get('gemini-api-key'));
+    return { saved, fromEnvironment: !saved && !!process.env.GEMINI_API_KEY?.trim() };
+  }
+
+  async setGeminiKey(key: string | null): Promise<GeminiKeyStatus> {
+    const k = key?.trim() || null;
+    if (k) await checkGeminiKey(k);
+    await this.secrets.set('gemini-api-key', k);
+    this.platform.emit({ type: 'config-changed' });
+    return this.geminiKeyStatus();
+  }
+
+  // --- Audio summaries ---------------------------------------------------------
+
+  /** The tools saving the audio (macOS's afconvert; replaced in tests). */
+  private audioTools: AudioTools | null = process.platform === 'darwin' ? MACOS_AUDIO_TOOLS : null;
+
+  async audioStatus(): Promise<{ available: boolean; key: GeminiKeyStatus }> {
+    return { available: !!this.audioTools, key: await this.geminiKeyStatus() };
+  }
+
+  async generateAudioSummary(id: string, aiId?: string, jobId?: string): Promise<PaperDetail> {
+    const pdfPath = this.checkId(id);
+    await this.checkNotTrashed(pdfPath);
+    // (The audio is saved with afconvert, which comes with macOS.)
+    if (!this.audioTools) throw new Error('Audio summaries can only be made on macOS.');
+    const key = await this.geminiKey();
+    if (!key) throw new Error('Add a Gemini API key in Settings › Audio summaries: Gemini’s voices read the conversation.');
+    const ai = this.aiFor(aiId);
+    const detail = await this.getPaper(pdfPath);
+    const audio = audioPathOf(pdfPath);
+    // Never replace an .m4a file that is not this paper's audio summary.
+    if ((await fs.stat(audio).catch(() => null)) && !detail.sidecar.audioSummary) {
+      throw new Error(`${path.basename(audio)} already exists next to the PDF and is not an audio summary made by Omoeba: it was left alone.`);
+    }
+    const names = GEMINI_HOST_NAMES;
+    const voices: [string, string] = [this.config.geminiVoice ?? DEFAULT_GEMINI_VOICES[0], this.config.geminiVoice2 ?? DEFAULT_GEMINI_VOICES[1]];
+    const language = this.config.audioLanguage ?? 'English';
+
+    // Two steps, shown separately while they run.
+    const steps: JobStep[] = [
+      { label: `Writing the conversation with ${ai.name}`, state: 'active' },
+      { label: 'Recording the audio with Gemini’s voices', state: 'pending' },
+    ];
+    const showSteps = () => jobId && this.platform.emit({ type: 'job-steps', jobId, steps: steps.map((s) => ({ ...s })) });
+    showSteps();
+
+    const pages = await this.paperPages(pdfPath);
+    const script = await runAI(ai, audioScriptPrompt(pages, detail.title, detail.authors, language, names), {
+      jobId,
+      onChunk: this.progress(jobId),
+    });
+    const turns = parseDialog(script, names);
+    if (turns.length < 2) throw new Error(`${ai.name} did not write a conversation that can be read (no "${names[0]}: …" lines).`);
+    if (jobId && this.cancelled.has(jobId)) throw new Error('The audio summary was stopped.');
+    steps[0] = { label: `Conversation written by ${ai.name}`, state: 'done', detail: `${turns.length} turns` };
+    steps[1].state = 'active';
+    showSteps();
+    try {
+      const parts = await geminiSpeak(turns, names, voices, key, {
+        jobId,
+        onProgress: (done, total) => {
+          steps[1].detail = `${done} of ${total} part${total === 1 ? '' : 's'}`;
+          showSteps();
+        },
+      });
+      steps[1].detail = 'saving';
+      showSteps();
+      await encodeM4a(parts, audio, { jobId, tools: this.audioTools, pauseSec: 0.2 });
+    } catch (e) {
+      if (e instanceof GeminiError) throw new Error(e.message);
+      throw e;
+    } finally {
+      if (jobId) this.cancelled.delete(jobId);
+    }
+    return this.saveAudioSummary(pdfPath, {
+      transcript: formatTranscript(turns, names),
+      hosts: names.map((name, i) => ({ name, voice: voices[i] })),
+      turns,
+      file: path.basename(audio),
+      ai: ai.id,
+      engine: 'gemini',
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  /** (Not through updateSidecar: the renderer cannot write this key, which names a file.) */
+  private async saveAudioSummary(pdfPath: string, entry: Sidecar['audioSummary'] | null): Promise<PaperDetail> {
+    await updateSidecar(jsonPathOf(pdfPath), { audioSummary: entry } as Partial<Sidecar>);
+    this.index.refresh([pdfPath]);
+    this.platform.emit({ type: 'paper-updated', id: pdfPath });
+    return this.getPaper(pdfPath);
+  }
+
+  async readAudioSummary(id: string): Promise<Uint8Array | null> {
+    const pdfPath = this.checkId(id);
+    const sc = await readSidecar(jsonPathOf(pdfPath));
+    if (!sc.audioSummary) return null;
+    // Only ever the paper's own audio file (whatever the sidecar says).
+    const data = await fs.readFile(audioPathOf(pdfPath)).catch(() => null);
+    return data ? new Uint8Array(data) : null;
+  }
+
+  async deleteAudioSummary(id: string): Promise<PaperDetail> {
+    const pdfPath = this.checkId(id);
+    const sc = await readSidecar(jsonPathOf(pdfPath));
+    // Only the paper's own audio file, and only if it is an audio summary made here.
+    if (sc.audioSummary) {
+      const file = audioPathOf(pdfPath);
+      if (await fs.stat(file).catch(() => null)) await this.platform.trashItem(file);
+    }
+    return this.saveAudioSummary(pdfPath, null);
   }
 
   /**
