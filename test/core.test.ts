@@ -489,9 +489,9 @@ test('sidecars: written only when the content changes; empty ones are not kept',
   await updateSidecar(json, { tags: null, title: null, notes: null } as never);
   await assert.rejects(stat(json));
 
-  // A file that cannot be parsed is never deleted.
+  // A file that cannot be parsed is never deleted (nor overwritten): the update is refused.
   await writeFile(json, '{ broken');
-  await updateSidecar(json, { tags: null } as never);
+  await assert.rejects(updateSidecar(json, { tags: null } as never), /could not be read/);
   assert.equal(await readFile(json, 'utf8'), '{ broken');
   await unlink(json);
 });

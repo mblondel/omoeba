@@ -927,10 +927,11 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     return promise;
   }
 
-  function runMetadata(aiId: string) {
+  /** `onlyMissing`: automatic extraction, which only fills in empty fields. */
+  function runMetadata(aiId: string, onlyMissing = false) {
     const what = paper?.sidecar.tags?.length ? 'title, authors and institutions' : 'title, authors, institutions and tags';
     return track('meta', `Extracting ${what} with ${aiName(aiId)}…`, (jobId) =>
-      api.extractMetadata(id, aiId, jobId),
+      api.extractMetadata(id, aiId, jobId, onlyMissing),
     );
   }
 
@@ -983,8 +984,10 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     const def = cfg.defaultAI;
     if (!def || !enabledAIs().some((a) => a.id === def)) return;
     const sc = paper.sidecar;
-    const needsMeta = !sc.metadataSource?.startsWith('ai:') && (!sc.title || !sc.authors?.length || !sc.institutions?.length);
-    if (needsMeta) await runMetadata(def);
+    // Not for metadata edited by hand; and only empty fields are filled in (see runMetadata).
+    const needsMeta =
+      !sc.metadataSource?.startsWith('ai:') && sc.metadataSource !== 'user' && (!sc.title || !sc.authors?.length || !sc.institutions?.length);
+    if (needsMeta) await runMetadata(def, true);
     if (disposed || !paper) return;
     // Look for the download location once (not on every open).
     if (!paper.sidecar.source && !paper.sidecar.sourceSearch && !jobsFor(id).has('source')) runFindSource();

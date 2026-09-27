@@ -35,7 +35,8 @@ import {
   skimPathOf,
   updateSidecar,
 } from './library';
-import { loadAnnotationSources, saveAnnotationsBoth } from './annostore';
+import { loadAnnotationSources, saveAnnotationsBoth, skimMtimeOf } from './annostore';
+import { SKIM_CHANGED } from '../shared/annotations';
 import { extractPdf } from './pdftext';
 import {
   askPrompt,
@@ -454,15 +455,35 @@ export class OmoebaService implements OmoebaAPI {
 
   // --- Annotations ----------------------------------------------------------
 
+  /**
+   * Date of each open paper's .skim file when its annotations were last loaded or saved (null:
+   * no .skim file), to notice changes made meanwhile by another app (e.g. Skim).
+   */
+  private skimSeen = new Map<string, number | null>();
+
   /** Both copies of the annotations (.skim and .json); the reader resolves differences. */
   async loadAnnotations(id: string): Promise<AnnotationSources> {
-    return loadAnnotationSources(this.checkId(id), this.config.saveSkim);
+    const pdfPath = this.checkId(id);
+    const seen = await skimMtimeOf(pdfPath);
+    const src = await loadAnnotationSources(pdfPath, this.config.saveSkim);
+    this.skimSeen.set(pdfPath, seen);
+    return src;
   }
 
-  /** Saves to the .json sidecar, and to the .skim file if enabled in the settings. */
+  /**
+   * Saves to the .json sidecar, and to the .skim file if enabled in the settings. Refused (with
+   * an error starting with SKIM_CHANGED) if the .skim file was changed by another app since the
+   * annotations were loaded: saving would overwrite those changes.
+   */
   async saveAnnotations(id: string, annotations: Annotation[]): Promise<void> {
     const pdfPath = this.checkId(id);
+    if (this.config.saveSkim && this.skimSeen.has(pdfPath)) {
+      if ((await skimMtimeOf(pdfPath)) !== this.skimSeen.get(pdfPath)) {
+        throw new Error(`${SKIM_CHANGED} since this paper was opened; its annotations were not overwritten.`);
+      }
+    }
     await saveAnnotationsBoth(pdfPath, annotations, this.config.saveSkim);
+    if (this.skimSeen.has(pdfPath)) this.skimSeen.set(pdfPath, await skimMtimeOf(pdfPath));
     this.index.refresh([pdfPath]);
   }
 
@@ -491,7 +512,7 @@ export class OmoebaService implements OmoebaAPI {
     return jobId ? (chunk: string) => this.platform.emit({ type: 'ai-progress', jobId, chunk }) : undefined;
   }
 
-  async extractMetadata(id: string, aiId?: string, jobId?: string): Promise<PaperDetail> {
+  async extractMetadata(id: string, aiId?: string, jobId?: string, onlyMissing = false): Promise<PaperDetail> {
     const pdfPath = this.checkId(id);
     const ai = this.aiFor(aiId);
     const pages = (await this.paperPages(pdfPath)).slice(0, 3);
@@ -516,6 +537,16 @@ export class OmoebaService implements OmoebaAPI {
     if (typeof meta.venue === 'string' && meta.venue.trim()) patch.venue = meta.venue.trim();
     if (typeof meta.abstract === 'string' && meta.abstract.trim()) patch.abstract = meta.abstract.trim();
     if (strList(meta.keywords)) patch.keywords = strList(meta.keywords);
+    if (onlyMissing) {
+      // Automatic extraction never replaces what is there (e.g. a title corrected by hand), as
+      // saved now (the user may have edited it while the AI was running).
+      const cur = await readSidecar(jsonPathOf(pdfPath));
+      const has = (v: unknown) => (Array.isArray(v) ? v.length > 0 : v !== undefined && v !== null && String(v).trim() !== '');
+      for (const k of ['title', 'authors', 'institutions', 'year', 'venue', 'abstract', 'keywords'] as const) {
+        if (has(cur[k])) delete patch[k];
+      }
+      if (cur.metadataSource === 'user') delete patch.metadataSource;
+    }
     if (wantTags && strList(meta.tags)) {
       const tags = [...new Set(strList(meta.tags)!.map((t) => t.toLowerCase().replace(/\s+/g, ' ')))]
         .filter((t) => t.length <= 40)

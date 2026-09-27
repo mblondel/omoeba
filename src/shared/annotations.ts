@@ -4,6 +4,12 @@
  */
 import type { Annotation } from './types';
 
+/**
+ * Start of the error raised when annotations are saved while the .skim file was changed by
+ * another app (e.g. Skim) since it was read: the reader then merges those changes in.
+ */
+export const SKIM_CHANGED = 'The .skim file was changed by another app';
+
 /** Annotation as stored in the .json sidecar (no runtime id). */
 export type StoredAnnotation = Omit<Annotation, 'id'>;
 

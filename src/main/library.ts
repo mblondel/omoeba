@@ -202,6 +202,23 @@ export async function readSidecar(jsonPath: string): Promise<Sidecar> {
   return (await loadSidecar(jsonPath)).sc;
 }
 
+function unreadableError(jsonPath: string): Error {
+  return new Error(
+    `${path.basename(jsonPath)} could not be read (invalid JSON, or the file is not available right now), so it was ` +
+      'left unchanged to avoid losing its content. Fix or move the file, then try again.',
+  );
+}
+
+/**
+ * Like readSidecar, but a sidecar that exists and cannot be read is an error (instead of an empty
+ * sidecar): for callers that write what they read back.
+ */
+export async function readSidecarStrict(jsonPath: string): Promise<Sidecar> {
+  const { sc, state } = await loadSidecar(jsonPath);
+  if (state === 'invalid') throw unreadableError(jsonPath);
+  return sc;
+}
+
 /** Keys that are not content: a sidecar with only these is not worth keeping. */
 const BOOKKEEPING_KEYS = new Set(['omoeba', 'updatedAt']);
 
@@ -227,6 +244,9 @@ export function sameSidecarContent(a: Sidecar, b: Sidecar): boolean {
 export async function updateSidecar(jsonPath: string, patch: Partial<Sidecar>): Promise<Sidecar> {
   return withLock(jsonPath, async () => {
     const { sc: cur, state } = await loadSidecar(jsonPath);
+    // Never overwrite a file that could not be read (hand-edited with a typo, mid-sync, not a
+    // sidecar): writing the patch alone would lose everything else it holds.
+    if (state === 'invalid') throw unreadableError(jsonPath);
     const next: Sidecar = { ...cur };
     for (const [k, v] of Object.entries(patch)) {
       if ((k === 'summaries' || k === 'chats') && v && typeof v === 'object') {
@@ -244,7 +264,6 @@ export async function updateSidecar(jsonPath: string, patch: Partial<Sidecar>): 
     }
     next.omoeba = 1;
     if (Object.keys(next).every((k) => BOOKKEEPING_KEYS.has(k))) {
-      // Never delete a file that could not be read: it may be mid-sync or hand-edited.
       if (state === 'ok') await fs.unlink(jsonPath).catch(() => undefined);
       return { omoeba: 1 };
     }

@@ -3,7 +3,7 @@ import '../pdfjs';
 import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from 'pdfjs-dist/legacy/web/pdf_viewer.mjs';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { Annotation, AnnotationSources, AnnotationType, Config, PaperDetail, RGBA } from '../../shared/types';
-import { mergeAnnotations } from '../../shared/annotations';
+import { mergeAnnotations, SKIM_CHANGED } from '../../shared/annotations';
 import { api } from '../api';
 import { clear, debounce, errorMessage, h, icon, iconButton, toast, KEY, choiceDialog } from '../dom';
 import { mountMarkdown } from '../markdown';
@@ -410,15 +410,45 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   setTool('select');
 
   let annotationsDirty = false;
+  /**
+   * The saved annotations could not be read: editing them is disabled, since saving would
+   * replace the files with only the annotations made here.
+   */
+  let annotationsLocked = false;
   const saveAnnotations = debounce(async () => {
-    if (!annotationsDirty) return;
+    if (!annotationsDirty || annotationsLocked) return;
     annotationsDirty = false;
     try {
       await api.saveAnnotations(id, annotations);
     } catch (e) {
-      toast('Could not save annotations: ' + errorMessage(e), 'error', 8000);
+      if (errorMessage(e).includes(SKIM_CHANGED)) await mergeExternalChanges();
+      else toast('Could not save annotations: ' + errorMessage(e), 'error', 8000);
     }
   }, 400);
+
+  /**
+   * The .skim file was changed by another app (e.g. Skim) since it was read: its annotations are
+   * merged with the ones here (nothing is lost on either side), and both files are updated.
+   */
+  async function mergeExternalChanges() {
+    try {
+      const src = await api.loadAnnotations(id);
+      const theirs = src.skim ?? src.json ?? [];
+      annotations = mergeAnnotations(theirs, annotations);
+      if (selectedAnno && !annotations.some((a) => a.id === selectedAnno)) selectedAnno = null;
+      // The undo history refers to the annotations before the merge.
+      undoStack.length = 0;
+      redoStack.length = 0;
+      lastGroup = null;
+      redrawAll();
+      if (rightTab === 'annotations') renderRight();
+      await api.saveAnnotations(id, annotations);
+      toast('The .skim file was changed in another app: its annotations were merged with the ones here.', 'info', 8000);
+    } catch (e) {
+      annotationsLocked = true;
+      toast('Could not save annotations: ' + errorMessage(e) + ' Close and reopen this paper.', 'error', 12000);
+    }
+  }
 
   // Undo / redo: snapshots of the annotation list (annotation objects are never mutated).
   // Consecutive edits with the same group key (typing in one annotation) form one step.
@@ -440,6 +470,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   }
 
   function restore(s: Snapshot) {
+    if (annotationsLocked) return;
     annotations = s.anns;
     selectedAnno = s.sel && annotations.some((a) => a.id === s.sel) ? s.sel : null;
     annotationsDirty = true;
@@ -466,6 +497,10 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   }
 
   function commit(next: Annotation[], select?: string | null, rerenderPane = true, group?: string) {
+    if (annotationsLocked) {
+      toast('The annotations of this paper could not be read, so they cannot be edited here (to avoid overwriting them).', 'error', 8000);
+      return;
+    }
     record(group);
     annotations = next;
     if (select !== undefined) selectedAnno = select;
@@ -1142,7 +1177,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   window.addEventListener('omoeba-menu', onMenu);
   cleanups.push(() => window.removeEventListener('omoeba-menu', onMenu));
 
-  // Reload annotations if the .skim file is changed by another app (e.g. Skim).
+  // (Changes made to the .skim file by another app, e.g. Skim, are merged in when saving.)
   const offEvent = api.onEvent((e) => {
     if (e.type === 'paper-updated' && e.id === id) api.getPaper(id).then((d) => (paper = d));
   });
@@ -1220,7 +1255,8 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
         refreshConfig(),
         api.readPdf(id),
         api.loadAnnotations(id).catch((e) => {
-          toast('Could not read annotations: ' + errorMessage(e), 'error', 8000);
+          annotationsLocked = true;
+          toast('Could not read annotations: ' + errorMessage(e) + ' Annotations cannot be edited until this is fixed.', 'error', 12000);
           return null;
         }),
       ]);

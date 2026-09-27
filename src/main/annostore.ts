@@ -3,10 +3,13 @@ import { promises as fs } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { Annotation, AnnotationSources } from '../shared/types';
 import { diffAnnotations, sameAnnotations, toStored, type StoredAnnotation } from '../shared/annotations';
-import { jsonPathOf, readSidecar, skimPathOf, updateSidecar } from './library';
+import { jsonPathOf, readSidecarStrict, skimPathOf, updateSidecar } from './library';
 import { decodeSkimData, encodeSkim, readSkimFile, skimDictToAnnotation, writeSkimFile } from './skim';
 
 const mtime = async (p: string) => (await fs.stat(p).catch(() => null))?.mtimeMs;
+
+/** Modification date of a paper's .skim file (null if there is none). */
+export const skimMtimeOf = async (pdfPath: string): Promise<number | null> => (await mtime(skimPathOf(pdfPath))) ?? null;
 
 function fromStored(list: unknown): Annotation[] | null {
   if (!Array.isArray(list)) return null;
@@ -24,7 +27,8 @@ export async function loadAnnotationSources(pdfPath: string, useSkim = true): Pr
   const skimPath = skimPathOf(pdfPath);
   const jsonPath = jsonPathOf(pdfPath);
   const [skimMtime0, jsonMtime] = await Promise.all([mtime(skimPath), mtime(jsonPath)]);
-  const json = jsonMtime !== undefined ? fromStored((await readSidecar(jsonPath)).annotations) : null;
+  // A .json that cannot be read is an error, not "no annotations" (the reader then saves nothing).
+  const json = jsonMtime !== undefined ? fromStored((await readSidecarStrict(jsonPath)).annotations) : null;
   const skimMtime = useSkim || !json ? skimMtime0 : undefined;
   const skim = skimMtime !== undefined ? await readSkimFile(skimPath) : null;
   const same = !!skim && !!json && sameAnnotations(skim.map(toStored), json.map(toStored));

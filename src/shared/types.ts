@@ -341,7 +341,11 @@ export interface OmoebaAPI {
   loadAnnotations(id: string): Promise<AnnotationSources>;
   saveAnnotations(id: string, annotations: Annotation[]): Promise<void>;
 
-  extractMetadata(id: string, aiId?: string, jobId?: string): Promise<PaperDetail>;
+  /**
+   * `onlyMissing` (automatic extraction): only fill in fields that are empty, never replace
+   * what the sidecar already has.
+   */
+  extractMetadata(id: string, aiId?: string, jobId?: string, onlyMissing?: boolean): Promise<PaperDetail>;
   generateSummary(id: string, aiId: string, jobId?: string): Promise<PaperDetail>;
   askAI(id: string, aiId: string, question: string, context: { page?: number; selection?: string }, jobId?: string): Promise<PaperDetail>;
   cancelAI(jobId: string): Promise<void>;
