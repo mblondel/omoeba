@@ -149,6 +149,49 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
     if (t) renameBtn.title = `Rename the tag “${t}” in all papers`;
   };
 
+  // When the list shows a folder (folder: in the search), a tag can be added to all its papers.
+  const tagAllBtn = h(
+    'button',
+    { class: 'btn', title: 'Add a tag to all the papers listed', hidden: true, onclick: () => tagAll() },
+    icon('tag'),
+    'Tag all…',
+  );
+  const updateTagAllBtn = () => {
+    const folders = splitQuery(search.value.trim()).folders;
+    tagAllBtn.hidden = !folders.length || !visible.length;
+    tagAllBtn.title = `Add a tag to the ${visible.length} paper${visible.length === 1 ? '' : 's'} listed`;
+  };
+
+  async function tagAll() {
+    const papersShown = visible;
+    const n = papersShown.length;
+    if (!n) return;
+    const folders = splitQuery(search.value.trim()).folders;
+    const tag = await promptDialog({
+      title: `Tag ${n} paper${n === 1 ? '' : 's'}`,
+      label: `Tag to add to the ${n} paper${n === 1 ? '' : 's'} listed (folder: ${folders.join(', ')})`,
+      placeholder: 'e.g. to read',
+      okLabel: 'Add tag',
+    });
+    if (!tag?.trim()) return;
+    try {
+      const r = await api.tagPapers(
+        papersShown.map((p) => p.id),
+        tag,
+      );
+      const already = n - r.changed - r.failed.length;
+      toast(
+        `Tagged ${r.changed} paper${r.changed === 1 ? '' : 's'} “${r.tag}”` +
+          (already > 0 ? ` (${already} already had it)` : '') +
+          (r.failed.length ? `. ${r.failed.length} could not be changed: ${r.failed[0].error}` : ''),
+        r.failed.length ? 'error' : 'info',
+        r.failed.length ? 12000 : 5000,
+      );
+    } catch (e) {
+      toast(errorMessage(e), 'error', 8000);
+    }
+  }
+
   async function renameTag() {
     const from = shownTag();
     if (!from) return;
@@ -192,6 +235,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
     h(
       'div',
       { class: 'topbar-actions' },
+      tagAllBtn,
       renameBtn,
       iconButton('plus', 'Add paper from URL…', () => addPaperFromUrl()),
       iconButton('settings', 'Settings', () => navigate('#/settings')),
@@ -525,6 +569,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
     }
     visible = sortPapers(list);
     renderRows(keep);
+    updateTagAllBtn();
   }
 
 

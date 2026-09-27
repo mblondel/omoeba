@@ -361,6 +361,12 @@ export interface OmoebaAPI {
   addFromUrl(url: string, folder: string): Promise<PaperDetail>;
   /** Rename a tag in all papers (merging it into `to` if that tag exists); returns how many papers changed. */
   renameTag(from: string, to: string): Promise<{ changed: number }>;
+  /**
+   * Add a tag to these papers (e.g. all those of a folder). A tag that exists with another
+   * capitalization keeps its spelling. Returns how many papers got it (those that had it are
+   * left alone) and which could not be changed (e.g. an unreadable .json file), with why.
+   */
+  tagPapers(ids: string[], tag: string): Promise<{ tag: string; changed: number; failed: { id: string; error: string }[] }>;
   revealInFolder(id: string): Promise<void>;
   openExternal(url: string): Promise<void>;
   /**

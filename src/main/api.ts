@@ -32,6 +32,7 @@ import {
   jsonPathOf,
   pdfPathOf,
   readSidecar,
+  readSidecarStrict,
   scanFolders,
   skimPathOf,
   updateSidecar,
@@ -347,6 +348,35 @@ export class OmoebaService implements OmoebaAPI {
     // The list is refreshed once the index has them.
     if (updated.length) this.index.refresh(updated, 0);
     return { changed };
+  }
+
+  async tagPapers(ids: string[], tag: string): Promise<{ tag: string; changed: number; failed: { id: string; error: string }[] }> {
+    let name = String(tag ?? '').trim().replace(/\s+/g, ' ');
+    if (!name) throw new Error('The tag is empty.');
+    if (/[,"]/.test(name)) throw new Error('A tag cannot contain commas or quotes.');
+    // An existing tag keeps its spelling.
+    const existing = (await this.allTags()).find((t) => t.tag.trim().toLowerCase() === name.toLowerCase());
+    if (existing) name = existing.tag.trim();
+    const pdfPaths = [...new Set(ids.map((id) => this.checkId(id)))];
+    let changed = 0;
+    const failed: { id: string; error: string }[] = [];
+    const updated: string[] = [];
+    for (const pdfPath of pdfPaths) {
+      try {
+        // The tags as saved now (the list may lag behind an edit made a moment ago).
+        const current = ((await readSidecarStrict(jsonPathOf(pdfPath))).tags ?? []).map(String);
+        if (current.some((t) => t.trim().toLowerCase() === name.toLowerCase())) continue;
+        await updateSidecar(jsonPathOf(pdfPath), { tags: [...current, name] });
+        this.platform.emit({ type: 'paper-updated', id: pdfPath });
+        updated.push(pdfPath);
+        changed++;
+      } catch (e) {
+        failed.push({ id: pdfPath, error: String((e as Error)?.message ?? e) });
+      }
+    }
+    // The list is refreshed once the index has them.
+    if (updated.length) this.index.refresh(updated, 0);
+    return { tag: name, changed, failed };
   }
 
   /** Validate that an id (PDF path) belongs to a tracked folder. */
