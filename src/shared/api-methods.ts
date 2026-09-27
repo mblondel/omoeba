@@ -21,6 +21,8 @@ export const API_METHODS: (keyof OmoebaAPI)[] = [
   'pickSaveFolder',
   'addFromUrl',
   'renameTag',
+  'findDuplicates',
+  'trashDuplicate',
   'revealInFolder',
   'openExternal',
   'loadAnnotations',

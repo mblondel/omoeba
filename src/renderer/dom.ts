@@ -65,6 +65,7 @@ const ICONS: Record<string, string> = {
   download: '<path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/>',
   edit: '<path d="M10.5 2.5 13.5 5.5 6 13H3v-3z"/>',
   trash: '<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 9h5.6l.7-9"/>',
+  copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 5.5V3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/>',
   highlight: '<path d="m9.5 3 3.5 3.5-5.5 5.5H4v-3.5z"/><path d="M2 14.5h12"/>',
   underline: '<path d="M4.5 2.5V7a3.5 3.5 0 0 0 7 0V2.5M3 14h10"/>',
   strike: '<path d="M3 8h10M11 4.5C10.5 3.3 9.4 2.8 8 2.8c-1.8 0-3 .9-3 2.2M5 11.3c.5 1.2 1.6 1.9 3.1 1.9 1.8 0 3-.9 3-2.3"/>',

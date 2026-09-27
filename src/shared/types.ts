@@ -308,7 +308,23 @@ export type OmoebaEvent =
   | { type: 'index-status'; status: IndexStatus }
   | { type: 'ai-progress'; jobId: string; chunk: string }
   | { type: 'paper-updated'; id: string }
-  | { type: 'config-changed' };
+  | { type: 'config-changed' }
+  | { type: 'duplicates-progress'; done: number; total: number };
+
+/** A copy in a group of identical PDFs, with what its sidecar holds (to choose which to keep). */
+export interface DuplicatePaper extends PaperSummary {
+  size: number;
+  hasNotes: boolean;
+  annotationCount: number;
+  summaryCount: number;
+}
+
+/** PDFs with the same content (same SHA-256). */
+export interface DuplicateGroup {
+  sha256: string;
+  size: number;
+  papers: DuplicatePaper[];
+}
 
 /** The API exposed to the renderer (window.omoeba). Every method is async. */
 export interface OmoebaAPI {
@@ -337,6 +353,16 @@ export interface OmoebaAPI {
   renameTag(from: string, to: string): Promise<{ changed: number }>;
   revealInFolder(id: string): Promise<void>;
   openExternal(url: string): Promise<void>;
+  /**
+   * Groups of identical PDFs in the library (by SHA-256; PDFs not downloaded from the cloud are
+   * not read). Progress is reported by "duplicates-progress" events.
+   */
+  findDuplicates(): Promise<DuplicateGroup[]>;
+  /**
+   * Move a PDF, with its .json and .skim files, to the Trash. Refused unless another identical
+   * copy of the PDF is in the library.
+   */
+  trashDuplicate(id: string): Promise<void>;
 
   loadAnnotations(id: string): Promise<AnnotationSources>;
   saveAnnotations(id: string, annotations: Annotation[]): Promise<void>;

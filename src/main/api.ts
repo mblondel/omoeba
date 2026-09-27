@@ -12,6 +12,7 @@ import type {
   AnnotationSources,
   ChatMessage,
   Config,
+  DuplicateGroup,
   IndexStatus,
   OmoebaAPI,
   OmoebaEvent,
@@ -37,6 +38,7 @@ import {
 } from './library';
 import { loadAnnotationSources, saveAnnotationsBoth, skimMtimeOf } from './annostore';
 import { SKIM_CHANGED } from '../shared/annotations';
+import { HashCache, findIdenticalFiles, otherCopyOf } from './duplicates';
 import { extractPdf } from './pdftext';
 import {
   askPrompt,
@@ -67,6 +69,8 @@ export interface Platform {
   pickFolder(defaultPath: string, title: string): Promise<string | null>;
   revealInFolder(p: string): Promise<void>;
   openExternal(url: string): Promise<void>;
+  /** Move a file to the Trash (never deletes it outright; fails if there is no Trash). */
+  trashItem(p: string): Promise<void>;
   emit(e: OmoebaEvent): void;
   /** Absolute path of the compiled index worker script. */
   workerScript: string;
@@ -369,6 +373,7 @@ export class OmoebaService implements OmoebaAPI {
 
   async updateSidecar(id: string, patch: Partial<Sidecar>): Promise<PaperDetail> {
     const pdfPath = this.checkId(id);
+    await this.checkNotTrashed(pdfPath);
     const clean: Partial<Sidecar> = {};
     for (const [k, v] of Object.entries(patch)) if (WRITABLE_KEYS.has(k)) clean[k] = v;
     if (Array.isArray(clean.tags)) {
@@ -442,6 +447,78 @@ export class OmoebaService implements OmoebaAPI {
     return this.getPaper(pdfPath);
   }
 
+  // --- Duplicates -----------------------------------------------------------
+
+  private hashes = new HashCache();
+  /** PDFs moved to the Trash here (a view still open on one must not re-create its files). */
+  private trashed = new Set<string>();
+
+  /** A paper moved to the Trash (and not put back) cannot be written to. */
+  private async checkNotTrashed(pdfPath: string) {
+    if (this.trashed.has(pdfPath) && !(await fs.stat(pdfPath).catch(() => null))) {
+      throw new Error('This paper was moved to the Trash.');
+    }
+  }
+
+  /**
+   * The library's PDFs that are on this computer, with their size (from the index when there is
+   * one). PDFs not downloaded from the cloud are left out: reading them would download them.
+   */
+  private async localPdfs(): Promise<{ path: string; size: number }[]> {
+    const folders = new Set(this.config.folders.map((f) => path.resolve(f)));
+    const rows = this.index.list()?.filter((r) => folders.has(r.root));
+    if (rows) return rows.filter((r) => r.hasPdf && !r.pdfCloud).map((r) => ({ path: r.id, size: r.pdfSize }));
+    const files = await scanFolders(this.config.folders);
+    return files.filter((f) => f.hasPdf && !f.pdfCloud).map((f) => ({ path: pdfPathOf(f.base), size: f.pdfSize }));
+  }
+
+  async findDuplicates(): Promise<DuplicateGroup[]> {
+    const groups = await findIdenticalFiles(await this.localPdfs(), this.hashes, (done, total) =>
+      this.platform.emit({ type: 'duplicates-progress', done, total }),
+    );
+    const out: DuplicateGroup[] = [];
+    for (const g of groups) {
+      const papers = [];
+      for (const f of g) {
+        const d = await this.getPaper(f.path).catch(() => null);
+        if (!d) continue;
+        const { sidecar: sc, ...summary } = d;
+        papers.push({
+          ...summary,
+          size: f.size,
+          hasNotes: typeof sc.notes === 'string' && sc.notes.trim() !== '',
+          annotationCount: Array.isArray(sc.annotations) ? sc.annotations.length : 0,
+          summaryCount: Object.keys(sc.summaries ?? {}).length,
+        });
+      }
+      // Oldest first (usually the one to keep).
+      papers.sort((a, b) => (a.addedAt || 0) - (b.addedAt || 0) || a.pdfPath.localeCompare(b.pdfPath));
+      if (papers.length > 1) out.push({ sha256: g[0].sha256, size: g[0].size, papers });
+    }
+    return out;
+  }
+
+  async trashDuplicate(id: string): Promise<void> {
+    const pdfPath = this.checkId(id);
+    const st = await fs.stat(pdfPath).catch(() => null);
+    if (!st?.isFile()) throw new Error('This PDF does not exist anymore.');
+    // Checked now, on the files as they are: another identical copy must remain.
+    const candidates = (await this.localPdfs()).filter((c) => c.size === st.size && !this.trashed.has(c.path)).map((c) => c.path);
+    const other = await otherCopyOf(pdfPath, candidates, this.hashes);
+    if (!other) {
+      throw new Error('No other copy of this PDF was found in the library, so it was not moved to the Trash.');
+    }
+    this.trashed.add(pdfPath);
+    this.skimSeen.delete(pdfPath);
+    await this.platform.trashItem(pdfPath);
+    // Its notes and annotations go with it (to the Trash, where they can be restored from).
+    for (const p of [jsonPathOf(pdfPath), skimPathOf(pdfPath)]) {
+      if (await fs.stat(p).catch(() => null)) await this.platform.trashItem(p);
+    }
+    if (this.index.available) this.index.refresh([pdfPath], 0);
+    else this.platform.emit({ type: 'library-changed' });
+  }
+
   async revealInFolder(id: string): Promise<void> {
     const p = this.checkId(id);
     const exists = await fs.stat(p).catch(() => null);
@@ -477,6 +554,7 @@ export class OmoebaService implements OmoebaAPI {
    */
   async saveAnnotations(id: string, annotations: Annotation[]): Promise<void> {
     const pdfPath = this.checkId(id);
+    await this.checkNotTrashed(pdfPath);
     if (this.config.saveSkim && this.skimSeen.has(pdfPath)) {
       if ((await skimMtimeOf(pdfPath)) !== this.skimSeen.get(pdfPath)) {
         throw new Error(`${SKIM_CHANGED} since this paper was opened; its annotations were not overwritten.`);

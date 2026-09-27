@@ -143,6 +143,9 @@ function buildMenu() {
       submenu: [
         { label: 'Add Paper from URL…', accelerator: 'CmdOrCtrl+N', click: send('add-url') },
         { type: 'separator' },
+        { label: 'Library', accelerator: 'CmdOrCtrl+L', click: send('library') },
+        { label: 'Find Duplicates', click: send('duplicates') },
+        { type: 'separator' },
         ...(isMac ? [] : [{ label: 'Settings…', accelerator: 'Ctrl+,', click: send('settings') }]),
         { id: 'close-tab', label: 'Close Tab', accelerator: 'CmdOrCtrl+W', enabled: canCloseTab, click: send('close-tab') },
         { label: 'Close Window', accelerator: 'CmdOrCtrl+Shift+W', role: 'close' },
@@ -168,7 +171,6 @@ function buildMenu() {
     {
       label: 'View',
       submenu: [
-        { label: 'Library', accelerator: 'CmdOrCtrl+L', click: send('library') },
         { label: 'Find', accelerator: 'CmdOrCtrl+F', click: send('find') },
         { label: 'Back', accelerator: 'CmdOrCtrl+[', click: send('back') },
         { label: 'Forward', accelerator: 'CmdOrCtrl+]', click: send('forward') },
@@ -242,6 +244,9 @@ app.whenReady().then(async () => {
     },
     async openExternal(url: string) {
       await shell.openExternal(url);
+    },
+    async trashItem(p: string) {
+      await shell.trashItem(p);
     },
   });
   await service.init();

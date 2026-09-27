@@ -32,6 +32,7 @@ async function service(lib: string, config: Partial<Config> = {}): Promise<{ svc
     pickFolder: async () => null,
     revealInFolder: async () => undefined,
     openExternal: async () => undefined,
+    trashItem: async () => undefined,
     emit: () => undefined,
     workerScript: '/nonexistent-worker.js',
   };

@@ -2125,3 +2125,49 @@ li.collapsed > .toc-item .toc-toggle {
 .source-row .btn.small {
   margin-left: 4px;
 }
+
+/* ---------------------------------------------------------------- duplicates */
+table.duplicates .c-file {
+  width: 30%;
+  color: var(--muted);
+}
+table.duplicates .c-added {
+  width: 96px;
+  color: var(--muted);
+}
+table.duplicates .c-content {
+  width: 18%;
+}
+table.duplicates .c-actions {
+  /* Two 28px buttons, their gap and the cell padding: nothing may be clipped. */
+  width: 84px;
+}
+table.duplicates td.c-actions {
+  padding: 2px 8px 2px 4px;
+}
+.dup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+table.duplicates tbody tr.dup-group {
+  cursor: default;
+  background: var(--bg-soft);
+}
+table.duplicates tbody tr.dup-group:hover {
+  background: var(--bg-soft);
+}
+table.duplicates tr.dup-group td {
+  padding-top: 14px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.dup-sha {
+  margin-left: 10px;
+  font-weight: 400;
+}
+table.duplicates[hidden],
+.duplicates-view .empty[hidden] {
+  display: none;
+}
