@@ -348,7 +348,7 @@ export function renderAnnotationPane(
         'div',
         { class: 'pane-empty' },
         h('p', null, 'No annotations yet.'),
-        h('p', { class: 'muted small' }, 'Select text to highlight, underline or strike it out. Use the note and text tools in the toolbar to add notes. Annotations are saved in the .skim file next to the PDF, compatible with Skim.'),
+        h('p', { class: 'muted small' }, 'Select text to highlight, underline or strike it out. Use the note and text tools in the toolbar to add notes. Annotations are saved in the paper’s .json file (and in a .skim file for Skim, if enabled in Settings).'),
       ),
     );
     return;

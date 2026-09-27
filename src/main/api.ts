@@ -436,12 +436,12 @@ export class OmoebaService implements OmoebaAPI {
 
   /** Both copies of the annotations (.skim and .json); the reader resolves differences. */
   async loadAnnotations(id: string): Promise<AnnotationSources> {
-    return loadAnnotationSources(this.checkId(id));
+    return loadAnnotationSources(this.checkId(id), this.config.saveSkim);
   }
 
-  /** Saves to the .skim file and to the .json sidecar. */
+  /** Saves to the .json sidecar, and to the .skim file if enabled in the settings. */
   async saveAnnotations(id: string, annotations: Annotation[]): Promise<void> {
-    await saveAnnotationsBoth(this.checkId(id), annotations);
+    await saveAnnotationsBoth(this.checkId(id), annotations, this.config.saveSkim);
   }
 
   // --- AI -------------------------------------------------------------------

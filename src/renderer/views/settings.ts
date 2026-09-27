@@ -155,6 +155,14 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
         markDirty();
       },
     });
+    const saveSkim = h('input', {
+      type: 'checkbox',
+      checked: c.saveSkim,
+      onchange: () => {
+        c.saveSkim = saveSkim.checked;
+        markDirty();
+      },
+    });
     const nameInput = h('input', {
       type: 'text',
       value: c.userName ?? '',
@@ -207,6 +215,12 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
           'When opening a paper, automatically use the default AI to extract title, authors and institutions, and to write a summary, if they are missing.',
         ),
         h('label', { class: 'field inline' }, 'Re-synchronize the search index every', interval, 'minutes'),
+        h(
+          'label',
+          { class: 'check' },
+          saveSkim,
+          'Also save annotations in a .skim file next to each PDF, to open them in Skim. Annotations are always saved in the paper’s .json file.',
+        ),
       ),
     );
 

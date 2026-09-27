@@ -35,6 +35,11 @@ export interface Config {
   theme: Theme;
   /** In dark mode, show PDF pages inverted (black background, white text). */
   darkPdf: boolean;
+  /**
+   * Also save annotations in a .skim file next to the PDF (for Skim). Off: annotations are only
+   * in the .json sidecar, and a .skim file is only read to import it into a paper that has none.
+   */
+  saveSkim: boolean;
 }
 
 export type Theme = 'system' | 'light' | 'dark';

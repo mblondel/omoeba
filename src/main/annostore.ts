@@ -15,13 +15,18 @@ function fromStored(list: unknown): Annotation[] | null {
     .map((a, i) => ({ ...a, id: `j${i}-${randomUUID()}` }));
 }
 
-/** Read both copies. `null` means that copy does not exist (no .skim file / no "annotations" key). */
-export async function loadAnnotationSources(pdfPath: string): Promise<AnnotationSources> {
+/**
+ * Read both copies. `null` means that copy does not exist (no .skim file / no "annotations" key).
+ * With `useSkim` false (.skim files are not saved), the .skim file is only read when the .json
+ * has no annotations, to import them.
+ */
+export async function loadAnnotationSources(pdfPath: string, useSkim = true): Promise<AnnotationSources> {
   const skimPath = skimPathOf(pdfPath);
   const jsonPath = jsonPathOf(pdfPath);
-  const [skimMtime, jsonMtime] = await Promise.all([mtime(skimPath), mtime(jsonPath)]);
-  const skim = skimMtime !== undefined ? await readSkimFile(skimPath) : null;
+  const [skimMtime0, jsonMtime] = await Promise.all([mtime(skimPath), mtime(jsonPath)]);
   const json = jsonMtime !== undefined ? fromStored((await readSidecar(jsonPath)).annotations) : null;
+  const skimMtime = useSkim || !json ? skimMtime0 : undefined;
+  const skim = skimMtime !== undefined ? await readSkimFile(skimPath) : null;
   const same = !!skim && !!json && sameAnnotations(skim.map(toStored), json.map(toStored));
   return {
     skim,
@@ -34,18 +39,18 @@ export async function loadAnnotationSources(pdfPath: string): Promise<Annotation
 }
 
 /**
- * Write the annotations to the .skim file and to the .json sidecar.
+ * Write the annotations to the .json sidecar, and to the .skim file if `saveSkim`.
  *
  * The .json gets the annotations exactly as the .skim file gives them back when read, so that
  * the two copies always compare as identical: the .skim format does not keep everything as is
  * (e.g. note text goes through RTF, which drops surrounding whitespace and turns \r\n into \n).
  */
-export async function saveAnnotationsBoth(pdfPath: string, annotations: Annotation[]): Promise<void> {
+export async function saveAnnotationsBoth(pdfPath: string, annotations: Annotation[], saveSkim = true): Promise<void> {
   // One date for both copies (the .skim encoder would otherwise stamp each with its own "now").
   const now = new Date().toISOString();
   annotations = annotations.map((a) => (a.modificationDate ? a : { ...a, modificationDate: now }));
   const asInSkim = annotations.length ? decodeSkimData(encodeSkim(annotations)).map(skimDictToAnnotation) : [];
-  await writeSkimFile(skimPathOf(pdfPath), annotations);
+  if (saveSkim) await writeSkimFile(skimPathOf(pdfPath), annotations);
   const jsonPath = jsonPathOf(pdfPath);
   // Do not create a sidecar just to record "no annotations".
   if (annotations.length === 0 && (await mtime(jsonPath)) === undefined) return;

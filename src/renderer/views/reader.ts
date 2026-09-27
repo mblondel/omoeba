@@ -30,7 +30,7 @@ type RightTab = 'ask' | 'annotations' | 'notes';
 
 const RIGHT_TAB_TIPS: Record<RightTab, string> = {
   ask: 'Ask an AI questions about this paper',
-  annotations: 'Highlights and notes on the PDF (saved in the .skim file, compatible with Skim)',
+  annotations: 'Highlights and notes on the PDF (saved in the paper’s .json file, and in a .skim file for Skim if enabled in Settings)',
   notes: 'Your notes on this paper, in Markdown with LaTeX',
 };
 

@@ -149,3 +149,53 @@ test('annotations: .skim and .json always match after saving (randomized)', asyn
     await checkSame(pdf, `seed ${seed}, saved again unchanged`);
   }
 });
+
+test('annotations: .skim files are optional (Settings › save .skim files)', async () => {
+  const { stat, readFile: read } = await import('node:fs/promises');
+  const { writeSkimFile } = await import('../src/main/skim');
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'omoeba-noskim-'));
+  const pdf = path.join(dir, 'p.pdf');
+  const skim = path.join(dir, 'p.skim');
+  await writeFile(pdf, '%PDF-1.4\n');
+  const r = rng(7);
+  const anns = [randomAnnotation(r, 0), randomAnnotation(r, 1)];
+
+  // Off: only the .json is written.
+  await saveAnnotationsBoth(pdf, anns, false);
+  await assert.rejects(stat(skim));
+  let src = await loadAnnotationSources(pdf, false);
+  assert.equal(src.skim, null);
+  assert.equal(src.json!.length, 2);
+
+  // A .skim file made by Skim is ignored once the .json has annotations…
+  await writeSkimFile(skim, [randomAnnotation(r, 2)]);
+  src = await loadAnnotationSources(pdf, false);
+  assert.equal(src.skim, null);
+  assert.equal(src.json!.length, 2);
+  // …but compared when .skim files are on.
+  src = await loadAnnotationSources(pdf, true);
+  assert.equal(src.skim!.length, 1);
+  assert.ok(!src.same);
+
+  // A paper with no annotations in its .json: the .skim file is read, to import it.
+  const pdf2 = path.join(dir, 'q.pdf');
+  await writeFile(pdf2, '%PDF-1.4\n');
+  await writeSkimFile(path.join(dir, 'q.skim'), [randomAnnotation(r, 3)]);
+  await writeFile(path.join(dir, 'q.json'), JSON.stringify({ omoeba: 1, title: 'Q' }));
+  src = await loadAnnotationSources(pdf2, false);
+  assert.equal(src.skim!.length, 1);
+  assert.equal(src.json, null);
+  await saveAnnotationsBoth(pdf2, src.skim!, false); // what the reader does to import
+  src = await loadAnnotationSources(pdf2, false);
+  assert.equal(src.json!.length, 1);
+  assert.equal(src.skim, null);
+  assert.equal(JSON.parse(await read(path.join(dir, 'q.json'), 'utf8')).title, 'Q');
+
+  // Off by default; kept when set.
+  process.env.OMOEBA_HOME = await mkdtemp(path.join(os.tmpdir(), 'omoeba-home-'));
+  const cfg = await import('../src/main/config');
+  assert.equal((await cfg.loadConfig()).saveSkim, false);
+  await cfg.saveConfig({ ...(await cfg.loadConfig()), saveSkim: true });
+  assert.equal((await cfg.loadConfig()).saveSkim, true);
+  delete process.env.OMOEBA_HOME;
+});

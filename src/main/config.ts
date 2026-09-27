@@ -55,6 +55,7 @@ export function defaultConfig(): Config {
     indexIntervalMinutes: 10,
     theme: 'system',
     darkPdf: true,
+    saveSkim: false,
   };
 }
 
@@ -76,6 +77,7 @@ function normalize(raw: Partial<Config>): Config {
     indexIntervalMinutes: Math.max(1, Number(raw.indexIntervalMinutes) || d.indexIntervalMinutes),
     theme: raw.theme === 'light' || raw.theme === 'dark' ? raw.theme : 'system',
     darkPdf: raw.darkPdf ?? d.darkPdf,
+    saveSkim: typeof raw.saveSkim === 'boolean' ? raw.saveSkim : d.saveSkim,
   };
   if (typeof raw.userName === 'string' && raw.userName.trim()) cfg.userName = raw.userName.trim();
   const enabled = cfg.ais.filter((a) => a.enabled);
