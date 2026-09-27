@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { Annotation, AnnotationSources } from '../shared/types';
 import { diffAnnotations, sameAnnotations, toStored, type StoredAnnotation } from '../shared/annotations';
 import { jsonPathOf, readSidecar, skimPathOf, updateSidecar } from './library';
-import { readSkimFile, writeSkimFile } from './skim';
+import { decodeSkimData, encodeSkim, readSkimFile, skimDictToAnnotation, writeSkimFile } from './skim';
 
 const mtime = async (p: string) => (await fs.stat(p).catch(() => null))?.mtimeMs;
 
@@ -33,11 +33,21 @@ export async function loadAnnotationSources(pdfPath: string): Promise<Annotation
   };
 }
 
-/** Write the annotations to the .skim file and to the .json sidecar. */
+/**
+ * Write the annotations to the .skim file and to the .json sidecar.
+ *
+ * The .json gets the annotations exactly as the .skim file gives them back when read, so that
+ * the two copies always compare as identical: the .skim format does not keep everything as is
+ * (e.g. note text goes through RTF, which drops surrounding whitespace and turns \r\n into \n).
+ */
 export async function saveAnnotationsBoth(pdfPath: string, annotations: Annotation[]): Promise<void> {
+  // One date for both copies (the .skim encoder would otherwise stamp each with its own "now").
+  const now = new Date().toISOString();
+  annotations = annotations.map((a) => (a.modificationDate ? a : { ...a, modificationDate: now }));
+  const asInSkim = annotations.length ? decodeSkimData(encodeSkim(annotations)).map(skimDictToAnnotation) : [];
   await writeSkimFile(skimPathOf(pdfPath), annotations);
   const jsonPath = jsonPathOf(pdfPath);
   // Do not create a sidecar just to record "no annotations".
   if (annotations.length === 0 && (await mtime(jsonPath)) === undefined) return;
-  await updateSidecar(jsonPath, { annotations: annotations.map(toStored) });
+  await updateSidecar(jsonPath, { annotations: asInSkim.map(toStored) });
 }
