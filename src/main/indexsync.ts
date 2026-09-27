@@ -213,6 +213,9 @@ export async function syncLibrary(db: IndexDb, opts: SyncOptions): Promise<SyncR
     }
     db.transaction(() => gone.forEach((id) => db.delete(id)));
     changed = true;
+    // Many papers removed at once (a folder removed from the settings, a big cleanup): reclaim
+    // their space in the database. (A few removed now and then are not worth it.)
+    if (states && gone.length * 5 >= states.size) db.compact();
   }
 
   const todo = files.filter((f) => {

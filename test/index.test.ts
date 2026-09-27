@@ -410,6 +410,31 @@ test('index: emptied folders, interrupted PDF reading, resuming without rescanni
   db.close();
 });
 
+test('index: a folder removed from the settings leaves nothing behind in the database', async () => {
+  const root = await tmp('omoeba-compact-');
+  const file = path.join(root, 'index.sqlite');
+  const db = new IndexDb(file);
+  const words = (i: number) => Array.from({ length: 2000 }, (_, k) => `w${i}x${k}`).join(' ');
+  db.transaction(() => {
+    for (let i = 0; i < 40; i++) put(db, `/lib/p${i}.pdf`, { omoeba: 1, title: `Paper ${i}` }, words(i));
+  });
+  db.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  const pages = () => (db.db.prepare('PRAGMA page_count').get() as { page_count: number }).page_count;
+  const before = pages();
+  assert.ok(db.termCount() > 0);
+
+  // No folder in the settings any more: every paper is removed, and the space is reclaimed.
+  const r = await syncLibrary(db, { folders: [] });
+  assert.equal(r.documents, 0);
+  assert.equal(db.termCount(), 0);
+  assert.deepEqual(db.query(parseQuery('paper')), []);
+  assert.equal((db.db.prepare('SELECT count(*) AS n FROM fts_docsize').get() as { n: number }).n, 0);
+  assert.equal((db.db.prepare('PRAGMA freelist_count').get() as { freelist_count: number }).freelist_count, 0);
+  assert.ok(pages() * 4 < before, `database not smaller: ${pages()} pages, was ${before}`);
+  db.close();
+  await rm(root, { recursive: true, force: true });
+});
+
 test('index manager: a worker that stops responding is restarted', async () => {
   const { IndexManager } = await import('../src/main/indexer');
   const root = await tmp('omoeba-dog-');

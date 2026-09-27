@@ -378,6 +378,25 @@ export class IndexDb {
   }
 
   /**
+   * Reclaim what removed papers leave behind (after many were removed, e.g. a folder taken out
+   * of the settings): the search index is merged, which drops the entries of deleted papers
+   * (FTS5 only marks them as deleted), and the file is rewritten smaller when a quarter or more
+   * of it is free space. Best effort: a failure (e.g. the database busy) leaves it as it was.
+   */
+  compact(): void {
+    try {
+      this.db.exec("INSERT INTO fts(fts) VALUES('optimize')");
+      const pragma = (name: string) => Object.values(this.db.prepare(`PRAGMA ${name}`).get() as object)[0] as number;
+      const free = pragma('freelist_count');
+      if (free > 0 && free * 4 >= pragma('page_count')) this.db.exec('VACUUM');
+      // Also shrink the WAL file (it holds the rewritten pages until checkpointed).
+      this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch (e) {
+      console.warn('Could not compact the index:', e);
+    }
+  }
+
+  /**
    * Paper ids matching a query (same syntax as before: space-separated terms, all of which must
    * match, as prefixes; `field:term` for one field; `"a b"` for several terms; `-term` excludes).
    * An empty query matches all papers.
