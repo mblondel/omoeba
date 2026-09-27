@@ -193,6 +193,8 @@ export interface PaperSummary {
   annotationCount?: number;
   /** URL of the first-page thumbnail (served from the thumbnail cache), if up to date. */
   thumbnail?: string;
+  /** When the paper was last seen: its page or PDF opened (ms since the epoch), if it was. */
+  openedAt?: number;
   /**
    * The PDF is not downloaded to this computer (a cloud placeholder, e.g. Google Drive in
    * streaming mode): no thumbnail is made, since reading it would download it.
@@ -366,6 +368,8 @@ export interface OmoebaAPI {
    * not read). Progress is reported by "duplicates-progress" events.
    */
   findDuplicates(): Promise<DuplicateGroup[]>;
+  /** Record that a paper was seen: its page or PDF opened (history, ~/omoeba/history.json). */
+  markOpened(id: string): Promise<void>;
   /**
    * Move a PDF, with its .json and .skim files, to the Trash. Refused unless another identical
    * copy of the PDF is in the library.

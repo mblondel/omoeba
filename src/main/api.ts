@@ -39,6 +39,7 @@ import {
 import { loadAnnotationSources, saveAnnotationsBoth, skimMtimeOf } from './annostore';
 import { SKIM_CHANGED } from '../shared/annotations';
 import { HashCache, findIdenticalFiles, otherCopyOf } from './duplicates';
+import { ReadingHistory, type LiveFile } from './history';
 import { extractPdf } from './pdftext';
 import {
   askPrompt,
@@ -125,6 +126,7 @@ export class OmoebaService implements OmoebaAPI {
     this.config = await cfg.loadConfig();
     await this.index.open();
     await this.thumbs.open();
+    await this.history.load();
     this.index.startPeriodic(this.config.indexIntervalMinutes);
     this.watchFolders();
     if (this.config.folders.length) this.index.requestSync(500);
@@ -134,6 +136,7 @@ export class OmoebaService implements OmoebaAPI {
     this.index.stop();
     this.watchers.forEach((w) => w.close());
     void this.thumbs.close();
+    this.history.flushSync();
   }
 
   private watchFolders() {
@@ -227,21 +230,24 @@ export class OmoebaService implements OmoebaAPI {
     // (Papers of a folder just removed from the settings until the index forgets them.)
     const rows = this.index.list()?.filter((r) => folders.has(r.root)) ?? null;
     let out: PaperSummary[];
-    let live: string[];
+    let live: LiveFile[];
     if (rows) {
       out = rows.map((r) => {
         const f: ScannedFile = { ...r, base: r.id.slice(0, -4) };
         const sc = { omoeba: 1, ...r.meta } as Sidecar;
         return { ...buildSummary(f, sc, r.info ?? undefined, this.thumbnailUrl(f)), cloudOnly: r.pdfCloud || undefined };
       });
-      live = rows.filter((r) => r.hasPdf).map((r) => r.id);
+      live = rows.filter((r) => r.hasPdf).map((r) => ({ path: r.id, size: r.pdfSize, mtime: r.pdfMtime }));
     } else {
       const files = await scanFolders(this.config.folders);
       const sidecars = await Promise.all(files.map((f) => this.sidecarFor(f)));
       out = files.map((f, i) => ({ ...buildSummary(f, sidecars[i], undefined, this.thumbnailUrl(f)), cloudOnly: f.pdfCloud || undefined }));
-      live = files.filter((f) => f.hasPdf).map((f) => pdfPathOf(f.base));
+      live = files.filter((f) => f.hasPdf).map((f) => ({ path: pdfPathOf(f.base), size: f.pdfSize, mtime: f.pdfMtime }));
     }
-    void this.pruneThumbnails(live);
+    void this.pruneThumbnails(live.map((f) => f.path));
+    // History of papers seen (papers moved or renamed keep theirs).
+    this.history.followMoves(live);
+    for (const p of out) p.openedAt = this.history.openedAt(p.id);
     return out.sort((a, b) => a.title.localeCompare(b.title));
   }
 
@@ -448,6 +454,18 @@ export class OmoebaService implements OmoebaAPI {
     await updateSidecar(jsonPathOf(pdfPath), { source: { url, downloadedAt: new Date().toISOString() } });
     this.newFiles(pdfPath);
     return this.getPaper(pdfPath);
+  }
+
+  // --- History of papers seen (~/omoeba/history.json) ------------------------
+
+  private history = new ReadingHistory(cfg.historyPath());
+
+  async markOpened(id: string): Promise<void> {
+    const pdfPath = this.checkId(id);
+    const st = await fs.stat(pdfPath).catch(() => null);
+    if (!st?.isFile()) return;
+    this.history.opened({ path: pdfPath, size: st.size, mtime: st.mtimeMs });
+    this.platform.emit({ type: 'paper-updated', id: pdfPath });
   }
 
   // --- Duplicates -----------------------------------------------------------

@@ -20,7 +20,7 @@ import { navigate, state, addPaperFromUrl, isActiveView, retargetSearchTab } fro
 import { renderThumbnail } from '../thumbnail';
 import { sameAuthor, sameInstitution, tagQuery } from '../authors';
 
-type SortKey = 'title' | 'authors' | 'folder' | 'tags' | 'added';
+type SortKey = 'title' | 'authors' | 'folder' | 'tags' | 'added' | 'opened';
 
 const prefs = {
   get sort(): { key: SortKey; dir: 1 | -1 } {
@@ -95,12 +95,26 @@ function thumbCell(p: PaperSummary): HTMLElement {
 let savedScroll = 0;
 let savedSelected: string | null = null;
 
-export function mountList(root: HTMLElement, opts: { query?: string } = {}): () => void {
+/** When a paper was last seen, short: the time today, "Yesterday", else the date. */
+function formatOpened(ms: number): string {
+  const d = new Date(ms);
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((day(new Date()) - day(d)) / 86_400_000);
+  if (days === 0) return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  if (days === 1) return 'Yesterday';
+  return d.toLocaleDateString();
+}
+
+/**
+ * `query`: a search tab, starting from its own query. `recent`: the Recently Seen tab (papers
+ * whose page or PDF was opened, most recent first).
+ */
+export function mountList(root: HTMLElement, opts: { query?: string; recent?: boolean } = {}): () => void {
   /** A search tab: starts from its own query and leaves the Library's query/scroll alone. */
-  const isSearchTab = opts.query !== undefined;
+  const isSearchTab = opts.query !== undefined || !!opts.recent;
   let papers: PaperSummary[] = [];
   let visible: PaperSummary[] = [];
-  let sort = prefs.sort;
+  let sort: { key: SortKey; dir: 1 | -1 } = opts.recent ? { key: 'opened', dir: -1 } : prefs.sort;
   let selected: string | null = isSearchTab ? null : savedSelected;
   let searchSeq = 0;
   let indexStatus: IndexStatus | null = null;
@@ -110,7 +124,7 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
     class: 'search',
     placeholder: 'Search…  (tag:  author:  inst:  kw:  folder:)',
     title: 'Search titles, authors, institutions, tags, keywords and text. Prefix with tag:, author:, inst:, kw:, title: or folder: to search one field; -term excludes.',
-    value: isSearchTab ? opts.query : state.listQuery,
+    value: isSearchTab ? opts.query ?? '' : state.listQuery,
     spellcheck: false,
   });
   const count = h('span', { class: 'muted' });
@@ -254,6 +268,7 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
     { key: 'authors', label: 'Authors', cls: 'c-authors' },
     { key: 'folder', label: 'Folder', cls: 'c-folder' },
     { key: 'tags', label: 'Tags', cls: 'c-tags' },
+    { key: 'opened', label: 'Seen', cls: 'c-opened' },
   ];
 
   function renderHead() {
@@ -269,8 +284,9 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
             {
               class: `${c.cls} sortable ${sort.key === c.key ? 'sorted' : ''}`,
               onclick: () => {
-                sort = { key: c.key, dir: sort.key === c.key ? ((-sort.dir) as 1 | -1) : 1 };
-                prefs.sort = sort;
+                // Dates: most recent first on the first click.
+                sort = { key: c.key, dir: sort.key === c.key ? ((-sort.dir) as 1 | -1) : c.key === 'opened' ? -1 : 1 };
+                if (!opts.recent) prefs.sort = sort;
                 renderHead();
                 applyFilter();
               },
@@ -294,7 +310,9 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
             ? p.folder + '/' + p.title
             : sort.key === 'tags'
               ? p.tags.join(',') || '￿'
-              : String(p.addedAt).padStart(16, '0');
+              : sort.key === 'opened'
+                ? String(p.openedAt ?? 0).padStart(16, '0')
+                : String(p.addedAt).padStart(16, '0');
     return [...list].sort((a, b) => sort.dir * collator.compare(key(a), key(b)));
   }
 
@@ -304,7 +322,7 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
    */
   const CHUNK = 200;
   let rendered = 0;
-  const sentinel = h('tr', { class: 'list-sentinel' }, h('td', { colSpan: 5 }));
+  const sentinel = h('tr', { class: 'list-sentinel' }, h('td', { colSpan: 6 }));
   const moreObserver = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && renderMore(), {
     root: wrap,
     rootMargin: '800px 0px',
@@ -349,8 +367,8 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
     clear(tbody);
     rendered = 0;
     renderMore(upTo);
-    count.textContent =
-      visible.length === papers.length ? `${papers.length} papers` : `${visible.length} of ${papers.length} papers`;
+    const total = opts.recent ? papers.filter((p) => p.openedAt).length : papers.length;
+    count.textContent = visible.length === total ? `${total} papers` : `${visible.length} of ${total} papers`;
     empty.style.display = visible.length ? 'none' : '';
     clear(empty);
     if (!visible.length) {
@@ -361,7 +379,8 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
             h('p', null, 'No PDFs found in your library folders.'),
             h('button', { class: 'btn', onclick: () => navigate('#/settings') }, 'Manage folders'),
           );
-      } else empty.append(h('p', null, 'No papers match your search.'));
+      } else if (opts.recent && !papers.some((p) => p.openedAt)) empty.append(h('p', null, 'No paper seen yet: papers appear here once you open their page or PDF.'));
+      else empty.append(h('p', null, 'No papers match your search.'));
     }
   }
 
@@ -419,6 +438,11 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
             t,
           ),
         ),
+      ),
+      h(
+        'td',
+        { class: 'c-opened', title: p.openedAt ? `Last seen ${new Date(p.openedAt).toLocaleString()}` : 'Not seen yet' },
+        p.openedAt ? formatOpened(p.openedAt) : '',
       ),
     );
   }
@@ -481,7 +505,7 @@ export function mountList(root: HTMLElement, opts: { query?: string } = {}): () 
     updateRenameBtn();
     renderTagBar();
     const { rest, folders, authors, insts, tags } = splitQuery(q);
-    let list = papers;
+    let list = opts.recent ? papers.filter((p) => p.openedAt) : papers;
     if (folders.length) list = list.filter((p) => folders.every((f) => p.folder.toLowerCase().includes(f)));
     if (authors.length) list = list.filter((p) => authors.every((a) => p.authors.some((b) => sameAuthor(a, b))));
     if (insts.length) list = list.filter((p) => insts.every((a) => p.institutions.some((b) => sameInstitution(a, b))));

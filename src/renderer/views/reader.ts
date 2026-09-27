@@ -1274,6 +1274,8 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
         return;
       }
       pdfDoc = doc;
+      // History of papers seen (the library's "Seen" column, File › Recently Seen).
+      api.markOpened(id).catch(() => undefined);
       pageCount.textContent = `/ ${doc.numPages}`;
       const pos = store.get<{ page: number; scale: string } | null>('pos:' + id, null);
       eventBus.on(

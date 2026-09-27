@@ -1031,6 +1031,8 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       setTagPalette(tags);
       render();
       autoRun();
+      // Seeing a paper's page counts, as opening its PDF does (File › Recently Seen).
+      api.markOpened(id).catch(() => undefined);
     })
     .catch((e) => {
       clear(content);

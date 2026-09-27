@@ -33,7 +33,7 @@ export function applyAppearance(cfg: Config) {
  */
 export type ViewHandle = (() => void) & { onShow?: () => void; goToPage?: (page: number) => void };
 
-type TabKind = 'library' | 'paper' | 'read' | 'settings' | 'search' | 'duplicates';
+type TabKind = 'library' | 'paper' | 'read' | 'settings' | 'search' | 'duplicates' | 'recent';
 
 interface Tab {
   key: string;
@@ -58,7 +58,7 @@ let setupCleanup: (() => void) | null = null;
 /** True while tabs are being restored at startup (the saved session must not be overwritten). */
 let restoring = false;
 
-const TAB_ICON: Record<TabKind, string> = { library: 'list', paper: 'note', read: 'book', settings: 'settings', search: 'search', duplicates: 'copy' };
+const TAB_ICON: Record<TabKind, string> = { library: 'list', paper: 'note', read: 'book', settings: 'settings', search: 'search', duplicates: 'copy', recent: 'book' };
 
 /** Whether an element belongs to the tab currently shown (views use it to gate shortcuts). */
 export function isActiveView(el: Element): boolean {
@@ -67,7 +67,7 @@ export function isActiveView(el: Element): boolean {
 }
 
 function keyFor(kind: TabKind, arg?: string) {
-  return kind === 'library' || kind === 'settings' || kind === 'duplicates' ? kind : `${kind}:${arg}`;
+  return kind === 'library' || kind === 'settings' || kind === 'duplicates' || kind === 'recent' ? kind : `${kind}:${arg}`;
 }
 
 function mountTab(tab: Tab) {
@@ -77,6 +77,7 @@ function mountTab(tab: Tab) {
     else if (tab.kind === 'settings') tab.handle = mountSettings(tab.panel, { firstRun: false });
     else if (tab.kind === 'search') tab.handle = mountList(tab.panel, { query: tab.query ?? '' });
     else if (tab.kind === 'duplicates') tab.handle = mountDuplicates(tab.panel);
+    else if (tab.kind === 'recent') tab.handle = mountList(tab.panel, { recent: true });
     else if (tab.kind === 'paper') tab.handle = mountPaper(tab.panel, tab.paperId!);
     else tab.handle = mountReader(tab.panel, tab.paperId!, tab.initialPage);
   } catch (e) {
@@ -156,7 +157,7 @@ function openTab(
       kind,
       paperId,
       query: opts.query,
-      title: kind === 'settings' ? 'Settings' : kind === 'library' ? 'Library' : kind === 'duplicates' ? 'Duplicates' : kind === 'search' ? opts.title || opts.query || 'Search' : 'Loading…',
+      title: kind === 'settings' ? 'Settings' : kind === 'library' ? 'Library' : kind === 'duplicates' ? 'Duplicates' : kind === 'recent' ? 'Recently Seen' : kind === 'search' ? opts.title || opts.query || 'Search' : 'Loading…',
       panel,
       button,
       handle: null,
@@ -233,7 +234,7 @@ function restoreSession() {
   }
   restoring = true;
   for (const t of saved?.tabs ?? []) {
-    if (['paper', 'read', 'settings', 'duplicates'].includes(t.kind)) openTab(t.kind, t.paperId, { background: true });
+    if (['paper', 'read', 'settings', 'duplicates', 'recent'].includes(t.kind)) openTab(t.kind, t.paperId, { background: true });
     else if (t.kind === 'search' && typeof t.query === 'string') openTab('search', undefined, { background: true, query: t.query, title: t.title });
   }
   const want = tabs.find((t) => t.key === saved?.active) ?? tabs[0];
@@ -408,6 +409,7 @@ api.onMenu((action) => {
   else if (action === 'library') navigate('#/');
   else if (action === 'add-url') addPaperFromUrl();
   else if (action === 'duplicates') openDuplicatesTab();
+  else if (action === 'recent') openTab('recent');
   else if (action === 'close-tab') active && closeTab(active);
   else if (action === 'next-tab') cycleTab(1);
   else if (action === 'prev-tab') cycleTab(-1);

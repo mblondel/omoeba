@@ -23,6 +23,7 @@ export const API_METHODS: (keyof OmoebaAPI)[] = [
   'renameTag',
   'findDuplicates',
   'trashDuplicate',
+  'markOpened',
   'revealInFolder',
   'openExternal',
   'loadAnnotations',
