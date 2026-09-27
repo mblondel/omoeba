@@ -1,7 +1,7 @@
 /** Paper view: metadata, tags, summaries, download location. */
-import type { AIProvider, Config, FigureRef, PaperDetail, Sidecar, SourceCheckResult, SummaryEntry } from '../../shared/types';
+import type { AIProvider, Config, FigureRef, PaperDetail, RelatedPaper, Sidecar, SourceCheckResult, SummaryEntry } from '../../shared/types';
 import { api, newJobId } from '../api';
-import { clear, confirmDialog, errorMessage, h, icon, iconButton, toast, tagColor, setTagPalette } from '../dom';
+import { clear, confirmDialog, errorMessage, formatAuthors, h, icon, iconButton, toast, tagColor, setTagPalette } from '../dom';
 import { mountMarkdown } from '../markdown';
 import { navigate, refreshConfig, isActiveView, openSearchTab } from '../app';
 import { authorQuery, institutionQuery, tagQuery } from '../authors';
@@ -180,6 +180,10 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
   let disposed = false;
   const materializing = new Set<string>();
   const figures = figureRenderer(id);
+  /** Related papers found in the library (paper ids, per related paper), for `related.createdAt`. */
+  let relatedMatches: { key: string; ids: (string | null)[] } | null = null;
+  /** Related papers being downloaded, or that could not be found online (by index). */
+  const relatedState = new Map<number, 'downloading' | 'not-found'>();
 
   const content = h('div', { class: 'paper-content' });
   const readBtn = h('button', { class: 'btn primary', onclick: () => openReader() }, icon('book'), 'Read PDF');
@@ -413,6 +417,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
         }),
       ),
       summarySection(p),
+      relatedSection(p),
       askSection(),
     );
     if (!ais.length)
@@ -730,6 +735,174 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
   }
 
   // ---------------------------------------------------------------------------
+  // Related work
+
+  /** Look up which related papers are already in the library (then re-render). */
+  function refreshRelatedMatches() {
+    const key = paper?.sidecar.related?.createdAt;
+    if (!key) return;
+    api
+      .matchRelated(id)
+      .then((ids) => {
+        if (disposed || paper?.sidecar.related?.createdAt !== key) return;
+        const changed = JSON.stringify(ids) !== JSON.stringify(relatedMatches?.ids) || relatedMatches?.key !== key;
+        relatedMatches = { key, ids };
+        if (changed && !editingSummary) render();
+      })
+      .catch((e) => console.warn('Related work matching failed', e));
+  }
+
+  async function downloadRelated(index: number): Promise<void> {
+    if (relatedState.get(index) === 'downloading') return;
+    // Where to save it: the user chooses, starting from this paper's folder.
+    let folder: string | null;
+    try {
+      folder = await api.pickSaveFolder(id.slice(0, Math.max(id.lastIndexOf('/'), id.lastIndexOf('\\'))));
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+      return;
+    }
+    if (!folder) return;
+    relatedState.set(index, 'downloading');
+    render();
+    try {
+      await api.downloadRelated(id, index, folder);
+      relatedState.delete(index);
+    } catch (e) {
+      relatedState.set(index, 'not-found');
+      toast(errorMessage(e), 'error', 8000);
+      return;
+    } finally {
+      refreshRelatedMatches();
+      render();
+    }
+  }
+
+  function relatedSection(p: PaperDetail): HTMLElement | string {
+    const related = p.sidecar.related;
+    const ais = enabledAIs();
+    const jobs = jobsFor(id);
+    const running = jobs.has('related');
+    if (!related && !ais.length) return '';
+    const key = related?.createdAt;
+    if (key && relatedMatches?.key !== key) {
+      if (relatedMatches) relatedState.clear();
+      relatedMatches = { key, ids: [] };
+      refreshRelatedMatches();
+    }
+    const papers = related?.papers ?? [];
+    // Until the library has been checked, no action is shown (it could be Open or Download).
+    const ids = key && relatedMatches && relatedMatches.key === key ? relatedMatches.ids : [];
+    const checked = ids.length === papers.length;
+
+    const head = h(
+      'div',
+      { class: 'section-head related-head' },
+      collapsibleHeading('related', 'Related work'),
+      h('div', { class: 'spacer' }),
+      ais.length
+        ? (() => {
+            const b = iconButton(
+              related ? 'refresh' : 'sparkle',
+              related ? `Choose again with ${aiName(cfg?.defaultAI ?? ais[0].id)}` : 'Find related work with AI',
+              () => runRelated(cfg?.defaultAI ?? ais[0].id),
+            );
+            b.disabled = running || !p.hasPdf;
+            return b;
+          })()
+        : null,
+    );
+
+    const body = h('div', { class: 'related-body' });
+    if (!papers.length) {
+      body.append(
+        h(
+          'p',
+          { class: 'muted' },
+          running ? 'Choosing the most relevant cited papers…' : 'The most relevant papers this paper cites, checked against its reference list.',
+          running || !ais.length || !p.hasPdf
+            ? null
+            : h('button', { class: 'link-btn', onclick: () => runRelated(cfg?.defaultAI ?? ais[0].id) }, ' Find them with AI'),
+        ),
+      );
+    } else {
+      body.append(h('ol', { class: 'related-list' }, papers.map((r, i) => relatedRow(r, i, ids[i] ?? null, checked))));
+      body.append(
+        h(
+          'div',
+          { class: 'muted small related-foot' },
+          `Chosen by ${aiName(related!.ai)} · ${new Date(related!.createdAt).toLocaleDateString()}`,
+        ),
+      );
+    }
+    return h('section', { class: `related collapsible ${isCollapsed('related') ? 'collapsed' : ''}` }, head, body);
+  }
+
+  function relatedRow(r: RelatedPaper, i: number, libraryId: string | null, checked: boolean): HTMLElement {
+    const state = relatedState.get(i);
+    const open = libraryId ? () => navigate(`#/paper/${encodeURIComponent(libraryId)}`) : null;
+    const meta = [r.authors?.length ? formatAuthors(r.authors) : '', r.venue ?? '', r.year ? String(r.year) : '']
+      .filter(Boolean)
+      .join(' · ');
+    let action: HTMLElement | null;
+    if (!checked) action = null;
+    else if (open) action = h('button', { class: 'btn small', onclick: open, title: 'In your library' }, icon('book'), 'Open');
+    else if (state === 'downloading') action = h('span', { class: 'muted small related-busy' }, h('span', { class: 'spinner' }), 'Downloading…');
+    else if (state === 'not-found')
+      action = h(
+        'button',
+        {
+          class: 'btn small',
+          title: 'No PDF found automatically: search the web',
+          onclick: () => api.openExternal(`https://scholar.google.com/scholar?q=${encodeURIComponent(`"${r.title}"`)}`),
+        },
+        icon('search'),
+        'Search',
+      );
+    else
+      action = h(
+        'button',
+        { class: 'btn small', title: 'Download into your library (you choose the folder)', onclick: () => downloadRelated(i) },
+        icon('download'),
+        'Download',
+      );
+    return h(
+      'li',
+      { class: `related-item ${libraryId ? 'in-library' : ''}` },
+      h(
+        'div',
+        { class: 'related-main' },
+        open
+          ? h('a', { class: 'related-title', href: '#', onclick: (e: Event) => (e.preventDefault(), open()) }, r.title)
+          : h('span', { class: 'related-title' }, r.title),
+        meta ? h('div', { class: 'muted small' }, meta) : null,
+        r.relation
+          ? h(
+              'div',
+              { class: 'related-relation' },
+              r.relation,
+              r.page
+                ? h(
+                    'a',
+                    {
+                      class: 'page-ref',
+                      href: '#',
+                      onclick: (e: Event) => {
+                        e.preventDefault();
+                        navigate(`#/read/${encodeURIComponent(id)}?page=${r.page}`);
+                      },
+                    },
+                    ` (p. ${r.page})`,
+                  )
+                : null,
+            )
+          : null,
+      ),
+      action,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // AI jobs
 
   function track(key: string, label: string, run: (jobId: string) => Promise<PaperDetail>): Promise<void> {
@@ -799,6 +972,12 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     });
   }
 
+  function runRelated(aiId: string) {
+    return track('related', `Choosing the most relevant cited papers with ${aiName(aiId)}…`, (jobId) =>
+      api.extractRelated(id, aiId, jobId),
+    );
+  }
+
   async function autoRun() {
     if (!paper || !cfg?.autoExtract || !paper.hasPdf) return;
     const def = cfg.defaultAI;
@@ -809,12 +988,20 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     if (disposed || !paper) return;
     // Look for the download location once (not on every open).
     if (!paper.sidecar.source && !paper.sidecar.sourceSearch && !jobsFor(id).has('source')) runFindSource();
-    if (!Object.keys(paper.sidecar.summaries ?? {}).length && !jobsFor(id).has('sum:' + def)) runSummary(def);
+    const summary =
+      !Object.keys(paper.sidecar.summaries ?? {}).length && !jobsFor(id).has('sum:' + def) ? runSummary(def) : null;
+    // Related work after the summary (one AI job at a time per paper is enough).
+    if (!paper.sidecar.related && !jobsFor(id).has('related')) {
+      await summary;
+      if (!disposed && paper && !paper.sidecar.related && !jobsFor(id).has('related')) runRelated(def);
+    }
   }
 
   // ---------------------------------------------------------------------------
 
   const offEvent = api.onEvent((e) => {
+    // A related paper may have been added to (or removed from) the library.
+    if (e.type === 'library-changed') refreshRelatedMatches();
     if (e.type === 'paper-updated' && e.id === id && !editingSummary) {
       api.getPaper(id).then((d) => {
         paper = d;

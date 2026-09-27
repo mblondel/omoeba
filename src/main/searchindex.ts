@@ -10,7 +10,15 @@ export interface IndexedDoc {
   pdfMtime: number;
   jsonMtime: number;
   /** Metadata read from the PDF (used as a fallback for the paper list). */
-  info?: { title?: string; authors?: string[]; year?: string; arxivId?: string; numPages?: number };
+  info?: {
+    title?: string;
+    authors?: string[];
+    year?: string;
+    arxivId?: string;
+    numPages?: number;
+    /** Start of the first page's text, where the title is printed (to recognize cited papers). */
+    head?: string;
+  };
   /** Terms extracted from the PDF text (cached per pdfMtime). */
   pdfTerms?: string[];
   /** Terms per field (from the sidecar + PDF). */

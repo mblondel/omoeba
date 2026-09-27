@@ -545,3 +545,132 @@ test('figure references', () => {
   assert.deepEqual(s, { width: 900, height: 450 });
   assert.deepEqual(figureDisplaySize({ page: 1, rect: [0, 0, 100, 50] }), { width: 300, height: 150 });
 });
+
+import {
+  compact,
+  fileNameForTitle,
+  matchLibrary,
+  parseArxivFeed,
+  parseRelated,
+  pdfCandidates,
+  referencesStart,
+  relatedTextBlocks,
+  titleCited,
+} from '../src/main/related';
+
+test('related work: reference list, citation check, parsing', () => {
+  const pages = [
+    'Intro. We build on trajectory balance [3] and compare to PPO.\nReferences are discussed later.',
+    'Method details.\n\nReferences\n[1] E. Hu et al. Amortizing intractable infer-\nence in large language models. ICLR, 2024.',
+    '[2] J. Schulman. Proximal Policy Optimization Algorithms. arXiv:1707.06347, 2017.\n[3] N. Malkin. Trajectory balance: Improved credit assignment in GFlowNets. NeurIPS 2022.',
+  ];
+  assert.deepEqual(referencesStart(pages), [1, pages[1].indexOf('\n\nReferences')]);
+  const blocks = relatedTextBlocks(pages);
+  assert.ok(blocks.references!.includes('Proximal Policy') && !blocks.body.includes('Proximal Policy'));
+  assert.ok(blocks.body.includes('Method details'));
+
+  const text = compact(pages.join('\n'));
+  assert.ok(titleCited('Amortizing Intractable Inference in Large Language Models', text)); // hyphenated in the PDF
+  assert.ok(titleCited('Trajectory balance: improved credit assignment in GFlowNets: extended version', text)); // extra subtitle
+  assert.ok(!titleCited('Attention Is All You Need', text));
+  assert.ok(!titleCited('PPO', text)); // too short to check
+
+  const { papers, dropped } = parseRelated(
+    {
+      papers: [
+        { title: 'Trajectory balance: Improved credit assignment in GFlowNets', authors: ['N. Malkin', 'et al.'], year: 2022, relation: 'Objective extended here.', page: 1 },
+        { title: 'Proximal Policy Optimization Algorithms.', arxiv: '1707.06347v2', year: '2017', relation: 'Baseline.', page: 99 },
+        { title: 'Attention Is All You Need', relation: 'Not cited.' },
+        { title: 'Trajectory Balance: improved credit assignment in GFlowNets', relation: 'Duplicate.' },
+        { title: '', relation: 'No title.' },
+        'junk',
+      ],
+    },
+    pages,
+  );
+  assert.equal(dropped, 1);
+  assert.equal(papers.length, 2);
+  assert.equal(papers[0].page, 1);
+  assert.equal(papers[1].title, 'Proximal Policy Optimization Algorithms');
+  assert.equal(papers[1].arxiv, '1707.06347');
+  assert.equal(papers[1].year, 2017);
+  assert.equal(papers[1].page, undefined); // out of range
+  assert.deepEqual(parseRelated({}, pages), { papers: [], dropped: 0 });
+});
+
+test('related work: library matching, file names, PDF candidates', async () => {
+  const papers = [
+    { title: 'Proximal Policy Optimization Algorithms', arxiv: '1707.06347', relation: '' },
+    { title: 'Trajectory balance: Improved credit assignment in GFlowNets', relation: '' },
+    { title: 'GFlowNet Foundations', relation: '' },
+    { title: 'Something else entirely', relation: '' },
+  ];
+  const library = [
+    { id: '/lib/ppo.pdf', titles: ['PPO (renamed)'], arxiv: '1707.06347' },
+    { id: '/lib/tb.pdf', titles: ['Trajectory Balance: Improved Credit Assignment in GFlowNets'] },
+    { id: '/lib/self.pdf', titles: ['GFlowNet Foundations'] },
+  ];
+  assert.deepEqual(matchLibrary(papers, library, '/lib/self.pdf'), ['/lib/ppo.pdf', '/lib/tb.pdf', null, null]);
+  assert.deepEqual(matchLibrary(papers, library)[2], '/lib/self.pdf');
+
+  // Papers whose title is not known yet (no sidecar, no title in the PDF's metadata): matched
+  // by the title printed at the top of their first page, else by file name.
+  const untitled = [
+    { id: '/lib/found.pdf', titles: ['', ''], fileName: 'gflownet-foundations' },
+    {
+      id: '/lib/tb2.pdf',
+      titles: [],
+      fileName: 'tb2',
+      head: 'Trajectory balance:\nImproved credit assignment in GFlowNets\nNikolay Malkin\nMila, Université de Montréal',
+    },
+    { id: '/lib/cites.pdf', titles: [], head: 'Some paper\nAbstract\nProximal Policy Optimization Algorithms' },
+  ];
+  assert.deepEqual(matchLibrary(papers, untitled), [null, '/lib/tb2.pdf', '/lib/found.pdf', null]);
+  const jmlr = { id: '/lib/j.pdf', titles: [], head: 'Journal of Machine Learning Research 24 (2023) 1-76\nGFlowNet Foundations\nYoshua Bengio' };
+  assert.deepEqual(matchLibrary([papers[2]], [jmlr]), ['/lib/j.pdf']);
+  // A title that is only the start of the printed one is another paper; and the file name is
+  // not used when the first page gives the title.
+  const opd = {
+    id: '/lib/on-policy-distillation.pdf',
+    titles: [],
+    fileName: 'on-policy-distillation',
+    head: 'On-policy distillation of language models:\nLearning from self-generated mistakes\nRishabh Agarwal',
+  };
+  assert.deepEqual(
+    matchLibrary(
+      [
+        { title: 'On-policy distillation', relation: '' },
+        { title: 'On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes', relation: '' },
+      ],
+      [opd],
+    ),
+    [null, '/lib/on-policy-distillation.pdf'],
+  );
+
+  assert.equal(fileNameForTitle('Trajectory Balance: Improved Credit Assignment in GFlowNets'), 'trajectory-balance-improved-credit-assignment-in-gflownets.pdf');
+  assert.ok(fileNameForTitle('A '.repeat(80)).length <= 64);
+  assert.equal(fileNameForTitle('ÉTÉ — «»'), 'ete.pdf');
+  assert.equal(fileNameForTitle('!!!'), 'paper.pdf');
+
+  const feed = `<feed><entry><id>http://arxiv.org/abs/2201.13259v3</id><title>Trajectory balance: Improved credit
+    assignment in GFlowNets</title></entry><entry><id>http://arxiv.org/abs/1111.1111v1</id><title>Other</title></entry></feed>`;
+  assert.deepEqual(parseArxivFeed(feed), [
+    { id: '2201.13259', title: 'Trajectory balance: Improved credit assignment in GFlowNets' },
+    { id: '1111.1111', title: 'Other' },
+  ]);
+
+  const calls: string[] = [];
+  const search = {
+    arxiv: async (t: string) => (calls.push('arxiv:' + t), t.startsWith('Trajectory') ? ['2201.13259'] : []),
+    openReview: async (t: string) => (calls.push('or:' + t), ['https://openreview.net/pdf?id=abc']),
+  };
+  assert.deepEqual(await pdfCandidates(papers[0], search), ['https://arxiv.org/abs/1707.06347']);
+  assert.deepEqual(calls, []); // the reference has an arXiv id: no search
+  assert.deepEqual(await pdfCandidates(papers[1], search), ['https://arxiv.org/abs/2201.13259']);
+  assert.deepEqual(await pdfCandidates(papers[3], search), ['https://openreview.net/pdf?id=abc']);
+  assert.deepEqual(await pdfCandidates({ title: 'X', url: 'https://arxiv.org/abs/2101.00001v2', relation: '' }, search), [
+    'https://arxiv.org/abs/2101.00001',
+  ]);
+  const failing = { arxiv: async () => Promise.reject(new Error('offline')), openReview: async () => [] };
+  assert.deepEqual(await pdfCandidates(papers[3], failing), []);
+});

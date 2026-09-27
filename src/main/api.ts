@@ -47,7 +47,9 @@ import {
   summaryPrompt,
 } from './ai';
 import { downloadPdf, uniquePath, writeFileAtomic } from './download';
+import { fileNameForTitle, matchLibrary, parseRelated, pdfCandidates, relatedPrompt } from './related';
 import {
+  arxivIdOf,
   arxivStampOf,
   expandCandidates,
   findIdenticalSource,
@@ -84,6 +86,7 @@ const WRITABLE_KEYS = new Set([
   'chats',
   'metadataSource',
   'sourceSearch',
+  'related',
 ]);
 
 export class OmoebaService implements OmoebaAPI {
@@ -537,6 +540,90 @@ export class OmoebaService implements OmoebaAPI {
   }
 
   private cancelled = new Set<string>();
+
+  // --- Related work ---------------------------------------------------------
+
+  async extractRelated(id: string, aiId: string, jobId?: string): Promise<PaperDetail> {
+    const pdfPath = this.checkId(id);
+    const ai = this.aiFor(aiId);
+    const detail = await this.getPaper(pdfPath);
+    const pages = await this.paperPages(pdfPath);
+    const out = await runAI(ai, relatedPrompt(pages, detail.title), {
+      jobId,
+      onChunk: this.progress(jobId),
+      timeoutMs: 10 * 60_000,
+    });
+    const { papers, dropped } = parseRelated(parseJsonObject(out), pages);
+    if (!papers.length) {
+      throw new Error(
+        dropped
+          ? `None of the papers ${ai.name} chose could be found in the PDF's reference list.`
+          : `${ai.name} did not return any related paper.`,
+      );
+    }
+    if (dropped) console.warn(`Related work: ${dropped} paper(s) not cited in the PDF were dropped`);
+    return this.updateSidecar(pdfPath, { related: { papers, ai: ai.id, createdAt: new Date().toISOString() } });
+  }
+
+  async matchRelated(id: string): Promise<(string | null)[]> {
+    const pdfPath = this.checkId(id);
+    const papers = (await readSidecar(jsonPathOf(pdfPath))).related?.papers ?? [];
+    if (!papers.length) return [];
+    const files = await scanFolders(this.config.folders);
+    const library = await Promise.all(
+      files.map(async (f) => {
+        const sc = await this.sidecarFor(f);
+        const info = this.index.docInfo(pdfPathOf(f.base));
+        return {
+          id: pdfPathOf(f.base),
+          titles: [sc.title ?? '', info?.title ?? ''],
+          head: info?.head,
+          fileName: path.basename(f.base),
+          arxiv: (arxivIdOf(sc.source?.url) ?? arxivIdOf(info?.arxivId))?.id,
+        };
+      }),
+    );
+    return matchLibrary(papers, library, pdfPath);
+  }
+
+  async downloadRelated(id: string, index: number, folder: string): Promise<string> {
+    const pdfPath = this.checkId(id);
+    const p = (await readSidecar(jsonPathOf(pdfPath))).related?.papers[index];
+    if (!p) throw new Error('This related paper no longer exists.');
+    const dir = path.resolve(folder);
+    if (!this.inLibrary(dir)) throw new Error('Choose a folder inside your library to download into.');
+    if (!(await fs.stat(dir).catch(() => null))?.isDirectory()) throw new Error('That folder does not exist anymore.');
+    const existing = (await this.matchRelated(pdfPath))[index];
+    if (existing) return existing;
+    const urls = await pdfCandidates(p);
+    if (!urls.length) throw new Error(`No PDF found online for “${p.title}”.`);
+    let lastError: unknown;
+    for (const url of urls) {
+      let data: Buffer;
+      try {
+        ({ data } = await downloadPdf(url));
+      } catch (e) {
+        lastError = e;
+        continue;
+      }
+      // Named after its title.
+      const target = await uniquePath(dir, fileNameForTitle(p.title));
+      await writeFileAtomic(target, data);
+      const authors = (p.authors ?? []).filter((a) => !/^et\.? al\.?$/i.test(a));
+      await updateSidecar(jsonPathOf(target), {
+        source: { url, downloadedAt: new Date().toISOString() },
+        title: p.title,
+        ...(authors.length ? { authors } : {}),
+        ...(p.year ? { year: p.year } : {}),
+        ...(p.venue ? { venue: p.venue } : {}),
+        metadataSource: 'reference',
+      });
+      this.platform.emit({ type: 'library-changed' });
+      this.index.requestSync(200);
+      return target;
+    }
+    throw new Error(`Could not download “${p.title}”: ${(lastError as Error)?.message ?? 'unknown error'}`);
+  }
 
   async cancelAI(jobId: string): Promise<void> {
     this.cancelled.add(jobId);

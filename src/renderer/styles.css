@@ -782,6 +782,79 @@ input.paper-institutions {
   gap: 4px;
   margin-top: 8px;
 }
+/* Related work: the most relevant cited papers */
+.related {
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+  margin-top: 18px;
+}
+.related-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.related-head h2 {
+  font-size: 16px;
+  margin: 0;
+}
+.related-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.related-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+.related-item:last-child {
+  border-bottom: 0;
+}
+.related-main {
+  flex: 1;
+  min-width: 0;
+}
+.related-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--fg);
+}
+a.related-title {
+  color: var(--accent);
+  text-decoration: none;
+}
+a.related-title:hover {
+  text-decoration: underline;
+}
+.related-relation {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-soft);
+  margin-top: 2px;
+}
+.related-relation .page-ref {
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.related-item > .btn,
+.related-busy {
+  flex: none;
+  margin-top: 1px;
+}
+.related-busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.related-foot {
+  margin-top: 6px;
+  text-align: right;
+}
 .md-editor {
   width: 100%;
   min-height: 320px;

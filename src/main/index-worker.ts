@@ -15,6 +15,8 @@ interface Job {
 }
 
 const PDF_PAGES_INDEXED = 3;
+/** Characters kept from the start of the first page (the title is in there). */
+const HEAD_CHARS = 400;
 
 async function loadExisting(p: string): Promise<IndexFile> {
   try {
@@ -42,7 +44,9 @@ async function run(job: Job): Promise<IndexFile> {
       fields: old?.fields ?? {},
       error: old?.error,
     };
-    const pdfChanged = f.hasPdf && (!old || old.pdfMtime !== f.pdfMtime || !old.pdfTerms);
+    // (Entries indexed before `head` existed are read again once.)
+    const pdfChanged =
+      f.hasPdf && (!old || old.pdfMtime !== f.pdfMtime || !old.pdfTerms || (old.info && old.info.head === undefined));
     if (pdfChanged) {
       try {
         const ex = await extractPdf(id, PDF_PAGES_INDEXED);
@@ -55,6 +59,7 @@ async function run(job: Job): Promise<IndexFile> {
           year,
           arxivId: ex.info.arxivId,
           numPages: ex.info.numPages,
+          head: (ex.pages[0] ?? '').slice(0, HEAD_CHARS),
         };
         doc.pdfTerms = uniq(tokenize(ex.pages.join('\n')));
         delete doc.error;

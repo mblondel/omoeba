@@ -80,6 +80,23 @@ export interface SummaryEntry {
   updatedAt?: string;
 }
 
+/** A paper cited by this one, among the most relevant to it (see Sidecar.related). */
+export interface RelatedPaper {
+  /** As printed in the reference list. */
+  title: string;
+  authors?: string[];
+  year?: number;
+  venue?: string;
+  /** arXiv id (without version), DOI or other URL, when the reference prints one. */
+  arxiv?: string;
+  doi?: string;
+  url?: string;
+  /** How it relates to this paper (one sentence). */
+  relation: string;
+  /** Page where this paper discusses it most. */
+  page?: number;
+}
+
 /** Content of the .json sidecar stored next to a PDF. */
 export interface Sidecar {
   omoeba: 1;
@@ -116,8 +133,15 @@ export interface Sidecar {
     /** Why the AI could not be asked, if so. */
     aiError?: string;
   };
-  /** Who produced title/authors/institutions ("pdf", "user", "ai:<id>"). */
+  /** Who produced title/authors/institutions ("pdf", "user", "ai:<id>", "reference": from the reference list of a paper citing it). */
   metadataSource?: string;
+  /** The most relevant papers this paper cites, most relevant first (chosen by an AI). */
+  related?: {
+    papers: RelatedPaper[];
+    /** AI id. */
+    ai: string;
+    createdAt: string;
+  };
   /** Ask-AI chat history per AI. */
   chats?: Record<string, ChatMessage[]>;
   updatedAt?: string;
@@ -311,4 +335,13 @@ export interface OmoebaAPI {
   setThumbnail(id: string, png: string, pdfMtime: number): Promise<void>;
   /** Find the original download location (AI + SHA-256 verification); saved only if identical. */
   findSource(id: string, aiId?: string, jobId?: string): Promise<{ paper: PaperDetail; result: SourceSearchSummary }>;
+  /** Choose the most relevant papers the paper cites (AI, checked against the PDF's text). */
+  extractRelated(id: string, aiId: string, jobId?: string): Promise<PaperDetail>;
+  /** For each related paper, the id of the same paper in the library, or null. */
+  matchRelated(id: string): Promise<(string | null)[]>;
+  /**
+   * Download related paper `index` into `folder` (inside the library); resolves to the new
+   * paper's id. Fails if no PDF can be found online.
+   */
+  downloadRelated(id: string, index: number, folder: string): Promise<string>;
 }
