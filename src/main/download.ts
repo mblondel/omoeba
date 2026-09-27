@@ -17,6 +17,9 @@ export function toPdfUrl(url: string): string {
   // ACL anthology landing page
   m = /^(https?:\/\/aclanthology\.org\/[^/]+?)\/?$/i.exec(u);
   if (m && !u.endsWith('.pdf')) return `${m[1]}.pdf`;
+  // HAL (hal.science, *.hal.science, hal.archives-ouvertes.fr) landing page -> its PDF
+  m = /^(https?:\/\/(?:[\w-]+\.)*(?:hal\.science|archives-ouvertes\.fr)\/[a-z]+-\d{6,}(?:v\d+)?)\/?(?:[?#].*)?$/i.exec(u);
+  if (m) return `${m[1]}/document`;
   if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
   return u;
 }

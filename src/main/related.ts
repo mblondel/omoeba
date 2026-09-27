@@ -8,7 +8,7 @@
  * are added.
  */
 import type { RelatedPaper } from '../shared/types';
-import { arxivIdOf, openReviewCandidates } from './sourcefinder';
+import { arxivIdOf, halCandidates, openReviewCandidates } from './sourcefinder';
 import { paperTextBlock } from './ai';
 
 /** How many related papers to keep. */
@@ -254,13 +254,14 @@ export async function arxivByTitle(title: string, timeoutMs = 15_000): Promise<s
 
 /**
  * URLs to try, in order: what the reference itself prints (arXiv id, URL), then an arXiv title
- * search, then OpenReview. Searches are only made when the reference has no arXiv id.
+ * search, then OpenReview and HAL. Searches are only made when the reference has no arXiv id.
  */
 export async function pdfCandidates(
   p: RelatedPaper,
-  search: { arxiv: typeof arxivByTitle; openReview: typeof openReviewCandidates } = {
+  search: { arxiv: typeof arxivByTitle; openReview: typeof openReviewCandidates; hal?: typeof halCandidates } = {
     arxiv: arxivByTitle,
     openReview: openReviewCandidates,
+    hal: halCandidates,
   },
 ): Promise<string[]> {
   const out: string[] = [];
@@ -270,10 +271,16 @@ export async function pdfCandidates(
   if (p.arxiv) add(`https://arxiv.org/abs/${p.arxiv}`);
   const urlArxiv = arxivIdOf(p.url);
   if (urlArxiv) add(`https://arxiv.org/abs/${urlArxiv.id}`);
-  else if (p.url && /\.pdf($|[?#])|openreview\.net|aclanthology\.org|proceedings\.|papers\.nips\.cc/i.test(p.url)) add(p.url);
+  else if (p.url && /\.pdf($|[?#])|openreview\.net|aclanthology\.org|proceedings\.|papers\.nips\.cc|hal\.science|archives-ouvertes\.fr/i.test(p.url)) add(p.url);
   if (!out.some((u) => /arxiv\.org/.test(u))) {
     for (const id of await search.arxiv(p.title).catch(() => [])) add(`https://arxiv.org/abs/${id}`);
   }
-  if (!out.length) for (const u of await search.openReview(p.title).catch(() => [])) add(u);
+  if (!out.length) {
+    const [fromOpenReview, fromHal] = await Promise.all([
+      search.openReview(p.title).catch(() => []),
+      search.hal ? search.hal(p.title).catch(() => []) : Promise.resolve([]),
+    ]);
+    for (const u of [...fromOpenReview, ...fromHal]) add(u);
+  }
   return out;
 }

@@ -124,6 +124,12 @@ export interface Sidecar {
     /** SHA-256 of the local PDF, when the location was verified to serve the identical file. */
     sha256?: string;
     verifiedAt?: string;
+    /**
+     * How the location was found without a byte-for-byte match: "hal-stamp", from the stamp HAL
+     * prints on the PDFs it serves (naming the deposit and version; HAL has since re-stamped its
+     * files, so older downloads are no longer identical to what it serves).
+     */
+    identifiedBy?: 'hal-stamp';
   };
   /** Last automatic search for the download location (so it is not repeated on every open). */
   sourceSearch?: {
@@ -264,6 +270,8 @@ export interface SourceCheckResult {
 export interface SourceSearchSummary {
   found: boolean;
   url?: string;
+  /** Found from the PDF's own stamp rather than by an identical download (see Sidecar.source). */
+  identifiedBy?: 'hal-stamp';
   checked: SourceCheckResult[];
   /** Set when the AI could not be asked (the PDF's own hints were still tried). */
   aiError?: string;

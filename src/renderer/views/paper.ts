@@ -544,7 +544,17 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
             },
             '✓ verified',
           )
-        : null,
+        : url && p.sidecar.source?.identifiedBy === 'hal-stamp'
+          ? h(
+              'span',
+              {
+                class: 'verified',
+                title:
+                  "The first page of your PDF carries HAL's stamp, naming this deposit and version. HAL has since re-stamped its files, so the file it serves now is not byte-for-byte identical to yours.",
+              },
+              '✓ HAL stamp',
+            )
+          : null,
       !url && p.hasPdf
         ? h(
             'button',
@@ -940,7 +950,8 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     const who = aiId ? aiName(aiId) : 'the PDF metadata';
     return track('source', `Looking for the original download location with ${who} and checking SHA-256 sums…`, async (jobId) => {
       const { paper: d, result } = await api.findSource(id, aiId, jobId);
-      if (result.found) toast(`Found the original file: ${result.url}`);
+      if (result.identifiedBy === 'hal-stamp') toast(`The PDF carries HAL's stamp: it comes from ${result.url}`, 'info', 7000);
+      else if (result.found) toast(`Found the original file: ${result.url}`);
       else {
         const n = result.checked.length;
         toast(

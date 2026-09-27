@@ -55,9 +55,12 @@ import { fileNameForTitle, matchLibrary, parseRelated, pdfCandidates, relatedPro
 import {
   arxivIdOf,
   arxivStampOf,
+  halStampOf,
+  halUrl,
   expandCandidates,
   findIdenticalSource,
   openReviewCandidates,
+  halCandidates,
   sourcePrompt,
   venueLineOf,
   type SourceCheck,
@@ -788,8 +791,11 @@ export class OmoebaService implements OmoebaAPI {
     let found: { url: string; sha256: string } | null = null;
     let sha = '';
 
+    // HAL's stamp on the first page names the exact deposit and version the file comes from.
+    const hal = halStampOf(firstPage);
+
     // 1. What the PDF says about itself (no AI needed).
-    const fromPdf = expandCandidates([], hints);
+    const fromPdf = [...expandCandidates([], hints), ...(hal ? [`${halUrl(hal)}/document`] : [])];
     if (fromPdf.length) {
       const r = await findIdenticalSource(pdfPath, fromPdf, opts);
       checked.push(...r.checked);
@@ -797,13 +803,15 @@ export class OmoebaService implements OmoebaAPI {
       if (r.found) found = { url: r.url!, sha256: r.sha256 };
     }
 
-    // 2. Not from arXiv: look for the paper on OpenReview by its exact title.
-    if (!found && !stamp && !stopped()) {
-      progress?.('Searching OpenReview by title…\n');
+    // 2. Not from arXiv: look for the paper on OpenReview and HAL by its exact title. (Not for a
+    // PDF stamped by HAL, which says where it comes from: see below.)
+    if (!found && !stamp && !hal && !stopped()) {
+      progress?.('Searching OpenReview and HAL by title…\n');
       const tried = new Set(checked.map((c) => c.url));
-      const fromOpenReview = (await openReviewCandidates(detail.title)).filter((u) => !tried.has(u));
-      if (fromOpenReview.length) {
-        const r = await findIdenticalSource(pdfPath, fromOpenReview, { ...opts, maxChecks: opts.maxChecks - checked.length });
+      const [fromOpenReview, fromHal] = await Promise.all([openReviewCandidates(detail.title), halCandidates(detail.title)]);
+      const byTitle = [...new Set([...fromOpenReview, ...fromHal])].filter((u) => !tried.has(u));
+      if (byTitle.length) {
+        const r = await findIdenticalSource(pdfPath, byTitle, { ...opts, maxChecks: opts.maxChecks - checked.length });
         checked.push(...r.checked);
         sha = r.sha256;
         if (r.found) found = { url: r.url!, sha256: r.sha256 };
@@ -813,7 +821,7 @@ export class OmoebaService implements OmoebaAPI {
     // 3. Ask the AI for candidates.
     let aiCandidates: string[] | undefined;
     let aiError: string | undefined;
-    if (!found && !stopped()) {
+    if (!found && !hal && !stopped()) {
       let ai: AIProvider | null = null;
       try {
         ai = this.aiFor(aiId);
@@ -857,10 +865,14 @@ export class OmoebaService implements OmoebaAPI {
 
     const now = new Date().toISOString();
     // What was tried is kept, so that a failed search can be understood (shown in the paper view).
+    // No identical copy online, but the PDF carries HAL's stamp: HAL re-stamps its files (so an
+    // older download is never identical to what it serves now), and the stamp names the deposit
+    // and version the file was downloaded from.
+    const byStamp = !found && hal ? halUrl(hal) : undefined;
     const patch: Partial<Sidecar> = {
       sourceSearch: {
         at: now,
-        found: !!found,
+        found: !!found || !!byStamp,
         checked: checked.length,
         attempts: checked.map((c) => ({ url: c.url, status: c.status, ...(c.detail ? { detail: c.detail.slice(0, 200) } : {}) })),
         ...(aiCandidates ? { aiCandidates } : {}),
@@ -868,7 +880,11 @@ export class OmoebaService implements OmoebaAPI {
       },
     };
     if (found) patch.source = { url: found.url, sha256: found.sha256 || sha, verifiedAt: now };
+    else if (byStamp) patch.source = { url: byStamp, identifiedBy: 'hal-stamp' };
     const paper = await this.updateSidecar(pdfPath, patch);
-    return { paper, result: { found: !!found, url: found?.url, checked, aiError } };
+    return {
+      paper,
+      result: byStamp ? { found: true, url: byStamp, identifiedBy: 'hal-stamp', checked, aiError } : { found: !!found, url: found?.url, checked, aiError },
+    };
   }
 }

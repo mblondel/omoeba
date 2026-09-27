@@ -93,6 +93,28 @@ export function arxivStampOf(firstPage: string): string | undefined {
   return m?.[1];
 }
 
+/**
+ * The stamp HAL (hal.science) prints on the PDFs it serves, found in the text of the first page:
+ * the deposit id and, when printed, its version. Older files carry it in the margin
+ * ("hal-00757696, version 1 - 27 Nov 2012"), newer ones on a cover page ("HAL Id: hal-04852612"
+ * followed by the link https://hal.science/hal-04852612v1).
+ */
+export function halStampOf(firstPage: string): { id: string; version?: number } | undefined {
+  const text = firstPage.replace(/\s+/g, ' ');
+  const margin = /\b([a-z]+-\d{6,}), version (\d+) - \d{1,2} [A-Z][a-z]{2,8}\.? \d{4}\b/.exec(text);
+  if (margin) return { id: margin[1], version: Number(margin[2]) };
+  const cover = /\bHAL Id ?: ?([a-z]+-\d{6,})\b/.exec(text);
+  if (!cover) return undefined;
+  const id = cover[1];
+  const link = new RegExp(`https?://[\\w.-]*hal[\\w.-]*/${id}v(\\d+)\\b`).exec(text);
+  return link ? { id, version: Number(link[1]) } : { id };
+}
+
+/** HAL's page for a deposit (and version), where the stamp says the PDF comes from. */
+export function halUrl(stamp: { id: string; version?: number }): string {
+  return `https://hal.science/${stamp.id}${stamp.version ? `v${stamp.version}` : ''}`;
+}
+
 /** The line of the first page saying where the paper was published, if any. */
 export function venueLineOf(firstPage: string): string | undefined {
   const text = firstPage.replace(/\s+/g, ' ');
@@ -149,6 +171,49 @@ export async function openReviewCandidates(title: string, timeoutMs = 15_000): P
     } catch {
       /* OpenReview unreachable: the AI's candidates are still tried */
     }
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * PDFs on HAL (the French open archive, hal.science) whose title is exactly the paper's, found
+ * with HAL's public search API: the main file of the current version, then each earlier version
+ * (only the exact version is byte-for-byte identical).
+ */
+export async function halCandidates(title: string, timeoutMs = 15_000): Promise<string[]> {
+  const want = normTitle(title);
+  if (want.length < 10) return [];
+  const phrase = title.replace(/["\\]/g, ' ').replace(/\s+/g, ' ').trim();
+  const url =
+    'https://api.archives-ouvertes.fr/search/?wt=json&rows=10' +
+    `&q=${encodeURIComponent(`title_t:"${phrase}"`)}` +
+    '&fl=halId_s,title_s,fileMain_s,files_s,version_i';
+  const out: string[] = [];
+  try {
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh) Omoeba/0.1', Accept: 'application/json' },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as {
+      response?: { docs?: { halId_s?: string; title_s?: string[] | string; fileMain_s?: string; files_s?: string[]; version_i?: number }[] };
+    };
+    for (const d of data.response?.docs ?? []) {
+      const titles = Array.isArray(d.title_s) ? d.title_s : d.title_s ? [d.title_s] : [];
+      if (!titles.some((t) => normTitle(t) === want)) continue;
+      const https = (u: string) => u.replace(/^http:\/\//i, 'https://');
+      if (d.fileMain_s) out.push(https(d.fileMain_s));
+      for (const f of d.files_s ?? []) if (/\.pdf$/i.test(f)) out.push(https(f));
+      if (d.halId_s && /^[a-z]+-\d+$/i.test(d.halId_s)) {
+        const id = d.halId_s;
+        if (!d.fileMain_s) out.push(`https://hal.science/${id}/document`);
+        // Earlier versions (at most 4), most recent first.
+        const v = Math.min(Number(d.version_i) || 1, 20);
+        for (let i = v - 1; i >= Math.max(1, v - 4); i--) out.push(`https://hal.science/${id}v${i}/document`);
+      }
+    }
+  } catch {
+    /* HAL unreachable: other candidates are still tried */
   }
   return [...new Set(out)];
 }
@@ -250,7 +315,8 @@ ${info.firstPage.slice(0, 2500)}
 Return ONLY a JSON object, with no commentary and no code fences:
 {"candidates": ["https://…", …]}
 with up to 8 direct URLs to PDF files, most likely first. Think about arXiv (https://arxiv.org/abs/<id>),
-OpenReview, ACL Anthology, PMLR, NeurIPS/ICML/ICLR/CVF proceedings, journal sites, and the authors' pages.
+OpenReview, ACL Anthology, PMLR, NeurIPS/ICML/ICLR/CVF proceedings, HAL (the French open archive,
+https://hal.science/<hal id>/document), journal sites, and the authors' pages.
 The first page usually tells which version it is (e.g. a conference header, "Preprint", an arXiv stamp).
 Only include URLs you believe exist.`;
 }
