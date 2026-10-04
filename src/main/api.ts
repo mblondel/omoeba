@@ -23,6 +23,7 @@ import type {
   IndexStatus,
   OmoebaAPI,
   OmoebaEvent,
+  BibEntrySummary,
   FileEntry,
   LatexInfo,
   LatexResult,
@@ -89,6 +90,7 @@ import {
 import { downloadPdf, uniquePath, writeFileAtomic } from './download';
 import { RecentStore, createTextFile, insideRoots, isEditable, linkTarget, listFolder, readTextFile, writeTextFile } from './textfiles';
 import * as latex from './latex';
+import { appendBibEntry, bibField, bibliographyFiles, fetchDblpBibtex, findBibEntry, freeKey, parseBibFile, setBibKey, titleSimilarity } from './cite';
 import { fileNameForTitle, matchLibrary, parseRelated, pdfCandidates, relatedPrompt } from './related';
 import {
   arxivIdOf,
@@ -114,6 +116,8 @@ export interface Platform {
   openExternal(url: string): Promise<void>;
   /** Open a file with its default app. */
   openPath?(p: string): Promise<void>;
+  /** The text of a web page, read like a browser (passing a site's bot check); plain requests are used if absent. */
+  webGet?(url: string): Promise<string>;
   /** Move a file to the Trash (never deletes it outright; fails if there is no Trash). */
   trashItem(p: string): Promise<void>;
   /** Where secrets (the Gemini API key) are kept; in memory only if absent. */
@@ -140,6 +144,7 @@ const WRITABLE_KEYS = new Set([
   'metadataSource',
   'sourceSearch',
   'related',
+  'bibtex',
 ]);
 
 export class OmoebaService implements OmoebaAPI {
@@ -812,6 +817,60 @@ export class OmoebaService implements OmoebaAPI {
     const p = await this.allowed(pdf);
     this.latexDirs.add(path.dirname(p));
     return latex.synctexBackward(p, Math.max(1, Math.floor(page)), Number(x) || 0, Number(y) || 0);
+  }
+
+  /** .bib files read (by path), while unchanged. */
+  private bibCache = new Map<string, { mtime: number; entries: BibEntrySummary[] }>();
+
+  async bibEntries(texFile: string): Promise<BibEntrySummary[]> {
+    const info = await this.latexInfo(texFile);
+    const out: BibEntrySummary[] = [];
+    for (const name of bibliographyFiles(await fs.readFile(info.root, 'utf8'))) {
+      const file = await this.allowed(path.resolve(path.dirname(info.root), name)).catch(() => null);
+      const st = file ? await fs.stat(file).catch(() => null) : null;
+      if (!file || !st) continue;
+      let c = this.bibCache.get(file);
+      if (!c || c.mtime !== st.mtimeMs) {
+        c = { mtime: st.mtimeMs, entries: parseBibFile(await fs.readFile(file, 'utf8')) };
+        this.bibCache.set(file, c);
+      }
+      out.push(...c.entries);
+    }
+    return out;
+  }
+
+  async citePaper(id: string, texFile: string): Promise<{ key: string; bibFile: string | null; added: boolean; fetched: boolean }> {
+    const pdfPath = this.checkId(id);
+    const paper = await this.getPaper(pdfPath);
+    let bib = paper.sidecar.bibtex;
+    let changed = false;
+    if (!bib?.entry || !bib.key) {
+      bib = await fetchDblpBibtex({ title: paper.title, authors: paper.authors, year: paper.sidecar.year ?? paper.year }, this.platform.webGet);
+      changed = true;
+    }
+    // The document's .bib file.
+    const info = await this.latexInfo(texFile);
+    const name = bibliographyFiles(await fs.readFile(info.root, 'utf8'))[0];
+    let bibFile: string | null = null;
+    let added = false;
+    if (name) {
+      bibFile = await this.allowed(path.resolve(path.dirname(info.root), name));
+      for (let attempt = 0; attempt < 2 && !added; attempt++) {
+        const st = await fs.stat(bibFile).catch(() => null);
+        const text = st ? await fs.readFile(bibFile, 'utf8') : '';
+        const existing = findBibEntry(text, bib.key);
+        // The key names another paper in this file: another key.
+        if (existing && titleSimilarity(bibField(existing, 'title') ?? '', bibField(bib.entry, 'title') ?? '') < 0.8) {
+          const key = freeKey(text, bib.key);
+          bib = { ...bib, key, entry: setBibKey(bib.entry, key) };
+          changed = true;
+        } else if (existing) break;
+        const r = await writeTextFile(bibFile, appendBibEntry(text, bib.entry), st ? st.mtimeMs : null);
+        added = !r.conflict;
+      }
+    }
+    if (changed) await this.updateSidecar(pdfPath, { bibtex: bib });
+    return { key: bib.key, bibFile, added, fetched: changed };
   }
 
   async openWithDefaultApp(file: string): Promise<void> {

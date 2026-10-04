@@ -1,5 +1,5 @@
 /** Electron main process entry point. */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, safeStorage, session, shell } from 'electron';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { OmoebaService } from './api';
@@ -35,6 +35,89 @@ const MIME: Record<string, string> = {
   '.png': 'image/png',
   '.gif': 'image/gif',
 };
+
+// --- Web pages read like a browser (sites behind a bot check, e.g. DBLP)
+
+const BOT_CHECK = /not a bot|checking your browser|just a moment/i;
+/** Requests one at a time. */
+let webQueue: Promise<unknown> = Promise.resolve();
+/** A hidden window on a site (kept a moment for the next requests). */
+let webWin: { win: BrowserWindow; origin: string; idle: ReturnType<typeof setTimeout> | null } | null = null;
+
+function webSession() {
+  const ses = session.fromPartition('persist:web');
+  // Files the site serves as downloads are read, never saved.
+  if (!ses.listenerCount('will-download')) ses.on('will-download', (e: { preventDefault(): void }) => e.preventDefault());
+  return ses;
+}
+
+/** A hidden window showing a page of `origin`, past the site's bot check. */
+async function webWindow(origin: string, fresh = false): Promise<BrowserWindow> {
+  if (webWin && webWin.origin === origin && !fresh && !webWin.win.isDestroyed()) return webWin.win;
+  if (webWin && !webWin.win.isDestroyed()) webWin.win.destroy();
+  const win = new BrowserWindow({
+    show: false,
+    // (Not slowed down although hidden: the bot check computes for a moment.)
+    webPreferences: { session: webSession(), sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
+  });
+  webWin = { win, origin, idle: null };
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`${new URL(origin).host} did not answer (its bot check did not finish).`)), 45_000);
+      win.webContents.on('did-finish-load', () => {
+        // (The bot check page reloads the page once passed.)
+        if (BOT_CHECK.test(win.webContents.getTitle())) return;
+        clearTimeout(timer);
+        resolve();
+      });
+      win.webContents.on('did-fail-load', (_e: unknown, code: number, desc: string, _u: string, mainFrame: boolean) => {
+        if (!mainFrame || code === -3) return; // -3: aborted by a redirect
+        clearTimeout(timer);
+        reject(new Error(`${new URL(origin).host} could not be reached (${desc}).`));
+      });
+      win.loadURL(origin + '/').catch(() => undefined);
+    });
+  } catch (e) {
+    win.destroy();
+    webWin = null;
+    throw e;
+  }
+  return win;
+}
+
+/**
+ * The text of a web address (JSON, BibTeX…), read from a hidden browser window on its site: a
+ * bot check (a page that computes for a moment, then sets a cookie) is passed as in a browser.
+ */
+function webGet(url: string): Promise<string> {
+  const run = async () => {
+    const origin = new URL(url).origin;
+    if (webWin?.idle) clearTimeout(webWin.idle);
+    try {
+      for (let attempt = 0; ; attempt++) {
+        const win = await webWindow(origin, attempt > 0);
+        const r = (await win.webContents.executeJavaScript(
+          `fetch(${JSON.stringify(url)}, { credentials: 'same-origin' }).then(async (r) => ({ status: r.status, text: await r.text() }))`,
+        )) as { status: number; text: string };
+        // The bot check again (its cookie expired): passed again, once.
+        if (attempt === 0 && /<title>[^<]*(not a bot|checking your browser|just a moment)/i.test(r.text)) continue;
+        if (r.status >= 400) throw new Error(`${new URL(url).host} answered ${r.status}.`);
+        return r.text;
+      }
+    } finally {
+      if (webWin) {
+        const w = webWin;
+        w.idle = setTimeout(() => {
+          if (!w.win.isDestroyed()) w.win.destroy();
+          if (webWin === w) webWin = null;
+        }, 120_000);
+      }
+    }
+  };
+  const p = webQueue.then(run, run);
+  webQueue = p.catch(() => undefined);
+  return p;
+}
 
 function registerAppProtocol() {
   const rendererDir = path.join(__dirname, 'renderer');
@@ -123,7 +206,12 @@ function createWindow() {
       if (/^https?:\/\//i.test(url)) shell.openExternal(url);
     }
   });
-  win.on('closed', () => (win = null));
+  win.on('closed', () => {
+    win = null;
+    // (The hidden window reading web pages goes too: the app then has no window, as expected.)
+    if (webWin && !webWin.win.isDestroyed()) webWin.win.destroy();
+    webWin = null;
+  });
 }
 
 function buildMenu() {
@@ -281,6 +369,7 @@ app.whenReady().then(async () => {
     async openExternal(url: string) {
       await shell.openExternal(url);
     },
+    webGet,
     async openPath(p: string) {
       const err = await shell.openPath(p);
       if (err) throw new Error(err);
@@ -320,7 +409,7 @@ app.whenReady().then(async () => {
   await refreshRecentMenu();
   createWindow();
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!win) createWindow();
   });
 });
 

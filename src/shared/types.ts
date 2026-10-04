@@ -151,6 +151,8 @@ export interface Sidecar {
     /** Why the AI could not be asked, if so. */
     aiError?: string;
   };
+  /** The paper's BibTeX entry (fetched from DBLP when first cited from a .tex file). */
+  bibtex?: BibtexInfo;
   /** Who produced title/authors/institutions ("pdf", "user", "ai:<id>", "reference": from the reference list of a paper citing it). */
   metadataSource?: string;
   /**
@@ -190,6 +192,25 @@ export interface ChatMessage {
 }
 
 /** Row in the paper list. */
+export interface BibtexInfo {
+  /** The entry, with its key. */
+  entry: string;
+  key: string;
+  /** Where it comes from: "dblp", or "user" (edited). */
+  source: 'dblp' | 'user';
+  /** The record it was taken from. */
+  url?: string;
+  fetchedAt: string;
+}
+
+/** An entry of a .bib file. */
+export interface BibEntrySummary {
+  key: string;
+  title: string;
+  authors: string[];
+  year: string;
+}
+
 export interface PaperSummary {
   /** Stable id = absolute path of the PDF (even if the PDF is missing). */
   id: string;
@@ -634,4 +655,12 @@ export interface OmoebaAPI {
   synctexForward(texFile: string, line: number, column: number): Promise<(SyncTexPosition & { pdf: string }) | null>;
   /** The source line at a point of a PDF page (PDF points from the page's top left). */
   synctexBackward(pdf: string, page: number, x: number, y: number): Promise<SyncTexSource | null>;
+  /**
+   * Cite a library paper in a LaTeX document: its BibTeX entry (from the .json file, or fetched
+   * from DBLP and saved there), added to the document's .bib file if not there yet. Resolves to
+   * the key to put in \cite{…}, and the .bib file (null if the document names none).
+   */
+  citePaper(id: string, texFile: string): Promise<{ key: string; bibFile: string | null; added: boolean; fetched: boolean }>;
+  /** The entries of the .bib files of the document a .tex file belongs to. */
+  bibEntries(texFile: string): Promise<BibEntrySummary[]>;
 }

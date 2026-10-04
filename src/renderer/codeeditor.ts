@@ -6,9 +6,10 @@ import { basicSetup } from 'codemirror';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { HighlightStyle, StreamLanguage, foldService, syntaxHighlighting } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
-import { Annotation, EditorState, type Extension } from '@codemirror/state';
+import { Annotation, EditorState, Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
+import { completionStatus, startCompletion, type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
 import { indentWithTab } from '@codemirror/commands';
-import { EditorView, keymap } from '@codemirror/view';
+import { Decoration, EditorView, keymap, type DecorationSet } from '@codemirror/view';
 import { Tag, tags as t } from '@lezer/highlight';
 import type { MarkdownConfig } from '@lezer/markdown';
 import { bibtex } from './bibtex';
@@ -82,6 +83,118 @@ export function latexSectionFold(state: EditorState, from: number, to: number): 
   return last > first ? { from: to, to: state.doc.line(last).to } : null;
 }
 
+// --- LaTeX: citations. Typing in \cite{…} lists the entries of the document's .bib files;
+// ⇧⌘L (or the list's last line) lists the library's papers instead. Choosing a library paper
+// replaces what was typed with "…" until its key is known (its BibTeX entry may have to be
+// fetched), then with the key.
+
+export interface CiteSupport {
+  /** Entries of the document's .bib files matching what is typed. */
+  searchBib(query: string): Promise<{ key: string; title: string; who: string; year: string }[]>;
+  /** Library papers matching what is typed. */
+  searchLibrary(query: string): Promise<{ id: string; title: string; who: string; year: string }[]>;
+  /** The key of a library paper, ready to be cited (null if it could not be). */
+  cite(id: string): Promise<string | null>;
+}
+
+/** In \cite{a, b…}, \citep[p.~3]{…}, \parencite{…}, …: up to the cursor. */
+const CITE_RE = /\\[a-zA-Z]*[cC]ite[a-zA-Z]*\*?(?:\[[^\]\n]*\])*\{[^}\n]*$/;
+
+const addPending = StateEffect.define<{ id: number; from: number; to: number }>();
+const removePending = StateEffect.define<number>();
+const pendingCites = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(set, tr) {
+    set = set.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(addPending)) set = set.update({ add: [Decoration.mark({ class: 'cm-cite-pending', citeId: e.value.id }).range(e.value.from, e.value.to)] });
+      else if (e.is(removePending)) set = set.update({ filter: (_f, _t, d) => d.spec.citeId !== e.value });
+    }
+    return set;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+function pendingRange(state: EditorState, id: number): { from: number; to: number } | null {
+  let found: { from: number; to: number } | null = null;
+  state.field(pendingCites).between(0, state.doc.length, (from, to, d) => {
+    if (d.spec.citeId === id) found = { from, to };
+  });
+  return found;
+}
+
+let pendingIds = 0;
+const mac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
+const LIBRARY_KEY = mac ? '⇧⌘L' : 'Ctrl+Shift+L';
+
+function citeExtension(support: CiteSupport, lang: StreamLanguage<unknown>): Extension {
+  /** The \cite whose library is listed: the position of its "{" (kept up to date as the text changes). */
+  let libraryAt: number | null = null;
+  /** The "{" of the \cite the cursor is in, and what is typed there. */
+  const citeAt = (state: EditorState, pos: number) => {
+    const line = state.doc.lineAt(pos);
+    const m = CITE_RE.exec(line.text.slice(0, pos - line.from));
+    if (!m) return null;
+    const typed = m[0].slice(m[0].lastIndexOf('{') + 1).split(',').pop()!;
+    return { brace: line.from + m.index + m[0].lastIndexOf('{'), query: typed.trim(), from: pos - typed.trimStart().length };
+  };
+  /** List the library (true) or the .bib entries (false) for the \cite at the cursor. */
+  const switchTo = (view: EditorView, library: boolean) => {
+    const at = citeAt(view.state, view.state.selection.main.head);
+    if (!at) return false;
+    // (After the list being closed, if it is.)
+    setTimeout(() => {
+      libraryAt = library ? at.brace : null;
+      startCompletion(view);
+    }, 0);
+    return true;
+  };
+
+  const source = async (ctx: CompletionContext): Promise<CompletionResult | null> => {
+    const at = citeAt(ctx.state, ctx.pos);
+    if (!at) return null;
+    const library = libraryAt === at.brace;
+    const options: Completion[] = [];
+    if (library) {
+      for (const p of await support.searchLibrary(at.query)) {
+        options.push({
+          label: p.title,
+          detail: [p.who, p.year].filter(Boolean).join(' · '),
+          apply: (view: EditorView, _c: Completion, from: number, to: number) => {
+            const id = ++pendingIds;
+            view.dispatch({ changes: { from, to, insert: '…' }, effects: addPending.of({ id, from, to: from + 1 }) });
+            support.cite(p.id).then((key) => {
+              const r = pendingRange(view.state, id);
+              // (Failed: what was typed is put back.)
+              view.dispatch({ effects: removePending.of(id), changes: r ? { from: r.from, to: r.to, insert: key ?? at.query } : undefined });
+            });
+          },
+        });
+      }
+      options.push({ label: 'Back to the .bib entries', apply: (view: EditorView) => void switchTo(view, false), boost: -99 });
+    } else {
+      for (const e of await support.searchBib(at.query)) {
+        options.push({ label: e.key, detail: [[e.who, e.year].filter(Boolean).join(' '), e.title].filter(Boolean).join(' · '), apply: e.key });
+      }
+      options.push({ label: 'Search the library…', detail: LIBRARY_KEY, apply: (view: EditorView) => void switchTo(view, true), boost: -99 });
+    }
+    if (ctx.aborted) return null;
+    return { from: at.from, to: ctx.pos, filter: false, options };
+  };
+
+  return [
+    pendingCites,
+    lang.data.of({ autocomplete: source }),
+    Prec.highest(keymap.of([{ key: 'Mod-Shift-l', run: (view) => switchTo(view, true) }])),
+    EditorView.updateListener.of((u) => {
+      if (libraryAt === null) return;
+      if (u.docChanged) libraryAt = u.changes.mapPos(libraryAt);
+      // The list closed (a paper chosen, Escape…): next time, the .bib entries again.
+      if (completionStatus(u.startState) !== null && completionStatus(u.state) === null) libraryAt = null;
+    }),
+  ];
+}
+
 // --- Colours
 
 const markdownStyle = HighlightStyle.define([
@@ -121,6 +234,8 @@ const bibtexStyle = HighlightStyle.define([
   { tag: [t.bracket, t.punctuation, t.operator], color: 'var(--muted)' },
 ]);
 
+const latexLanguage = StreamLanguage.define(stex);
+
 const theme = EditorView.theme({
   '&': { height: '100%', fontSize: '13px', color: 'var(--fg)', backgroundColor: 'var(--bg)' },
   '&.cm-focused': { outline: 'none' },
@@ -148,6 +263,13 @@ const theme = EditorView.theme({
   '.cm-textfield': { border: '1px solid var(--border-strong)', borderRadius: '5px', backgroundColor: 'var(--bg)', color: 'var(--fg)' },
   '.cm-button': { backgroundImage: 'none', backgroundColor: 'var(--bg)', border: '1px solid var(--border-strong)', borderRadius: '5px', color: 'var(--fg)' },
   '.cm-tooltip': { backgroundColor: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--fg)' },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul': { fontFamily: 'var(--font)', maxWidth: '560px', maxHeight: '18em' },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul > li': { padding: '3px 8px', lineHeight: '1.4' },
+  '.cm-tooltip-autocomplete ul li[aria-selected]': { backgroundColor: 'var(--accent)', color: 'var(--accent-fg)' },
+  '.cm-completionLabel': { whiteSpace: 'normal' },
+  '.cm-completionDetail': { marginLeft: '8px', fontStyle: 'normal', opacity: '0.75', whiteSpace: 'nowrap' },
+  '.cm-completionIcon': { display: 'none' },
+  '.cm-cite-pending': { color: 'var(--muted)' },
 });
 
 export function createCodeEditor(opts: {
@@ -157,10 +279,11 @@ export function createCodeEditor(opts: {
   label: string;
   /** Called when the text is edited (not when it is replaced with replaceText). */
   onEdit: () => void;
+  /** LaTeX: citations while typing \cite{…} (.bib entries, library papers). */
+  cite?: CiteSupport;
   /** ⌘-click (Ctrl-click elsewhere) on a line (1-based) and column; ⌥-click then adds a cursor. */
   onModClick?: (line: number, column: number) => void;
 }): EditorView {
-  const mac = /Mac/.test(navigator.platform);
   const modClick: Extension[] = opts.onModClick
     ? [
         EditorView.clickAddsSelectionRange.of((e) => e.altKey),
@@ -181,7 +304,7 @@ export function createCodeEditor(opts: {
     opts.language === 'markdown'
       ? [markdown({ base: markdownLanguage, extensions: [MathSyntax] }), syntaxHighlighting(markdownStyle)]
       : opts.language === 'latex'
-        ? [StreamLanguage.define(stex), syntaxHighlighting(latexStyle), foldService.of(latexSectionFold)]
+        ? [latexLanguage, syntaxHighlighting(latexStyle), foldService.of(latexSectionFold), ...(opts.cite ? [citeExtension(opts.cite, latexLanguage)] : [])]
         : opts.language === 'bibtex'
           ? [StreamLanguage.define(bibtex), syntaxHighlighting(bibtexStyle)]
           : [];

@@ -14,6 +14,7 @@ import { api } from '../api';
 import { EditorView as View } from '@codemirror/view';
 import { isActiveView, openFileTab, openFolderTab, openPdfTab, type ViewHandle } from '../app';
 import { compileLatex } from '../latex';
+import { searchBib, searchLibrary } from '../citations';
 import { createCodeEditor, replaceText, type CodeLanguage } from '../codeeditor';
 import { choiceDialog, debounce, errorMessage, h, icon, toast } from '../dom';
 import { mountMarkdown } from '../markdown';
@@ -116,6 +117,8 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
         language,
         label: baseName(file),
         onEdit,
+        // LaTeX: \cite{…} lists the document's .bib entries, or (⇧⌘L) the library's papers.
+        cite: language === 'latex' ? { searchBib: (q) => searchBib(file, q), searchLibrary, cite: citePaper } : undefined,
         // LaTeX: ⌘-click shows the place in the PDF (SyncTeX).
         onModClick: language === 'latex' ? (line, column) => void showInPdf(line, column) : undefined,
       });
@@ -139,6 +142,19 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
     const l = view.state.doc.line(Math.min(Math.max(1, line), view.state.doc.lines));
     view.dispatch({ selection: { anchor: l.from }, effects: View.scrollIntoView(l.from, { y: 'center' }) });
     view.focus();
+  }
+
+  /** A library paper cited: its key (its BibTeX entry saved in its .json file and in the document's .bib file). */
+  async function citePaper(id: string): Promise<string | null> {
+    try {
+      const r = await api.citePaper(id, file);
+      if (!r.bibFile) toast(`No \\bibliography{…} in the main file: ${r.key} is not in a .bib file.`, 'error', 8000);
+      else if (r.added) toast(`${r.key} added to ${baseName(r.bibFile)}`);
+      return r.key;
+    } catch (e) {
+      toast(errorMessage(e), 'error', 8000);
+      return null;
+    }
   }
 
   /** Source → PDF (SyncTeX). */

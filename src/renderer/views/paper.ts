@@ -139,7 +139,7 @@ function figureRenderer(paperId: string) {
 }
 
 /** The paper page's tabs, in order. */
-const PAPER_TABS = ['abstract', 'summary', 'related', 'audio', 'ask'] as const;
+const PAPER_TABS = ['abstract', 'summary', 'related', 'audio', 'ask', 'bibtex'] as const;
 type PaperTab = (typeof PAPER_TABS)[number];
 
 /** Key of the summary written by the user (the others are keyed by AI id). */
@@ -420,6 +420,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
         { key: 'related', label: 'Related work', panel: relatedSection(p), busy: jobs.has('related') },
         { key: 'audio', label: 'Audio summary', panel: audioSection(p), busy: jobs.has('audio') },
         { key: 'ask', label: 'Ask AI', panel: askSection() },
+        { key: 'bibtex', label: 'BibTeX', panel: bibtexSection(p) },
       ]),
     );
     if (!ais.length)
@@ -888,6 +889,46 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     } catch (e) {
       toast(errorMessage(e), 'error');
     }
+  }
+
+  /** The paper's BibTeX entry (saved when it was first cited from a .tex file). */
+  function bibtexSection(p: PaperDetail): HTMLElement | string {
+    const b = p.sidecar.bibtex;
+    if (!b?.entry) return '';
+    const from = b.source === 'dblp' ? 'DBLP' : 'you';
+    return h(
+      'section',
+      { class: 'bibtex' },
+      h(
+        'div',
+        { class: 'section-head bibtex-head' },
+        h('span', { class: 'mono bibtex-key' }, b.key),
+        h('div', { class: 'spacer' }),
+        h(
+          'button',
+          {
+            class: 'btn small',
+            onclick: () =>
+              navigator.clipboard.writeText(b.entry.trim() + '\n').then(
+                () => toast('BibTeX entry copied'),
+                (e) => toast(errorMessage(e), 'error'),
+              ),
+          },
+          icon('copy', 13),
+          'Copy',
+        ),
+      ),
+      h('pre', { class: 'bibtex-entry' }, b.entry.trim()),
+      h(
+        'div',
+        { class: 'muted small bibtex-foot' },
+        'From ',
+        b.url
+          ? h('a', { href: b.url, onclick: (e: Event) => (e.preventDefault(), api.openExternal(b.url!).catch(() => undefined)) }, from)
+          : from,
+        b.fetchedAt ? ` · ${new Date(b.fetchedAt).toLocaleDateString()}` : '',
+      ),
+    );
   }
 
   function audioSection(p: PaperDetail): HTMLElement | string {

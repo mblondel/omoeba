@@ -46,7 +46,7 @@ When clicking on a paper in the list, we are first shown a page containing:
 - original download location
 - link/button to PDF reader
 
-Below the title and other information, tabs show the abstract, the summaries, related work, the audio summary and "Ask AI" (one at a time; the summary tab is shown first).
+Below the title and other information, tabs show the abstract, the summaries, related work, the audio summary, "Ask AI" and the BibTeX entry (once the paper has been cited from a .tex file) (one at a time; the summary tab is shown first).
 
 A paper can have multiple summaries (once per AI).
 The summaries can contain Markdown and images.
@@ -93,6 +93,11 @@ The PDF is written next to the main file; the other files (.aux, .log, .synctex.
 Shell escape is off. A latexmkrc file in the folder is used only if the user agrees (asked once).
 The PDF is shown in its own tab, reloaded after each compile at the same place, with the errors and warnings (clicking one opens the file at its line).
 SyncTeX: ⌘-click on a line of the source shows its place in the PDF; ⌘-click on the PDF opens the source at that line.
+
+Citations: typing in \cite{…} (\citep, \citet, \parencite…) lists the entries of the document's .bib files matching what is typed (key, authors, year, title).
+⇧⌘L (or the last line of the list, "Search the library…") lists the library's papers instead; choosing one puts its key in the \cite. Its BibTeX entry is stored in the paper's .json file; the first time, it is fetched from DBLP (the published version is preferred to the arXiv one, and the match is checked: title, authors, year).
+Keys are the first author's surname, the year and the first significant word of the title (bach2015duality).
+The entry is added to the document's .bib file (the one named by \bibliography{…} or \addbibresource{…}) if it is not there yet; if the key is taken by another paper there, a letter is added (bach2015dualityb).
 
 ## Software stack
 

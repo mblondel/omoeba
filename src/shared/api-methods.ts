@@ -65,4 +65,6 @@ export const API_METHODS: (keyof OmoebaAPI)[] = [
   'readPdfFile',
   'synctexForward',
   'synctexBackward',
+  'citePaper',
+  'bibEntries',
 ];

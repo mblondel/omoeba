@@ -2613,3 +2613,35 @@ table.syntheses[hidden],
 .viewer-loading[hidden] {
   display: none;
 }
+
+/* Paper page: BibTeX entry */
+.bibtex-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.bibtex-key {
+  font-size: 13px;
+  font-weight: 600;
+}
+.bibtex-entry {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.bibtex-foot {
+  margin-top: 6px;
+  text-align: right;
+}
+.bibtex-foot a {
+  color: var(--accent);
+}
