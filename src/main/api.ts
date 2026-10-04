@@ -684,7 +684,7 @@ export class OmoebaService implements OmoebaAPI {
 
   async pickTextFile(): Promise<string | null> {
     if (!this.platform.pickFile) throw new Error('Files cannot be chosen here.');
-    const file = await this.platform.pickFile('Open a file', ['md', 'markdown', 'tex', 'bib', 'txt']);
+    const file = await this.platform.pickFile('Open a file', ['md', 'markdown', 'tex', 'bib', 'cls', 'sty', 'bst', 'txt']);
     if (!file) return null;
     this.recentChanged(await this.recent.add('files', file));
     return path.resolve(file);

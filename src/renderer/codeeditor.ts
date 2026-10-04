@@ -1,6 +1,6 @@
 /**
  * CodeMirror set up for the file editor: Markdown (GitHub flavour, with $…$ and $$…$$ maths),
- * LaTeX, or plain text; colours follow the app's light/dark theme (CSS variables).
+ * LaTeX, BibTeX, or plain text; colours follow the app's light/dark theme (CSS variables).
  */
 import { basicSetup } from 'codemirror';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
@@ -11,8 +11,9 @@ import { indentWithTab } from '@codemirror/commands';
 import { EditorView, keymap } from '@codemirror/view';
 import { Tag, tags as t } from '@lezer/highlight';
 import type { MarkdownConfig } from '@lezer/markdown';
+import { bibtex } from './bibtex';
 
-export type CodeLanguage = 'markdown' | 'latex' | 'plain';
+export type CodeLanguage = 'markdown' | 'latex' | 'bibtex' | 'plain';
 
 /** Marks changes that do not come from typing (e.g. the file reloaded from disk). */
 export const External = Annotation.define<boolean>();
@@ -87,6 +88,15 @@ const latexStyle = HighlightStyle.define([
   { tag: t.bracket, color: 'var(--muted)' },
 ]);
 
+const bibtexStyle = HighlightStyle.define([
+  { tag: t.keyword, color: 'var(--accent)', fontWeight: '700' }, // @article
+  { tag: t.labelName, color: 'var(--hl-html)', fontWeight: '700' }, // citation key
+  { tag: t.propertyName, color: 'var(--hl-list)' }, // field names
+  { tag: [t.number, t.variableName], color: 'var(--hl-math)' }, // years, @string macros (jan…)
+  { tag: t.comment, color: 'var(--muted)', fontStyle: 'italic' }, // text between entries
+  { tag: [t.bracket, t.punctuation, t.operator], color: 'var(--muted)' },
+]);
+
 const theme = EditorView.theme({
   '&': { height: '100%', fontSize: '13px', color: 'var(--fg)', backgroundColor: 'var(--bg)' },
   '&.cm-focused': { outline: 'none' },
@@ -129,7 +139,9 @@ export function createCodeEditor(opts: {
       ? [markdown({ base: markdownLanguage, extensions: [MathSyntax] }), syntaxHighlighting(markdownStyle)]
       : opts.language === 'latex'
         ? [StreamLanguage.define(stex), syntaxHighlighting(latexStyle)]
-        : [];
+        : opts.language === 'bibtex'
+          ? [StreamLanguage.define(bibtex), syntaxHighlighting(bibtexStyle)]
+          : [];
   return new EditorView({
     parent: opts.parent,
     state: EditorState.create({

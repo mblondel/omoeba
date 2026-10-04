@@ -1,6 +1,6 @@
 /**
- * File editor: a tab per file (.md, .tex, .bib, …), in CodeMirror (syntax highlighting for
- * Markdown and LaTeX, search, line numbers, matching brackets). Markdown files are shown next to
+ * File editor: a tab per file (.md, .tex, .bib, .cls, .sty, .bst, .txt), in CodeMirror (syntax
+ * highlighting for Markdown, LaTeX and BibTeX, search, line numbers, matching brackets). Markdown files are shown next to
  * their rendered preview, which follows the text as one types.
  *
  * Edits are saved automatically shortly after typing stops (and with ⌘S, when the tab is
@@ -12,13 +12,22 @@ import { openSearchPanel } from '@codemirror/search';
 import type { EditorView } from '@codemirror/view';
 import { api } from '../api';
 import { isActiveView, openFileTab, openFolderTab, type ViewHandle } from '../app';
-import { createCodeEditor, replaceText } from '../codeeditor';
+import { createCodeEditor, replaceText, type CodeLanguage } from '../codeeditor';
 import { choiceDialog, debounce, errorMessage, h, icon, toast } from '../dom';
 import { mountMarkdown } from '../markdown';
 
 export const baseName = (p: string) => p.split(/[\\/]/).pop() || p;
 const extOf = (p: string) => (/\.[^./\\]+$/.exec(p)?.[0] ?? '').toLowerCase();
 export const isMarkdown = (p: string) => extOf(p) === '.md' || extOf(p) === '.markdown';
+
+/** The syntax of a file, from its extension. */
+function languageOf(file: string): CodeLanguage {
+  const ext = extOf(file);
+  if (isMarkdown(file)) return 'markdown';
+  if (ext === '.tex' || ext === '.cls' || ext === '.sty') return 'latex';
+  if (ext === '.bib') return 'bibtex';
+  return 'plain';
+}
 
 const isMod = (e: KeyboardEvent) => (api.platform === 'darwin' ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey);
 
@@ -90,7 +99,7 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
     mtime = at;
     if (view) replaceText(view, t);
     else {
-      view = createCodeEditor({ parent: pane, doc: t, language: md ? 'markdown' : extOf(file) === '.tex' ? 'latex' : 'plain', label: baseName(file), onEdit });
+      view = createCodeEditor({ parent: pane, doc: t, language: languageOf(file), label: baseName(file), onEdit });
       // The preview follows the text's scrolling (proportionally).
       view.scrollDOM.addEventListener('scroll', () => {
         if (!md || !view) return;

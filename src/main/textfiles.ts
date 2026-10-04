@@ -11,7 +11,7 @@ import path from 'node:path';
 import type { FileEntry, RecentItems, TextFile, TextWriteResult } from '../shared/types';
 
 /** Extensions opened in the file editor (others are opened with their default app). */
-export const EDITABLE_EXTENSIONS = ['.md', '.markdown', '.tex', '.bib', '.txt'];
+export const EDITABLE_EXTENSIONS = ['.md', '.markdown', '.tex', '.bib', '.cls', '.sty', '.bst', '.txt'];
 /** Larger files are not opened in the editor. */
 export const MAX_TEXT_BYTES = 10 * 1024 * 1024;
 /** How many recent files, and folders, are remembered. */
