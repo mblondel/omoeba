@@ -16,6 +16,7 @@
 - PDF annotations (compatible with Skim).
 - Markdown notes.
 - Tags.
+- File editor for .md, .tex and .bib files (File › Open File… / Open Folder…), with a live Markdown preview side by side.
 - AI: ask questions, summaries, tagging, related work, audio, ...
 - Metadata are stored in a .json file along the .pdf file.
 - Easy to sync via gdrive or git.

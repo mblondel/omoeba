@@ -3,6 +3,8 @@ import type { Config } from '../shared/types';
 import { api } from './api';
 import { clear, errorMessage, h, icon, installTooltips, promptDialog, toast } from './dom';
 import { mountDuplicates } from './views/duplicates';
+import { baseName, mountEditor } from './views/editor';
+import { mountFolder } from './views/folder';
 import { mountSyntheses, mountSynthesis, type SynthesisRun } from './views/synthesis';
 import { mountList } from './views/list';
 import { mountPaper } from './views/paper';
@@ -32,9 +34,30 @@ export function applyAppearance(cfg: Config) {
  * What a view's mount function returns: a cleanup function, optionally with hooks the
  * tab manager calls when the tab is shown again, or to jump to a page (reader).
  */
-export type ViewHandle = (() => void) & { onShow?: () => void; goToPage?: (page: number) => void };
+export type ViewHandle = (() => void) & {
+  onShow?: () => void;
+  goToPage?: (page: number) => void;
+  /** Asked before the tab is closed (e.g. the editor saves first); false keeps it open. */
+  canClose?: () => boolean | Promise<boolean>;
+};
 
-type TabKind = 'library' | 'paper' | 'read' | 'settings' | 'search' | 'duplicates' | 'recent' | 'synthesis' | 'syntheses';
+type TabKind =
+  | 'library'
+  | 'paper'
+  | 'read'
+  | 'settings'
+  | 'search'
+  | 'duplicates'
+  | 'recent'
+  | 'synthesis'
+  | 'syntheses'
+  /** A folder's files (`file`). */
+  | 'folder'
+  /** A file in the editor (`file`). */
+  | 'file';
+
+/** Tabs of which there is only one. */
+const SINGLE: TabKind[] = ['library', 'settings', 'duplicates', 'recent', 'syntheses'];
 
 interface Tab {
   key: string;
@@ -42,7 +65,7 @@ interface Tab {
   paperId?: string;
   /** Search tabs: the query. */
   query?: string;
-  /** Synthesis tabs: the saved file, or what to make (until it is saved). */
+  /** Synthesis tabs: the saved file, or what to make (until it is saved). Folder and file tabs: the path. */
   file?: string;
   run?: SynthesisRun;
   title: string;
@@ -62,7 +85,19 @@ let setupCleanup: (() => void) | null = null;
 /** True while tabs are being restored at startup (the saved session must not be overwritten). */
 let restoring = false;
 
-const TAB_ICON: Record<TabKind, string> = { library: 'list', paper: 'note', read: 'book', settings: 'settings', search: 'search', duplicates: 'copy', recent: 'book', synthesis: 'sparkle', syntheses: 'sparkle' };
+const TAB_ICON: Record<TabKind, string> = {
+  library: 'list',
+  paper: 'note',
+  read: 'book',
+  settings: 'settings',
+  search: 'search',
+  duplicates: 'copy',
+  recent: 'book',
+  synthesis: 'sparkle',
+  syntheses: 'sparkle',
+  folder: 'folder',
+  file: 'text',
+};
 
 /** Whether an element belongs to the tab currently shown (views use it to gate shortcuts). */
 export function isActiveView(el: Element): boolean {
@@ -71,7 +106,7 @@ export function isActiveView(el: Element): boolean {
 }
 
 function keyFor(kind: TabKind, arg?: string) {
-  return kind === 'library' || kind === 'settings' || kind === 'duplicates' || kind === 'recent' || kind === 'syntheses' ? kind : `${kind}:${arg}`;
+  return SINGLE.includes(kind) ? kind : `${kind}:${arg}`;
 }
 
 function mountTab(tab: Tab) {
@@ -83,6 +118,8 @@ function mountTab(tab: Tab) {
     else if (tab.kind === 'duplicates') tab.handle = mountDuplicates(tab.panel);
     else if (tab.kind === 'recent') tab.handle = mountList(tab.panel, { recent: true });
     else if (tab.kind === 'syntheses') tab.handle = mountSyntheses(tab.panel);
+    else if (tab.kind === 'folder') tab.handle = mountFolder(tab.panel, tab.file!);
+    else if (tab.kind === 'file') tab.handle = mountEditor(tab.panel, tab.file!);
     else if (tab.kind === 'synthesis')
       tab.handle = mountSynthesis(
         tab.panel,
@@ -159,7 +196,10 @@ function openTab(
   paperId?: string,
   opts: { page?: number; background?: boolean; query?: string; title?: string; file?: string; run?: SynthesisRun } = {},
 ): Tab {
-  const key = keyFor(kind, kind === 'search' ? opts.query : kind === 'synthesis' ? (opts.file ?? `run-${++synthesisRuns}`) : paperId);
+  const key = keyFor(
+    kind,
+    kind === 'search' ? opts.query : kind === 'synthesis' ? (opts.file ?? `run-${++synthesisRuns}`) : kind === 'file' || kind === 'folder' ? opts.file : paperId,
+  );
   let tab = tabs.find((t) => t.key === key);
   if (tab) {
     if (opts.page && tab.handle?.goToPage) tab.handle.goToPage(opts.page);
@@ -185,7 +225,7 @@ function openTab(
       query: opts.query,
       file: opts.file,
       run: opts.run,
-      title: kind === 'settings' ? 'Settings' : kind === 'library' ? 'Library' : kind === 'duplicates' ? 'Duplicates' : kind === 'recent' ? 'Recently Seen' : kind === 'syntheses' ? 'Syntheses' : kind === 'synthesis' ? opts.title || (opts.run ? `Synthesis: ${opts.run.topic}` : 'Synthesis') : kind === 'search' ? opts.title || opts.query || 'Search' : 'Loading…',
+      title: tabTitle(kind, opts),
       panel,
       button,
       handle: null,
@@ -204,8 +244,29 @@ function openTab(
   return tab;
 }
 
-function closeTab(tab: Tab) {
+function tabTitle(kind: TabKind, opts: { query?: string; title?: string; file?: string; run?: SynthesisRun }): string {
+  if (kind === 'synthesis') return opts.title || (opts.run ? `Synthesis: ${opts.run.topic}` : 'Synthesis');
+  if (kind === 'search') return opts.title || opts.query || 'Search';
+  if (kind === 'file' || kind === 'folder') return baseName(opts.file ?? '');
+  const fixed: Partial<Record<TabKind, string>> = {
+    settings: 'Settings',
+    library: 'Library',
+    duplicates: 'Duplicates',
+    recent: 'Recently Seen',
+    syntheses: 'Syntheses',
+  };
+  return fixed[kind] ?? 'Loading…';
+}
+
+function closeTab(tab: Tab, force = false) {
   if (tab.kind === 'library') return;
+  if (!force && tab.handle?.canClose) {
+    Promise.resolve(tab.handle.canClose()).then(
+      (ok) => ok && closeTab(tab, true),
+      () => closeTab(tab, true),
+    );
+    return;
+  }
   const i = tabs.indexOf(tab);
   if (i < 0) return;
   try {
@@ -251,7 +312,9 @@ function saveSession() {
               ? { kind: t.kind, query: t.query, title: t.title }
               : t.kind === 'synthesis'
                 ? { kind: t.kind, file: t.file, title: t.title }
-                : { kind: t.kind, paperId: t.paperId },
+                : t.kind === 'file' || t.kind === 'folder'
+                  ? { kind: t.kind, file: t.file }
+                  : { kind: t.kind, paperId: t.paperId },
           ),
         active: active?.key,
       }),
@@ -271,6 +334,7 @@ function restoreSession() {
   restoring = true;
   for (const t of saved?.tabs ?? []) {
     if (['paper', 'read', 'settings', 'duplicates', 'recent', 'syntheses'].includes(t.kind)) openTab(t.kind, t.paperId, { background: true });
+    else if ((t.kind === 'file' || t.kind === 'folder') && typeof t.file === 'string') openTab(t.kind, undefined, { background: true, file: t.file });
     else if (t.kind === 'synthesis' && typeof t.file === 'string') openTab('synthesis', undefined, { background: true, file: t.file, title: t.title });
     else if (t.kind === 'search' && typeof t.query === 'string') openTab('search', undefined, { background: true, query: t.query, title: t.title });
   }
@@ -301,6 +365,36 @@ export function openSynthesisTab(opts: { file?: string; run?: SynthesisRun; titl
 /** Open (or switch to) the list of saved syntheses. */
 export function openSynthesesTab() {
   openTab('syntheses');
+}
+
+/** Choose a file (native dialog) and open it in the editor. */
+export async function openFileFromDialog() {
+  try {
+    const file = await api.pickTextFile();
+    if (file) openFileTab(file);
+  } catch (e) {
+    toast(errorMessage(e), 'error');
+  }
+}
+
+/** Choose a folder (native dialog) and show its files. */
+export async function openFolderFromDialog() {
+  try {
+    const folder = await api.pickFolderToOpen();
+    if (folder) openFolderTab(folder);
+  } catch (e) {
+    toast(errorMessage(e), 'error');
+  }
+}
+
+/** Open (or switch to) the tab showing a folder's files. */
+export function openFolderTab(folder: string) {
+  openTab('folder', undefined, { file: folder });
+}
+
+/** Open (or switch to) a file in the editor. */
+export function openFileTab(file: string) {
+  openTab('file', undefined, { file });
 }
 
 /** Open (or switch to) the tab listing identical PDFs. */
@@ -460,6 +554,11 @@ api.onMenu((action) => {
   else if (action === 'duplicates') openDuplicatesTab();
   else if (action === 'recent') openTab('recent');
   else if (action === 'syntheses') openTab('syntheses');
+  else if (action === 'open-file') openFileFromDialog();
+  else if (action === 'open-folder') openFolderFromDialog();
+  else if (action.startsWith('open-file:')) openFileTab(action.slice('open-file:'.length));
+  else if (action.startsWith('open-folder:')) openFolderTab(action.slice('open-folder:'.length));
+  else if (action === 'clear-recent') api.forgetRecent().catch((e) => toast(errorMessage(e), 'error'));
   else if (action === 'close-tab') active && closeTab(active);
   else if (action === 'next-tab') cycleTab(1);
   else if (action === 'prev-tab') cycleTab(-1);

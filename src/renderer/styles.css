@@ -27,6 +27,11 @@
   --topbar-h: 46px;
   --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
   --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  /* Syntax highlighting in the file editor */
+  --hl-code: #a23e2b;
+  --hl-math: #7a3fb0;
+  --hl-list: #b06a00;
+  --hl-html: #2e7d5b;
   color-scheme: light dark;
 }
 
@@ -42,6 +47,10 @@
     --border: #34353a;
     --border-strong: #45464c;
     --accent: #5b93f5;
+    --hl-code: #ef8a73;
+    --hl-math: #c39af2;
+    --hl-list: #e6a84a;
+    --hl-html: #6cc79b;
     --accent-soft: rgba(91, 147, 245, 0.16);
     --row-hover: #2a2b30;
     --row-selected: #26334d;
@@ -2348,3 +2357,234 @@ table.syntheses[hidden],
 .job-step.done .job-step-mark {
   color: var(--accent);
 }
+
+/* ---------------------------------------------------------------- folder tab (File › Open Folder…) */
+.folder-main {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 18px 40px;
+}
+.file-tree {
+  font-size: 13px;
+}
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding-right: 6px;
+  border-radius: 5px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--fg);
+}
+.tree-row:hover {
+  background: var(--row-hover);
+}
+.tree-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.tree-row .icon {
+  flex: none;
+  color: var(--muted);
+}
+.tree-row.is-editable .icon {
+  color: var(--accent);
+}
+.tree-row.is-other {
+  color: var(--fg-soft);
+}
+.tree-twisty {
+  width: 12px;
+  flex: none;
+  text-align: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+.tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-actions {
+  display: none;
+  align-items: center;
+}
+.tree-row:hover .tree-actions,
+.tree-row:focus-within .tree-actions {
+  display: flex;
+}
+.tree-actions .icon-btn {
+  width: 22px;
+  height: 22px;
+}
+.tree-note {
+  height: 24px;
+  display: flex;
+  align-items: center;
+}
+
+/* ---------------------------------------------------------------- file editor */
+.editor-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl; /* the end of a long path stays visible */
+  text-align: left;
+}
+.editor-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--warn) 14%, var(--bg));
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.editor-banner[hidden] {
+  display: none;
+}
+.editor-banner > .icon {
+  color: var(--warn);
+  flex: none;
+}
+.editor-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+/* The text box, and (Markdown) the highlighted copy of its text drawn behind it: both must lay
+   out the text identically. */
+.editor-pane {
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg);
+}
+.code-text {
+  box-sizing: border-box;
+  margin: 0;
+  border: 0;
+  padding: 20px max(28px, calc((100% - 980px) / 2)) 30vh;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.65;
+  letter-spacing: normal;
+  word-spacing: normal;
+  font-variant-ligatures: none;
+  tab-size: 4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+textarea.code-editor {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  border-radius: 0;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  color: var(--fg);
+}
+textarea.code-editor:focus {
+  border: 0;
+  box-shadow: none;
+}
+.highlighted > textarea.code-editor {
+  color: transparent;
+  caret-color: var(--fg);
+}
+.highlighted > textarea.code-editor::selection {
+  color: transparent;
+  background: var(--accent-soft);
+}
+.code-highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  color: var(--fg);
+  overflow: visible;
+}
+/* Markdown syntax (bold and italic keep the width of a monospace font's characters) */
+.md-mark,
+.md-escape {
+  color: var(--muted);
+}
+.md-heading {
+  color: var(--accent);
+  font-weight: 700;
+}
+.md-heading .md-mark {
+  color: inherit;
+  opacity: 0.6;
+}
+.md-strong {
+  font-weight: 700;
+}
+.md-em {
+  font-style: italic;
+}
+.md-strike {
+  text-decoration: line-through;
+  color: var(--fg-soft);
+}
+.md-code,
+.md-code-block {
+  color: var(--hl-code);
+}
+.md-fence {
+  color: var(--muted);
+}
+.md-math {
+  color: var(--hl-math);
+}
+.md-link-text {
+  color: var(--accent);
+}
+.md-url {
+  color: var(--muted);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--muted) 50%, transparent);
+}
+.md-list {
+  color: var(--hl-list);
+  font-weight: 700;
+}
+.md-quote {
+  color: var(--fg-soft);
+  font-style: italic;
+}
+.md-html,
+.md-front {
+  color: var(--hl-html);
+}
+/* Markdown: text and preview side by side */
+.editor-wrap > .preview-scroll {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: auto;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+}
+.editor-wrap:has(> .preview-scroll) .code-text {
+  padding: 20px 24px 30vh;
+}
+.preview-content {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 28px 60px;
+  font-size: 15px;
+  line-height: 1.65;
+}
+

@@ -14,14 +14,21 @@ const ALLOWED_TAGS = new Set([
 ]);
 const ALLOWED_ATTRS = new Set(['href', 'src', 'alt', 'title', 'align', 'class', 'start', 'type', 'checked', 'disabled', 'colspan', 'rowspan', 'open']);
 
-function safeUrl(url: string, kind: 'href' | 'src'): boolean {
+/** A link to a file: a path relative to the Markdown file (or absolute), with no scheme. */
+export const isFileLink = (href: string) => {
+  const u = href.trim();
+  return !!u && !u.startsWith('#') && !u.startsWith('//') && !/^[a-z][a-z0-9+.-]*:/i.test(u);
+};
+
+function safeUrl(url: string, kind: 'href' | 'src', fileLinks = false): boolean {
   const u = url.trim().toLowerCase();
   if (kind === 'src')
     return ['data:image/', 'img:', 'page:', 'figure:', 'https:', 'blob:'].some((p) => u.startsWith(p));
-  return u.startsWith('http:') || u.startsWith('https:') || u.startsWith('mailto:') || u.startsWith('#');
+  return u.startsWith('http:') || u.startsWith('https:') || u.startsWith('mailto:') || u.startsWith('#') || (fileLinks && isFileLink(url));
 }
 
-export function sanitize(html: string): string {
+/** `fileLinks`: keep links to files (relative paths), for Markdown files. */
+export function sanitize(html: string, fileLinks = false): string {
   const tpl = document.createElement('template');
   tpl.innerHTML = html;
   const walk = (node: Node) => {
@@ -42,7 +49,7 @@ export function sanitize(html: string): string {
         for (const attr of [...el.attributes]) {
           const name = attr.name.toLowerCase();
           if (!ALLOWED_ATTRS.has(name)) el.removeAttribute(attr.name);
-          else if ((name === 'href' || name === 'src') && !safeUrl(attr.value, name)) el.removeAttribute(attr.name);
+          else if ((name === 'href' || name === 'src') && !safeUrl(attr.value, name, fileLinks)) el.removeAttribute(attr.name);
         }
         if (tag === 'input' && el.getAttribute('type') !== 'checkbox') el.remove();
         else walk(el);
@@ -106,12 +113,14 @@ export function escapeHtml(s: string): string {
 export interface RenderOptions {
   /** Images referenced as img:<id>: data URIs, or figures of the paper (see `figures`). */
   images?: Record<string, SummaryImage>;
+  /** Links to files (relative paths, e.g. [notes](notes.md)), for Markdown files. */
+  onFileLink?: (href: string) => void;
 }
 
 export function renderMarkdown(src: string, opts: RenderOptions = {}): string {
   const { text, math } = protect(src ?? '');
   let html = marked.parse(text, { async: false }) as string;
-  html = sanitize(html);
+  html = sanitize(html, !!opts.onFileLink);
   html = html.replace(/OMOMATH(\d+)X/g, (_, i) => renderMath(math[Number(i)]));
   if (opts.images) {
     html = html.replace(/src="img:([^"]+)"/g, (m, id) => {
@@ -258,6 +267,7 @@ export function mountMarkdown(
       if (m) opts.onPageLink?.(Number(m[1]));
       else if (paper) opts.onPaperLink?.(Number(paper[1]), paper[2] ? Number(paper[2]) : undefined);
       else if (/^https?:/i.test(href)) opts.onExternal?.(href);
+      else if (opts.onFileLink && isFileLink(href)) opts.onFileLink(href);
     });
   }
 }

@@ -6,7 +6,7 @@ import { OmoebaService } from './api';
 import { appDir } from './config';
 import { fileSecretStore } from './secrets';
 import { API_METHODS } from '../shared/api-methods';
-import type { Config, OmoebaEvent, Theme } from '../shared/types';
+import type { Config, OmoebaEvent, RecentItems, Theme } from '../shared/types';
 
 // Shown in the menu bar ("About Omoeba", "Quit Omoeba", …) instead of "Electron".
 app.setName('Omoeba');
@@ -63,6 +63,13 @@ let service: OmoebaService;
 let theme: Theme = 'system';
 /** Whether the renderer's active tab can be closed (File → Close Tab is greyed out otherwise). */
 let canCloseTab = false;
+/** Files and folders opened recently (File › Open Recent). */
+let recent: RecentItems = { files: [], folders: [] };
+
+async function refreshRecentMenu() {
+  recent = (await service?.recentItems().catch(() => null)) ?? recent;
+  buildMenu();
+}
 
 /** Light/dark appearance for native UI and the page (prefers-color-scheme follows it). */
 function applyTheme(t: Theme | undefined) {
@@ -81,6 +88,7 @@ async function setTheme(t: Theme) {
 
 function emit(e: OmoebaEvent) {
   for (const w of BrowserWindow.getAllWindows()) w.webContents.send('omoeba:event', e);
+  if (e.type === 'recent-changed') void refreshRecentMenu();
 }
 
 function createWindow() {
@@ -121,6 +129,15 @@ function createWindow() {
 function buildMenu() {
   const isMac = process.platform === 'darwin';
   const send = (action: string) => () => win?.webContents.send('omoeba:menu', action);
+  const home = app.getPath('home');
+  const short = (p: string) => (p.startsWith(home + path.sep) ? '~' + p.slice(home.length) : p);
+  const recentMenu: Electron.MenuItemConstructorOptions[] = [
+    ...recent.folders.slice(0, 10).map((f) => ({ label: short(f), click: send(`open-folder:${f}`) })),
+    ...(recent.folders.length && recent.files.length ? [{ type: 'separator' } as const] : []),
+    ...recent.files.slice(0, 15).map((f) => ({ label: short(f), click: send(`open-file:${f}`) })),
+    { type: 'separator' },
+    { label: 'Clear Menu', enabled: recent.files.length + recent.folders.length > 0, click: send('clear-recent') },
+  ];
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(isMac
       ? [
@@ -143,9 +160,12 @@ function buildMenu() {
     {
       label: 'File',
       submenu: [
-        { label: 'Add Paper from URL…', accelerator: 'CmdOrCtrl+N', click: send('add-url') },
+        { label: 'Open File…', accelerator: 'CmdOrCtrl+O', click: send('open-file') },
+        { label: 'Open Folder…', accelerator: 'CmdOrCtrl+Shift+O', click: send('open-folder') },
+        { label: 'Open Recent', submenu: recentMenu },
         { type: 'separator' },
         { label: 'Library', accelerator: 'CmdOrCtrl+L', click: send('library') },
+        { label: 'Add Paper from URL…', accelerator: 'CmdOrCtrl+N', click: send('add-url') },
         { label: 'Recently Seen', accelerator: 'CmdOrCtrl+Shift+R', click: send('recent') },
         { label: 'Syntheses', click: send('syntheses') },
         { label: 'Find Duplicates', click: send('duplicates') },
@@ -234,6 +254,17 @@ app.whenReady().then(async () => {
       });
       return r.canceled ? [] : r.filePaths;
     },
+    async pickFile(title: string, extensions: string[]) {
+      const r = await dialog.showOpenDialog(win!, {
+        title,
+        properties: ['openFile'],
+        filters: [
+          { name: 'Text files', extensions },
+          { name: 'All files', extensions: ['*'] },
+        ],
+      });
+      return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+    },
     async pickFolder(defaultPath: string, title: string) {
       const r = await dialog.showOpenDialog(win!, {
         title,
@@ -248,6 +279,10 @@ app.whenReady().then(async () => {
     },
     async openExternal(url: string) {
       await shell.openExternal(url);
+    },
+    async openPath(p: string) {
+      const err = await shell.openPath(p);
+      if (err) throw new Error(err);
     },
     async trashItem(p: string) {
       await shell.trashItem(p);
@@ -281,7 +316,7 @@ app.whenReady().then(async () => {
     if (item) item.enabled = canCloseTab;
   });
 
-  buildMenu();
+  await refreshRecentMenu();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

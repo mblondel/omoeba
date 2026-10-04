@@ -16,6 +16,8 @@ export const indexDbPath = () => path.join(appDir(), 'index.sqlite');
 export const thumbnailsPath = () => path.join(appDir(), 'thumbnails.cache');
 /** When each PDF was last opened (kept apart from the index, which can be rebuilt). */
 export const historyPath = () => path.join(appDir(), 'history.json');
+/** Files and folders opened in the file editor (File › Open Recent). */
+export const recentPath = () => path.join(appDir(), 'recent.json');
 /** Empty working directory in which AI CLIs are run. */
 export const aiWorkDir = () => path.join(appDir(), 'ai-workdir');
 

@@ -23,6 +23,10 @@ import type {
   IndexStatus,
   OmoebaAPI,
   OmoebaEvent,
+  FileEntry,
+  RecentItems,
+  TextFile,
+  TextWriteResult,
   PaperDetail,
   PaperSummary,
   Sidecar,
@@ -79,6 +83,7 @@ import {
   writeNewFile,
 } from './syntheses';
 import { downloadPdf, uniquePath, writeFileAtomic } from './download';
+import { RecentStore, createTextFile, isEditable, linkTarget, listFolder, readTextFile, writeTextFile } from './textfiles';
 import { fileNameForTitle, matchLibrary, parseRelated, pdfCandidates, relatedPrompt } from './related';
 import {
   arxivIdOf,
@@ -96,10 +101,14 @@ import {
 
 export interface Platform {
   pickFolders(): Promise<string[]>;
+  /** Native dialog to choose a file to open (with these extensions, without the dot). */
+  pickFile?(title: string, extensions: string[]): Promise<string | null>;
   /** Native dialog to choose one folder, starting at `defaultPath`. */
   pickFolder(defaultPath: string, title: string): Promise<string | null>;
   revealInFolder(p: string): Promise<void>;
   openExternal(url: string): Promise<void>;
+  /** Open a file with its default app. */
+  openPath?(p: string): Promise<void>;
   /** Move a file to the Trash (never deletes it outright; fails if there is no Trash). */
   trashItem(p: string): Promise<void>;
   /** Where secrets (the Gemini API key) are kept; in memory only if absent. */
@@ -662,6 +671,89 @@ export class OmoebaService implements OmoebaAPI {
   async revealSynthesis(file: string): Promise<void> {
     if (!libraryFolderOf(file, this.config.folders)) throw new Error('Not a synthesis of your library.');
     await this.platform.revealInFolder(path.resolve(file));
+  }
+
+  // --- File editor: files and folders opened (~/omoeba/recent.json) ----------------
+
+  readonly recent = new RecentStore(cfg.recentPath());
+
+  private recentChanged<T>(r: T): T {
+    this.platform.emit({ type: 'recent-changed' });
+    return r;
+  }
+
+  async pickTextFile(): Promise<string | null> {
+    if (!this.platform.pickFile) throw new Error('Files cannot be chosen here.');
+    const file = await this.platform.pickFile('Open a file', ['md', 'markdown', 'tex', 'bib', 'txt']);
+    if (!file) return null;
+    this.recentChanged(await this.recent.add('files', file));
+    return path.resolve(file);
+  }
+
+  async pickFolderToOpen(): Promise<string | null> {
+    const start = (await this.recent.list()).folders[0];
+    const folder = await this.platform.pickFolder(start ? path.dirname(start) : '', 'Open a folder');
+    if (!folder) return null;
+    this.recentChanged(await this.recent.add('folders', folder));
+    return path.resolve(folder);
+  }
+
+  recentItems(): Promise<RecentItems> {
+    return this.recent.list();
+  }
+
+  async noteFileOpened(file: string): Promise<void> {
+    const p = await this.recent.allows(file);
+    if ((await this.recent.list()).files[0] !== p) this.recentChanged(await this.recent.add('files', p));
+  }
+
+  async forgetRecent(p?: string): Promise<RecentItems> {
+    return this.recentChanged(p === undefined ? await this.recent.clear() : await this.recent.remove(p));
+  }
+
+  async listFolder(dir: string): Promise<FileEntry[]> {
+    return listFolder(await this.recent.allows(dir));
+  }
+
+  async readTextFile(file: string): Promise<TextFile> {
+    return readTextFile(await this.recent.allows(file));
+  }
+
+  async writeTextFile(file: string, text: string, expectedMtime: number | null): Promise<TextWriteResult> {
+    if (typeof text !== 'string') throw new Error('Nothing to save.');
+    return writeTextFile(await this.recent.allows(file), text, expectedMtime);
+  }
+
+  async createTextFile(dir: string, name: string): Promise<string> {
+    return createTextFile(await this.recent.allows(dir), name);
+  }
+
+  async revealFile(file: string): Promise<void> {
+    await this.platform.revealInFolder(await this.recent.allows(file));
+  }
+
+  async followFileLink(fromFile: string, href: string): Promise<{ path: string; kind: 'file' | 'folder' | 'other' }> {
+    const from = await this.recent.allows(fromFile);
+    const target = linkTarget(path.dirname(from), href);
+    const st = await fs.stat(target).catch(() => null);
+    if (!st) throw new Error(`${path.basename(target)} was not found in ${path.dirname(target)}.`);
+    if (st.isDirectory()) {
+      this.recentChanged(await this.recent.add('folders', target));
+      return { path: target, kind: 'folder' };
+    }
+    if (isEditable(target)) {
+      this.recentChanged(await this.recent.add('files', target));
+      return { path: target, kind: 'file' };
+    }
+    if (!this.platform.openPath) throw new Error('Files cannot be opened with other apps here.');
+    await this.platform.openPath(target);
+    return { path: target, kind: 'other' };
+  }
+
+  async openWithDefaultApp(file: string): Promise<void> {
+    const p = await this.recent.allows(file);
+    if (!this.platform.openPath) throw new Error('Files cannot be opened with other apps here.');
+    await this.platform.openPath(p);
   }
 
   // --- History of papers seen (~/omoeba/history.json) ------------------------

@@ -66,6 +66,23 @@ Annotations are compatible with .skim file format.
 Notes support Markdown rendering and LaTeX equations.
 The top bar shows buttons to toggle the left side pane and the right side pane.
 
+## Open File / Open Folder
+
+File › Open File… (⌘O) opens a file in the file editor, in a separate tab.
+File › Open Folder… (⌘⇧O) shows a folder's files in a tab; clicking a file opens it in the file editor.
+Recently opened files and folders are listed in File › Open Recent, and remembered in ~/omoeba/recent.json.
+Only these files, and the files inside these folders, can be read or written.
+
+## File editor
+
+The main supported formats are .md, .tex and .bib for now.
+For .md files, the rendered preview is shown next to the text, and follows it as one types.
+Markdown syntax is highlighted in the editor.
+Links to files in the preview (e.g. [notes](notes.md)) are relative to the Markdown file: .md, .tex and .bib files open in the editor, folders in a folder tab, other files with their default app.
+Other files open with their default app.
+Edits are saved automatically (and with ⌘S).
+If a file is changed on disk by another app, it is reloaded when it has no unsaved edits; otherwise the user chooses which version to keep.
+
 ## Software stack
 
 - Electron

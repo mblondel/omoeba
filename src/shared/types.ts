@@ -344,6 +344,8 @@ export type OmoebaEvent =
   | { type: 'config-changed' }
   | { type: 'duplicates-progress'; done: number; total: number }
   | { type: 'syntheses-changed' }
+  /** The recently opened files and folders changed (File › Open Recent). */
+  | { type: 'recent-changed' }
   /** What an AI job is doing (see AITraceKind), for jobs followed step by step (syntheses). */
   | { type: 'ai-trace'; jobId: string; kind: AITraceKind; text: string }
   /** The steps of a job made of several (e.g. an audio summary: the conversation, then the audio). */
@@ -425,6 +427,31 @@ export interface DuplicateGroup {
 }
 
 /** The API exposed to the renderer (window.omoeba). Every method is async. */
+/** Files and folders opened recently (File › Open Recent), most recent first. */
+export interface RecentItems {
+  files: string[];
+  folders: string[];
+}
+
+/** A file or folder inside an opened folder. */
+export interface FileEntry {
+  name: string;
+  path: string;
+  dir: boolean;
+  /** Opened in the file editor (.md, .tex, .bib, …); other files open with their default app. */
+  editable: boolean;
+}
+
+export interface TextFile {
+  path: string;
+  text: string;
+  /** Modification time (ms) when read, to notice changes made meanwhile by another app. */
+  mtime: number;
+}
+
+/** Saved (`conflict: false`), or not because the file changed on disk since it was read. */
+export type TextWriteResult = { conflict: boolean; mtime: number };
+
 export interface OmoebaAPI {
   getConfig(): Promise<Config>;
   saveConfig(config: Config): Promise<Config>;
@@ -519,4 +546,33 @@ export interface OmoebaAPI {
    * paper's id. Fails if no PDF can be found online.
    */
   downloadRelated(id: string, index: number, folder: string): Promise<string>;
+
+  // --- File editor: files and folders opened (File › Open File…, Open Folder…), remembered in
+  // ~/omoeba/recent.json. Only those files, and files inside those folders, can be read or written.
+  /** Choose a file to edit (native dialog); null if cancelled. */
+  pickTextFile(): Promise<string | null>;
+  /** Choose a folder to browse (native dialog); null if cancelled. */
+  pickFolderToOpen(): Promise<string | null>;
+  recentItems(): Promise<RecentItems>;
+  /** Put a file opened (e.g. from a folder) first in the recent files. */
+  noteFileOpened(file: string): Promise<void>;
+  /** Forget a recent file or folder (nothing is deleted); with no argument, forget them all. */
+  forgetRecent(p?: string): Promise<RecentItems>;
+  /** The entries of an opened folder (hidden files left out). */
+  listFolder(dir: string): Promise<FileEntry[]>;
+  readTextFile(file: string): Promise<TextFile>;
+  /** Save, unless the file changed on disk since `expectedMtime` (null: save anyway). */
+  writeTextFile(file: string, text: string, expectedMtime: number | null): Promise<TextWriteResult>;
+  /** Create an empty file in an opened folder; resolves to its path. */
+  createTextFile(dir: string, name: string): Promise<string>;
+  /** Show an opened file (or a file of an opened folder) in the Finder. */
+  revealFile(file: string): Promise<void>;
+  /** Open a file of an opened folder with its default app. */
+  openWithDefaultApp(file: string): Promise<void>;
+  /**
+   * Follow a link of a Markdown file to a file (a path relative to it, e.g. "notes.md"): text files
+   * the editor handles, and folders, can then be opened in Omoeba ("file", "folder"); other files
+   * are opened with their default app ("other").
+   */
+  followFileLink(fromFile: string, href: string): Promise<{ path: string; kind: 'file' | 'folder' | 'other' }>;
 }
