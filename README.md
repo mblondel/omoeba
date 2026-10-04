@@ -21,6 +21,7 @@
 - AI: ask questions, summaries, tagging, related work, audio, ...
 - Metadata are stored in a .json file along the .pdf file.
 - Easy to sync via gdrive or git.
+- Markdown and LaTeX file editor.
 
 ## Getting started
 
