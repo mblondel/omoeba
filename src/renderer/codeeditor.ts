@@ -4,7 +4,7 @@
  */
 import { basicSetup } from 'codemirror';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language';
+import { HighlightStyle, StreamLanguage, foldService, syntaxHighlighting } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { Annotation, EditorState, type Extension } from '@codemirror/state';
 import { indentWithTab } from '@codemirror/commands';
@@ -57,6 +57,30 @@ export const MathSyntax: MarkdownConfig = {
     },
   ],
 };
+
+// --- LaTeX: folding sections (\section{…} up to the next \section, or a heading above it).
+
+const HEADING_LEVELS: Record<string, number> = { part: 0, chapter: 1, section: 2, subsection: 3, subsubsection: 4, paragraph: 5, subparagraph: 6 };
+const HEADING = /^\s*\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\b\*?\s*[[{]/;
+/** Lines that end every section: the appendix, the bibliography, the end of the document. */
+const SECTION_END = /^\s*\\(appendix\b|end\s*\{document\}|bibliography\b|printbibliography\b|begin\s*\{thebibliography\})/;
+
+/** The range a heading on line `from` folds (its contents, up to the next heading of its level or above). */
+export function latexSectionFold(state: EditorState, from: number, to: number): { from: number; to: number } | null {
+  const m = HEADING.exec(state.doc.sliceString(from, to));
+  if (!m) return null;
+  const level = HEADING_LEVELS[m[1]];
+  const first = state.doc.lineAt(from).number;
+  let last = first;
+  for (let n = first + 1; n <= state.doc.lines; n++) {
+    const text = state.doc.line(n).text;
+    const h = HEADING.exec(text);
+    if ((h && HEADING_LEVELS[h[1]] <= level) || SECTION_END.test(text)) break;
+    if (text.trim()) last = n;
+  }
+  // (Blank lines before the next heading stay visible.)
+  return last > first ? { from: to, to: state.doc.line(last).to } : null;
+}
 
 // --- Colours
 
@@ -138,7 +162,7 @@ export function createCodeEditor(opts: {
     opts.language === 'markdown'
       ? [markdown({ base: markdownLanguage, extensions: [MathSyntax] }), syntaxHighlighting(markdownStyle)]
       : opts.language === 'latex'
-        ? [StreamLanguage.define(stex), syntaxHighlighting(latexStyle)]
+        ? [StreamLanguage.define(stex), syntaxHighlighting(latexStyle), foldService.of(latexSectionFold)]
         : opts.language === 'bibtex'
           ? [StreamLanguage.define(bibtex), syntaxHighlighting(bibtexStyle)]
           : [];

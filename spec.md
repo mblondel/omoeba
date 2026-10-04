@@ -78,6 +78,7 @@ Only these files, and the files inside these folders, can be read or written.
 The supported formats are .md, .tex, .bib, .cls, .sty, .bst and .txt.
 For .md files, the rendered preview is shown next to the text, and follows it as one types.
 The editor is CodeMirror: Markdown, LaTeX (.tex, .cls, .sty) and BibTeX syntax highlighting, search (⌘F), line numbers.
+In LaTeX files, sections can be folded (\part … \subparagraph: up to the next heading of the same level or above).
 Links to files in the preview (e.g. [notes](notes.md)) are relative to the Markdown file: .md, .tex and .bib files open in the editor, folders in a folder tab, other files with their default app.
 Other files open with their default app.
 Edits are saved automatically (and with ⌘S).
