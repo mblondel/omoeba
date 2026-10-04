@@ -46,7 +46,7 @@ The prompt is sent on standard input, or in place of `{prompt}` when an argument
 
 ## Development
 
-Built with Electron, TypeScript, pdf.js and KaTeX.
+Built with Electron, TypeScript, pdf.js, KaTeX and CodeMirror.
 
 ```sh
 npm run watch      # rebuild on change (then reload the window with ⌘R)

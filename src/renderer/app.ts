@@ -562,7 +562,9 @@ api.onMenu((action) => {
   else if (action === 'close-tab') active && closeTab(active);
   else if (action === 'next-tab') cycleTab(1);
   else if (action === 'prev-tab') cycleTab(-1);
-  else if ((action === 'undo' || action === 'redo') && isTextField(document.activeElement)) document.execCommand(action);
+  // (The file editor, CodeMirror, has its own undo history: it gets the action.)
+  else if ((action === 'undo' || action === 'redo') && isTextField(document.activeElement) && !document.activeElement?.closest('.cm-editor'))
+    document.execCommand(action);
   else window.dispatchEvent(new CustomEvent('omoeba-menu', { detail: action }));
 });
 

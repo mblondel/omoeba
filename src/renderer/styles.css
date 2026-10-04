@@ -2458,116 +2458,15 @@ table.syntheses[hidden],
   min-height: 0;
   display: flex;
 }
-/* The text box, and (Markdown) the highlighted copy of its text drawn behind it: both must lay
-   out the text identically. */
+/* CodeMirror (its colours: codeeditor.ts) */
 .editor-pane {
   flex: 1 1 0;
   min-width: 0;
-  position: relative;
-  overflow: hidden;
+  min-height: 0;
   background: var(--bg);
 }
-.code-text {
-  box-sizing: border-box;
-  margin: 0;
-  border: 0;
-  padding: 20px max(28px, calc((100% - 980px) / 2)) 30vh;
-  font-family: var(--mono);
-  font-size: 13px;
-  font-weight: 400;
-  line-height: 1.65;
-  letter-spacing: normal;
-  word-spacing: normal;
-  font-variant-ligatures: none;
-  tab-size: 4;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  text-align: left;
-}
-textarea.code-editor {
-  position: relative;
-  display: block;
-  width: 100%;
+.editor-pane > .cm-editor {
   height: 100%;
-  resize: none;
-  border-radius: 0;
-  outline: none;
-  box-shadow: none;
-  background: transparent;
-  color: var(--fg);
-}
-textarea.code-editor:focus {
-  border: 0;
-  box-shadow: none;
-}
-.highlighted > textarea.code-editor {
-  color: transparent;
-  caret-color: var(--fg);
-}
-.highlighted > textarea.code-editor::selection {
-  color: transparent;
-  background: var(--accent-soft);
-}
-.code-highlight {
-  position: absolute;
-  top: 0;
-  left: 0;
-  pointer-events: none;
-  color: var(--fg);
-  overflow: visible;
-}
-/* Markdown syntax (bold and italic keep the width of a monospace font's characters) */
-.md-mark,
-.md-escape {
-  color: var(--muted);
-}
-.md-heading {
-  color: var(--accent);
-  font-weight: 700;
-}
-.md-heading .md-mark {
-  color: inherit;
-  opacity: 0.6;
-}
-.md-strong {
-  font-weight: 700;
-}
-.md-em {
-  font-style: italic;
-}
-.md-strike {
-  text-decoration: line-through;
-  color: var(--fg-soft);
-}
-.md-code,
-.md-code-block {
-  color: var(--hl-code);
-}
-.md-fence {
-  color: var(--muted);
-}
-.md-math {
-  color: var(--hl-math);
-}
-.md-link-text {
-  color: var(--accent);
-}
-.md-url {
-  color: var(--muted);
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--muted) 50%, transparent);
-}
-.md-list {
-  color: var(--hl-list);
-  font-weight: 700;
-}
-.md-quote {
-  color: var(--fg-soft);
-  font-style: italic;
-}
-.md-html,
-.md-front {
-  color: var(--hl-html);
 }
 /* Markdown: text and preview side by side */
 .editor-wrap > .preview-scroll {
@@ -2576,9 +2475,6 @@ textarea.code-editor:focus {
   overflow: auto;
   border-left: 1px solid var(--border);
   background: var(--bg);
-}
-.editor-wrap:has(> .preview-scroll) .code-text {
-  padding: 20px 24px 30vh;
 }
 .preview-content {
   max-width: 760px;

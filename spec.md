@@ -77,7 +77,7 @@ Only these files, and the files inside these folders, can be read or written.
 
 The main supported formats are .md, .tex and .bib for now.
 For .md files, the rendered preview is shown next to the text, and follows it as one types.
-Markdown syntax is highlighted in the editor.
+The editor is CodeMirror: Markdown and LaTeX syntax highlighting, search (⌘F), line numbers.
 Links to files in the preview (e.g. [notes](notes.md)) are relative to the Markdown file: .md, .tex and .bib files open in the editor, folders in a folder tab, other files with their default app.
 Other files open with their default app.
 Edits are saved automatically (and with ⌘S).
@@ -89,6 +89,7 @@ If a file is changed on disk by another app, it is reloaded when it has no unsav
 - Typescript
 - pdf.js
 - KaTeX
+- CodeMirror
 
 ## Logo
 
