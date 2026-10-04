@@ -732,20 +732,11 @@ input.paper-institutions {
   background: var(--accent-soft);
   color: var(--fg);
 }
-.summary {
-  border-top: 1px solid var(--border);
-  padding-top: 18px;
-  margin-top: 8px;
-}
 .summary-head {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-bottom: 8px;
-}
-.summary-head h2 {
-  font-size: 16px;
-  margin: 0;
 }
 .tabs {
   display: flex;
@@ -790,20 +781,11 @@ input.paper-institutions {
 }
 
 /* Related work: the most relevant cited papers */
-.related {
-  border-top: 1px solid var(--border);
-  padding-top: 18px;
-  margin-top: 18px;
-}
 .related-head {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
-}
-.related-head h2 {
-  font-size: 16px;
-  margin: 0;
 }
 .related-list {
   list-style: none;
@@ -869,54 +851,52 @@ a.related-title:hover {
   font-size: 12.5px;
   line-height: 1.55;
 }
-.abstract {
-  border-top: 1px solid var(--border);
-  padding-top: 18px;
+/* Paper page: abstract, summaries, related work, audio summary and Ask AI as tabs */
+.paper-tabbed {
   margin: 8px 0 18px;
 }
-.abstract h2 {
-  font-size: 16px;
-  margin: 0;
+.paper-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
-.abstract .section-head {
-  margin-bottom: 8px;
-}
-
-/* Collapsible sections (abstract, summary) */
-.section-toggle {
+.paper-tab {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  padding: 7px 10px 8px;
   cursor: pointer;
-  user-select: none;
-  border-radius: 5px;
-  padding: 1px 6px 1px 2px;
-  margin-left: -2px;
+  color: var(--fg-soft);
+  font-size: 13.5px;
+  white-space: nowrap;
 }
-.section-toggle:hover {
-  background: var(--bg-soft);
+.paper-tab:hover {
+  color: var(--fg);
 }
-.section-toggle:focus-visible {
+.paper-tab.active {
+  color: var(--fg);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+.paper-tab:focus-visible {
   outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 5px 5px 0 0;
 }
-.section-toggle .triangle {
-  display: inline-block;
-  width: 14px;
-  font-size: 14px;
-  line-height: 1;
-  text-align: center;
-  color: var(--muted);
-  transition: transform 0.12s;
+.paper-tab .spinner {
+  width: 10px;
+  height: 10px;
 }
-.collapsible.collapsed .section-toggle .triangle {
-  transform: rotate(-90deg);
-}
-.collapsible.collapsed > :not(.section-head),
-.collapsible.collapsed .section-head .tabs {
+.paper-panel[hidden] {
   display: none;
-}
-.collapsible.collapsed .section-head {
-  margin-bottom: 0;
 }
 .abstract-text {
   color: var(--fg-soft);
@@ -1731,18 +1711,6 @@ li.collapsed > .toc-item .toc-toggle {
   flex-direction: column;
 }
 /* Ask AI on the paper page: a card that grows with the conversation. */
-.paper-ask {
-  border-top: 1px solid var(--border);
-  padding-top: 18px;
-  margin-top: 18px;
-}
-.paper-ask .section-head {
-  margin-bottom: 10px;
-}
-.paper-ask .section-head h2 {
-  font-size: 16px;
-  margin: 0;
-}
 .paper-ask .ask-chat {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -2322,20 +2290,11 @@ table.syntheses[hidden],
 }
 
 /* ---------------------------------------------------------------- audio summaries */
-.audio {
-  border-top: 1px solid var(--border);
-  padding-top: 18px;
-  margin-top: 18px;
-}
 .audio-head {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
-}
-.audio-head h2 {
-  font-size: 16px;
-  margin: 0;
 }
 .audio-player {
   width: 100%;

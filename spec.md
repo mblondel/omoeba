@@ -46,6 +46,8 @@ When clicking on a paper in the list, we are first shown a page containing:
 - original download location
 - link/button to PDF reader
 
+Below the title and other information, tabs show the abstract, the summaries, related work, the audio summary and "Ask AI" (one at a time; the summary tab is shown first).
+
 A paper can have multiple summaries (once per AI).
 The summaries can contain Markdown and images.
 The images are stored in base64 so that we can store them in the .json file directly.

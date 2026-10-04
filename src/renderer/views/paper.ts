@@ -138,42 +138,9 @@ function figureRenderer(paperId: string) {
   };
 }
 
-/** Collapsed state of the paper page's sections, remembered across papers and sessions. */
-function isCollapsed(section: string): boolean {
-  try {
-    return localStorage.getItem(`omoeba.collapsed.${section}`) === '1';
-  } catch {
-    return false;
-  }
-}
-
-/** A section heading with a triangle that expands/collapses its section. */
-function collapsibleHeading(section: string, title: string): HTMLElement {
-  const toggle = () => {
-    const el = heading.closest('section');
-    const collapsed = !el?.classList.contains('collapsed');
-    el?.classList.toggle('collapsed', collapsed);
-    heading.setAttribute('aria-expanded', String(!collapsed));
-    try {
-      localStorage.setItem(`omoeba.collapsed.${section}`, collapsed ? '1' : '0');
-    } catch {
-      /* ignore */
-    }
-  };
-  const heading = h(
-    'h2',
-    { class: 'section-toggle', role: 'button', tabIndex: 0, 'aria-expanded': String(!isCollapsed(section)), onclick: toggle },
-    h('span', { class: 'triangle', 'aria-hidden': 'true' }, '▾'),
-    title,
-  );
-  heading.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      toggle();
-    }
-  });
-  return heading;
-}
+/** The paper page's tabs, in order. */
+const PAPER_TABS = ['abstract', 'summary', 'related', 'audio', 'ask'] as const;
+type PaperTab = (typeof PAPER_TABS)[number];
 
 /** Key of the summary written by the user (the others are keyed by AI id). */
 const MY_SUMMARY = 'mine';
@@ -182,6 +149,8 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
   let paper: PaperDetail | null = null;
   let cfg: Config | null = null;
   let activeSummary: string | null = null;
+  /** Each paper opens on its summary. */
+  let activeTab: PaperTab = 'summary';
   let editingSummary = false;
   /** A summary written by the user, not yet saved. */
   let draftMine: SummaryEntry | null = null;
@@ -431,22 +400,27 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       tagEditor(p),
       sourceRow(p),
       jobBar ?? '',
-      h(
-        'section',
-        { class: `abstract collapsible ${isCollapsed('abstract') ? 'collapsed' : ''}` },
-        h('div', { class: 'section-head' }, collapsibleHeading('abstract', 'Abstract')),
-        editable({
-          value: sc.abstract ?? '',
-          placeholder: 'Add abstract',
-          cls: 'abstract-text',
-          multiline: true,
-          onSave: (v) => patch({ abstract: v || (null as unknown as undefined) }),
-        }),
-      ),
-      summarySection(p),
-      relatedSection(p),
-      audioSection(p),
-      askSection(),
+      paperTabs([
+        {
+          key: 'abstract',
+          label: 'Abstract',
+          panel: h(
+            'section',
+            { class: 'abstract' },
+            editable({
+              value: sc.abstract ?? '',
+              placeholder: 'Add abstract',
+              cls: 'abstract-text',
+              multiline: true,
+              onSave: (v) => patch({ abstract: v || (null as unknown as undefined) }),
+            }),
+          ),
+        },
+        { key: 'summary', label: 'Summary', panel: summarySection(p), busy: [...jobs.keys()].some((k) => k.startsWith('sum:')) },
+        { key: 'related', label: 'Related work', panel: relatedSection(p), busy: jobs.has('related') },
+        { key: 'audio', label: 'Audio summary', panel: audioSection(p), busy: jobs.has('audio') },
+        { key: 'ask', label: 'Ask AI', panel: askSection() },
+      ]),
     );
     if (!ais.length)
       content.append(
@@ -456,6 +430,57 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
           h('span', { class: 'muted small' }, 'Authorize an AI CLI in Settings to extract information and summaries.'),
         ),
       );
+  }
+
+  /**
+   * The abstract, summaries, related work, audio summary and Ask AI, as tabs. Every panel is built
+   * and the inactive ones are hidden, so that switching tabs keeps audio playing and drafts typed.
+   */
+  function paperTabs(tabs: { key: PaperTab; label: string; panel: HTMLElement | string; busy?: boolean }[]): HTMLElement {
+    const shown = tabs.filter((t): t is typeof t & { panel: HTMLElement } => typeof t.panel !== 'string');
+    if (!shown.some((t) => t.key === activeTab)) activeTab = shown[0].key;
+    const buttons = new Map<PaperTab, HTMLButtonElement>();
+    const select = (key: PaperTab, focus = false) => {
+      activeTab = key;
+      for (const t of shown) {
+        const b = buttons.get(t.key)!;
+        const on = t.key === key;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', String(on));
+        b.tabIndex = on ? 0 : -1;
+        t.panel.hidden = !on;
+      }
+      if (focus) buttons.get(key)!.focus();
+    };
+    const bar = h('div', { class: 'paper-tabs', role: 'tablist', 'aria-label': 'Paper sections' });
+    for (const t of shown) {
+      const b = h(
+        'button',
+        { class: 'paper-tab', role: 'tab', id: `paper-tab-${t.key}`, 'aria-controls': `paper-panel-${t.key}`, onclick: () => select(t.key) },
+        t.label,
+        t.busy ? h('span', { class: 'spinner', title: 'Working…' }) : null,
+      );
+      b.addEventListener('keydown', (e) => {
+        const i = shown.findIndex((x) => x.key === t.key);
+        const j =
+          e.key === 'ArrowRight' ? (i + 1) % shown.length
+          : e.key === 'ArrowLeft' ? (i - 1 + shown.length) % shown.length
+          : e.key === 'Home' ? 0
+          : e.key === 'End' ? shown.length - 1
+          : -1;
+        if (j < 0) return;
+        e.preventDefault();
+        select(shown[j].key, true);
+      });
+      buttons.set(t.key, b);
+      bar.append(b);
+      t.panel.classList.add('paper-panel');
+      t.panel.id = `paper-panel-${t.key}`;
+      t.panel.setAttribute('role', 'tabpanel');
+      t.panel.setAttribute('aria-labelledby', b.id);
+    }
+    select(activeTab);
+    return h('div', { class: 'paper-tabbed' }, bar, ...shown.map((t) => t.panel));
   }
 
   function tagEditor(p: PaperDetail): HTMLElement {
@@ -619,12 +644,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
   function askSection(): HTMLElement | string {
     if (!enabledAIs().length) return '';
     askChat.refresh();
-    return h(
-      'section',
-      { class: `paper-ask collapsible ${isCollapsed('ask') ? 'collapsed' : ''}` },
-      h('div', { class: 'section-head' }, collapsibleHeading('ask', 'Ask AI')),
-      askChat.root,
-    );
+    return h('section', { class: 'paper-ask' }, askChat.root);
   }
 
   function summarySection(p: PaperDetail): HTMLElement {
@@ -723,8 +743,8 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
 
     return h(
       'section',
-      { class: `summary collapsible ${isCollapsed('summary') ? 'collapsed' : ''}` },
-      h('div', { class: 'summary-head section-head' }, collapsibleHeading('summary', 'Summary'), tabs, h('div', { class: 'spacer' }), genMenu),
+      { class: 'summary' },
+      h('div', { class: 'summary-head section-head' }, tabs, h('div', { class: 'spacer' }), genMenu),
       body,
       entry && !editingSummary ? actions : null,
     );
@@ -880,7 +900,6 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     const head = h(
       'div',
       { class: 'section-head audio-head' },
-      collapsibleHeading('audio', 'Audio summary'),
       h('div', { class: 'spacer' }),
       a && aiId && canMake
         ? (() => {
@@ -934,7 +953,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
         ),
       );
     }
-    return h('section', { class: `audio collapsible ${isCollapsed('audio') ? 'collapsed' : ''}` }, head, body);
+    return h('section', { class: 'audio' }, a ? head : null, body);
   }
 
   function relatedSection(p: PaperDetail): HTMLElement | string {
@@ -957,7 +976,6 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     const head = h(
       'div',
       { class: 'section-head related-head' },
-      collapsibleHeading('related', 'Related work'),
       h('div', { class: 'spacer' }),
       ais.length
         ? (() => {
@@ -994,7 +1012,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
         ),
       );
     }
-    return h('section', { class: `related collapsible ${isCollapsed('related') ? 'collapsed' : ''}` }, head, body);
+    return h('section', { class: 'related' }, papers.length ? head : null, body);
   }
 
   function relatedRow(r: RelatedPaper, i: number, libraryId: string | null, checked: boolean): HTMLElement {
