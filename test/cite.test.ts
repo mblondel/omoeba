@@ -158,12 +158,25 @@ test('cite: the entries of a .bib file', async () => {
 @InProceedings(vaswani2017attention, title="Attention is All you Need", author="Ashish Vaswani and others", year={2017})
 `;
   assert.deepEqual(parseBibFile(bib), [
-    { key: 'bach2015duality', title: 'Duality Between Subgradient and Conditional Gradient Methods', authors: ['Bach, Francis', 'Jaggi, Martin'], year: '2015' },
-    { key: 'vaswani2017attention', title: 'Attention is All you Need', authors: ['Ashish Vaswani', 'others'], year: '2017' },
+    { key: 'bach2015duality', title: 'Duality Between Subgradient and Conditional Gradient Methods', authors: ['Bach, Francis', 'Jaggi, Martin'], year: '2015', venue: '' },
+    { key: 'vaswani2017attention', title: 'Attention is All you Need', authors: ['Ashish Vaswani', 'others'], year: '2017', venue: '' },
   ]);
   // A large file is read quickly.
   const big = Array.from({ length: 5000 }, (_, i) => `@article{k${i},\n  title = {Title ${i}},\n  author = {A. Author},\n  year = {2020}\n}\n`).join('\n');
   const t = Date.now();
   assert.equal(parseBibFile(big).length, 5000);
   assert.ok(Date.now() - t < 1000, `${Date.now() - t} ms`);
+});
+
+test('cite: entry details, free keys', async () => {
+  const { entryInfo, freeKeyAmong } = await import('../src/main/cite');
+  assert.deepEqual(entryInfo('@inproceedings{k, author = {A. One and Two, B.}, title = {{T}itle}, booktitle = {ICML}, year = 2020}'), {
+    title: 'Title',
+    authors: ['A. One', 'Two, B.'],
+    year: '2020',
+    venue: 'ICML',
+  });
+  const taken = new Set(['bach2015duality', 'bach2015dualityb']);
+  assert.equal(freeKeyAmong((k) => taken.has(k), 'bach2015duality'), 'bach2015dualityc');
+  assert.equal(freeKeyAmong(() => false, 'k'), 'k');
 });

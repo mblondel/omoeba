@@ -151,7 +151,12 @@ export interface Sidecar {
     /** Why the AI could not be asked, if so. */
     aiError?: string;
   };
-  /** The paper's BibTeX entry (fetched from DBLP when first cited from a .tex file). */
+  /**
+   * The key citing the paper in notes and LaTeX ("bach2015duality": first author's surname, year,
+   * first word of the title), unique in the library; made when the paper is first cited.
+   */
+  citeKey?: string;
+  /** The paper's BibTeX entry (fetched from DBLP when first cited from a .tex file), with the same key. */
   bibtex?: BibtexInfo;
   /** Who produced title/authors/institutions ("pdf", "user", "ai:<id>", "reference": from the reference list of a paper citing it). */
   metadataSource?: string;
@@ -203,12 +208,15 @@ export interface BibtexInfo {
   fetchedAt: string;
 }
 
-/** An entry of a .bib file. */
+/** An entry of a .bib file (or a cited library paper): what a citation shows of it. */
 export interface BibEntrySummary {
   key: string;
   title: string;
   authors: string[];
   year: string;
+  venue?: string;
+  /** The library paper with this key, if any. */
+  paperId?: string;
 }
 
 export interface PaperSummary {
@@ -656,11 +664,14 @@ export interface OmoebaAPI {
   /** The source line at a point of a PDF page (PDF points from the page's top left). */
   synctexBackward(pdf: string, page: number, x: number, y: number): Promise<SyncTexSource | null>;
   /**
-   * Cite a library paper in a LaTeX document: its BibTeX entry (from the .json file, or fetched
-   * from DBLP and saved there), added to the document's .bib file if not there yet. Resolves to
-   * the key to put in \cite{…}, and the .bib file (null if the document names none).
+   * Cite a library paper: its citation key (made the first time, unique in the library, saved in
+   * its .json file). From a .tex file, also its BibTeX entry (from DBLP the first time), added to
+   * the document's .bib file if not there yet. Resolves to the key, and the .bib file (null if
+   * none).
    */
   citePaper(id: string, texFile: string): Promise<{ key: string; bibFile: string | null; added: boolean; fetched: boolean }>;
-  /** The entries of the .bib files of the document a .tex file belongs to. */
-  bibEntries(texFile: string): Promise<BibEntrySummary[]>;
+  /** The entries of the .bib files of the LaTeX document a .tex file belongs to. */
+  bibEntries(file: string): Promise<BibEntrySummary[]>;
+  /** The library papers with these citation keys (as a Markdown note cites them: [@key]). */
+  resolveCitations(file: string, keys: string[]): Promise<Record<string, BibEntrySummary>>;
 }

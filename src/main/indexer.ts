@@ -305,6 +305,11 @@ export class IndexManager {
   }
 
   /** All papers, as recorded in the index (null when the index is not available). */
+  /** The paper with a citation key (null if none, or without the index). */
+  idForCiteKey(key: string): string | null {
+    return this.db ? this.db.idForCiteKey(key) : null;
+  }
+
   list(): ListRow[] | null {
     return this.db ? this.db.list() : null;
   }

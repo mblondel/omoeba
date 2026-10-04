@@ -10,11 +10,15 @@
  *   docs  one row per paper: file state, fields shown in the paper list (from the sidecar),
  *         metadata and terms read from the PDF.
  *   fts   the searchable text of each paper, by field (rowid = docs.rowid).
+ *
+ * docs.cite_key is the paper's citation key ("bach2015duality", from its sidecar), unique: a
+ * citation in a note finds its one paper by it. If two sidecars have the same key (e.g. a copied
+ * .json file), the paper indexed first keeps it; the other is indexed without a key.
  */
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { normalize } from './searchindex';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 3;
 
 /** What the paper list and matching need from the sidecar. */
 export interface DocMeta {
@@ -25,6 +29,8 @@ export interface DocMeta {
   year?: number | string;
   /** arXiv id (without version) from the sidecar's download location. */
   arxiv?: string;
+  /** The key citing the paper ("bach2015duality"), unique in the library. */
+  citeKey?: string;
 }
 
 /** Metadata read from the PDF itself. */
@@ -205,12 +211,12 @@ export class IndexDb {
     this.stmts = {
       get: this.db.prepare(`SELECT ${cols} FROM docs WHERE id = ?`),
       upsert: this.db.prepare(`
-        INSERT INTO docs (id, root, has_pdf, has_json, has_skim, pdf_mtime, pdf_size, pdf_birth, pdf_cloud, json_mtime, meta, info, pdf_terms, pdf_read_mtime, error)
-        VALUES (:id, :root, :has_pdf, :has_json, :has_skim, :pdf_mtime, :pdf_size, :pdf_birth, :pdf_cloud, :json_mtime, :meta, :info, :pdf_terms, :pdf_read_mtime, :error)
+        INSERT INTO docs (id, root, has_pdf, has_json, has_skim, pdf_mtime, pdf_size, pdf_birth, pdf_cloud, json_mtime, meta, info, pdf_terms, pdf_read_mtime, error, cite_key)
+        VALUES (:id, :root, :has_pdf, :has_json, :has_skim, :pdf_mtime, :pdf_size, :pdf_birth, :pdf_cloud, :json_mtime, :meta, :info, :pdf_terms, :pdf_read_mtime, :error, :cite_key)
         ON CONFLICT(id) DO UPDATE SET root = excluded.root, has_pdf = excluded.has_pdf, has_json = excluded.has_json,
           has_skim = excluded.has_skim, pdf_mtime = excluded.pdf_mtime, pdf_size = excluded.pdf_size, pdf_birth = excluded.pdf_birth,
           pdf_cloud = excluded.pdf_cloud, json_mtime = excluded.json_mtime, meta = excluded.meta, info = excluded.info,
-          pdf_terms = excluded.pdf_terms, pdf_read_mtime = excluded.pdf_read_mtime, error = excluded.error
+          pdf_terms = excluded.pdf_terms, pdf_read_mtime = excluded.pdf_read_mtime, error = excluded.error, cite_key = excluded.cite_key
         RETURNING rowid`),
       del: this.db.prepare('DELETE FROM docs WHERE id = ? RETURNING rowid'),
       ftsDel: this.db.prepare('DELETE FROM fts WHERE rowid = ?'),
@@ -225,6 +231,20 @@ export class IndexDb {
   private migrate() {
     const version = (this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
     if (version === SCHEMA_VERSION) return;
+    if (version === 1 || version === 2) {
+      // Citation keys: a column (version 2: then not unique), filled from the sidecars, which are
+      // read again (by marking them changed; what was read from the PDFs is kept).
+      if (version === 1) this.db.exec('ALTER TABLE docs ADD COLUMN cite_key TEXT');
+      this.db.exec(`
+        DROP INDEX IF EXISTS docs_cite_key;
+        UPDATE docs SET cite_key = NULL
+          WHERE cite_key IS NOT NULL AND rowid NOT IN (SELECT min(rowid) FROM docs WHERE cite_key IS NOT NULL GROUP BY cite_key);
+        CREATE UNIQUE INDEX docs_cite_key ON docs (cite_key);
+        UPDATE docs SET json_mtime = -1 WHERE has_json;
+        PRAGMA user_version = ${SCHEMA_VERSION};
+      `);
+      return;
+    }
     this.db.exec(`
       DROP TABLE IF EXISTS fts;
       DROP TABLE IF EXISTS docs;
@@ -244,8 +264,10 @@ export class IndexDb {
         info TEXT,
         pdf_terms TEXT,
         pdf_read_mtime REAL,
-        error TEXT
+        error TEXT,
+        cite_key TEXT
       );
+      CREATE UNIQUE INDEX docs_cite_key ON docs (cite_key);
     `);
     const fts = (extra: string) =>
       `CREATE VIRTUAL TABLE fts USING fts5(${FTS_COLUMNS.join(', ')}, ${extra}prefix = '2 3', tokenize = 'unicode61 remove_diacritics 2')`;
@@ -339,9 +361,34 @@ export class IndexDb {
     }
   }
 
-  /** Insert or replace a paper and its searchable text. */
+  /**
+   * Insert or replace a paper and its searchable text. Its citation key is kept unless another
+   * paper has it (then it is indexed without one): a key is never given to two papers.
+   */
   put(row: Omit<DocRow, 'rowid'>, fields: FtsFields): void {
-    const r = this.stmts.upsert.get({
+    let citeKey = row.meta.citeKey ?? null;
+    if (citeKey && this.citeKeyOwner(citeKey, row.id)) citeKey = null;
+    let r: { rowid: number };
+    try {
+      r = this.upsert(row, citeKey);
+    } catch (e) {
+      // (Taken meanwhile, by the other process writing the index.)
+      if (!citeKey || !/UNIQUE/i.test(String((e as Error).message))) throw e;
+      r = this.upsert(row, null);
+    }
+    this.stmts.ftsDel.run(r.rowid);
+    this.stmts.ftsIns.run(r.rowid, ...FTS_COLUMNS.map((c) => fold(fields[c])));
+  }
+
+  /** Another paper that has this citation key (null if none). */
+  citeKeyOwner(key: string, notId?: string): string | null {
+    const r = (this.ownerStmt ??= this.db.prepare('SELECT id FROM docs WHERE cite_key = ?')).get(key) as { id: string } | undefined;
+    return r && r.id !== notId ? r.id : null;
+  }
+  private ownerStmt: StatementSync | undefined;
+
+  private upsert(row: Omit<DocRow, 'rowid'>, citeKey: string | null): { rowid: number } {
+    return this.stmts.upsert.get({
       id: row.id,
       root: row.root,
       has_pdf: row.hasPdf ? 1 : 0,
@@ -357,9 +404,8 @@ export class IndexDb {
       pdf_terms: row.pdfTerms,
       pdf_read_mtime: row.pdfReadMtime,
       error: row.error,
+      cite_key: citeKey,
     }) as { rowid: number };
-    this.stmts.ftsDel.run(r.rowid);
-    this.stmts.ftsIns.run(r.rowid, ...FTS_COLUMNS.map((c) => fold(fields[c])));
   }
 
   /**
@@ -370,6 +416,11 @@ export class IndexDb {
     (this.markStmt ??= this.db.prepare('UPDATE docs SET pdf_read_mtime = ?, error = ? WHERE id = ?')).run(readMtime, error, id);
   }
   private markStmt: StatementSync | undefined;
+
+  /** The paper with this citation key (null if none). */
+  idForCiteKey(key: string): string | null {
+    return this.citeKeyOwner(key);
+  }
 
   delete(id: string): boolean {
     const r = this.stmts.del.get(id) as { rowid: number } | undefined;

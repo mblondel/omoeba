@@ -3,6 +3,7 @@ import { Marked } from 'marked';
 import katex from 'katex';
 import { isFigureRef, type FigureRef, type SummaryImage } from '../shared/types';
 import { figureDisplaySize } from './figures';
+import { formatCitation, formatReferences, replaceCitations, type CiteEntry } from './citeformat';
 
 const marked = new Marked({ gfm: true, breaks: false });
 
@@ -68,7 +69,8 @@ interface MathItem {
 }
 
 /** Replace code and math with placeholders so Markdown does not mangle them. */
-function protect(src: string): { text: string; math: MathItem[]; code: string[] } {
+/** `transform`: applied to the text without its code (e.g. citations). */
+function protect(src: string, transform?: (text: string) => string): { text: string; math: MathItem[]; code: string[] } {
   const code: string[] = [];
   const math: MathItem[] = [];
   let text = src.replace(/(^|\n)(```|~~~)[^\n]*\n[\s\S]*?\n\2[^\n]*(?=\n|$)/g, (m) => {
@@ -88,6 +90,7 @@ function protect(src: string): { text: string; math: MathItem[]; code: string[] 
     .replace(/\\\[([\s\S]+?)\\\]/g, (_, t) => put(t, true))
     .replace(/\\\(([\s\S]+?)\\\)/g, (_, t) => put(t, false))
     .replace(/(^|[^\\$])\$(?!\s)((?:\\\$|[^$\n])+?)(?<!\s)\$(?!\d)/g, (_, pre, t) => pre + put(t, false));
+  if (transform) text = transform(text);
   text = text.replace(/\u0000C(\d+)\u0000/g, (_, i) => code[Number(i)]);
   return { text, math, code };
 }
@@ -115,13 +118,34 @@ export interface RenderOptions {
   images?: Record<string, SummaryImage>;
   /** Links to files (relative paths, e.g. [notes](notes.md)), for Markdown files. */
   onFileLink?: (href: string) => void;
+  /**
+   * Citations in Pandoc's syntax ([@key], @key), shown author–year: what each key shows, and
+   * whether the references cited are listed at the end.
+   */
+  citations?: { entries: Record<string, CiteEntry>; references?: boolean };
 }
 
 export function renderMarkdown(src: string, opts: RenderOptions = {}): string {
-  const { text, math } = protect(src ?? '');
+  const cites: string[] = [];
+  const cited = new Set<string>();
+  const citations = opts.citations;
+  const { text, math } = protect(
+    src ?? '',
+    citations
+      ? (t) =>
+          replaceCitations(t, (c) => {
+            c.items.forEach((i) => cited.add(i.key));
+            return `OMOCITE${cites.push(formatCitation(c, citations.entries)) - 1}X`;
+          })
+      : undefined,
+  );
   let html = marked.parse(text, { async: false }) as string;
   html = sanitize(html, !!opts.onFileLink);
   html = html.replace(/OMOMATH(\d+)X/g, (_, i) => renderMath(math[Number(i)]));
+  if (citations) {
+    html = html.replace(/OMOCITE(\d+)X/g, (_, i) => cites[Number(i)]);
+    if (citations.references) html += formatReferences([...cited], citations.entries);
+  }
   if (opts.images) {
     html = html.replace(/src="img:([^"]+)"/g, (m, id) => {
       const data = opts.images![decodeURIComponent(id)];
@@ -175,6 +199,8 @@ export function mountMarkdown(
   src: string,
   opts: RenderOptions & {
     onPageLink?: (page: number) => void;
+    /** Citations of a Markdown file ([@key]): the key clicked. */
+    onCitation?: (key: string) => void;
     /** Citations of a paper of a synthesis: [Bach 2015, p. 4](#paper=3&page=4) (page optional). */
     onPaperLink?: (paper: number, page?: number) => void;
     onExternal?: (url: string) => void;
@@ -266,6 +292,7 @@ export function mountMarkdown(
       e.preventDefault();
       if (m) opts.onPageLink?.(Number(m[1]));
       else if (paper) opts.onPaperLink?.(Number(paper[1]), paper[2] ? Number(paper[2]) : undefined);
+      else if (href.startsWith('#cite=')) opts.onCitation?.(decodeURIComponent(href.slice(6)));
       else if (/^https?:/i.test(href)) opts.onExternal?.(href);
       else if (opts.onFileLink && isFileLink(href)) opts.onFileLink(href);
     });

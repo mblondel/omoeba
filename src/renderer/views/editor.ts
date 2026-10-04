@@ -12,7 +12,9 @@ import { openSearchPanel } from '@codemirror/search';
 import type { EditorView } from '@codemirror/view';
 import { api } from '../api';
 import { EditorView as View } from '@codemirror/view';
-import { isActiveView, openFileTab, openFolderTab, openPdfTab, type ViewHandle } from '../app';
+import { isActiveView, navigate, openFileTab, openFolderTab, openPdfTab, type ViewHandle } from '../app';
+import type { BibEntrySummary } from '../../shared/types';
+import { citedKeys } from '../citeformat';
 import { compileLatex } from '../latex';
 import { searchBib, searchLibrary } from '../citations';
 import { createCodeEditor, replaceText, type CodeLanguage } from '../codeeditor';
@@ -38,6 +40,11 @@ export async function saveAllEditors(): Promise<void> {
   await Promise.all([...savers].map((save) => save()));
 }
 
+/** The text without its YAML front matter (--- … --- at the top), which is not shown. */
+function stripFrontMatter(md: string): string {
+  return md.replace(/^---[ \t]*\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, '');
+}
+
 const isMod = (e: KeyboardEvent) => (api.platform === 'darwin' ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey);
 
 export function mountEditor(root: HTMLElement, file: string): ViewHandle {
@@ -59,11 +66,38 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
   // Markdown: the rendered preview, next to the text.
   const preview = h('div', { class: 'preview-content' });
   const previewScroll = h('div', { class: 'preview-scroll' }, preview);
+  /** What the citations of the Markdown show ([@key]: the library paper with this key). */
+  let citeEntries: Record<string, BibEntrySummary> = {};
+  /** The keys last looked up (looked up again when they change). */
+  let citeLookup = '';
+
   function renderPreview() {
     if (!md || !view) return;
+    const src = stripFrontMatter(text());
+    const keys = citedKeys(src);
+    const sig = keys.join('\n');
+    if (sig !== citeLookup && keys.some((k) => !citeEntries[k])) {
+      citeLookup = sig;
+      api
+        .resolveCitations(file, keys)
+        .then((found) => {
+          citeEntries = { ...citeEntries, ...found };
+          if (!disposed && Object.keys(found).length) renderPreview();
+        })
+        .catch(() => undefined);
+    }
     const top = previewScroll.scrollTop;
     preview.replaceChildren();
-    mountMarkdown(preview, text(), { onExternal: (u) => api.openExternal(u), onFileLink: followLink });
+    mountMarkdown(preview, src, {
+      onExternal: (u) => api.openExternal(u),
+      onFileLink: followLink,
+      citations: { entries: citeEntries },
+      onCitation: (key) => {
+        const id = citeEntries[key]?.paperId;
+        if (id) navigate(`#/paper/${encodeURIComponent(id)}`);
+        else toast(`${key} is not in the library.`);
+      },
+    });
     previewScroll.scrollTop = top;
   }
   const renderPreviewSoon = debounce(renderPreview, 150);
@@ -118,7 +152,12 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
         label: baseName(file),
         onEdit,
         // LaTeX: \cite{…} lists the document's .bib entries, or (⇧⌘L) the library's papers.
-        cite: language === 'latex' ? { searchBib: (q) => searchBib(file, q), searchLibrary, cite: citePaper } : undefined,
+        cite:
+          language === 'latex'
+            ? { searchBib: (q) => searchBib(file, q), searchLibrary, cite: citePaper }
+            : language === 'markdown'
+              ? { searchBib: async () => [], searchLibrary, cite: citePaper, libraryOnly: true }
+              : undefined,
         // LaTeX: ⌘-click shows the place in the PDF (SyncTeX).
         onModClick: language === 'latex' ? (line, column) => void showInPdf(line, column) : undefined,
       });
@@ -148,8 +187,8 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
   async function citePaper(id: string): Promise<string | null> {
     try {
       const r = await api.citePaper(id, file);
-      if (!r.bibFile) toast(`No \\bibliography{…} in the main file: ${r.key} is not in a .bib file.`, 'error', 8000);
-      else if (r.added) toast(`${r.key} added to ${baseName(r.bibFile)}`);
+      if (!r.bibFile && language === 'latex') toast(`No \\bibliography{…} in the main file: ${r.key} is not in a .bib file.`, 'error', 8000);
+      else if (r.added && r.bibFile) toast(`${r.key} added to ${baseName(r.bibFile)}`);
       return r.key;
     } catch (e) {
       toast(errorMessage(e), 'error', 8000);

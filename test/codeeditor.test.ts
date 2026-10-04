@@ -58,3 +58,21 @@ test('editor: LaTeX sections fold up to the next section (or a heading above it)
   assert.equal(fold(2), null);
   assert.equal(fold(12), null);
 });
+
+test('editor: where a citation key is being typed (LaTeX, Markdown)', async () => {
+  const { EditorState } = await import('@codemirror/state');
+  const { latexCiteAt, markdownCiteAt } = await import('../src/renderer/codeeditor');
+  const at = (f: typeof latexCiteAt, text: string) => {
+    const state = EditorState.create({ doc: text });
+    const r = f(state, text.length);
+    return r && { anchor: text[r.brace], query: r.query, typedFrom: text.slice(r.from) };
+  };
+  assert.deepEqual(at(markdownCiteAt, 'As shown [@bac'), { anchor: '@', query: 'bac', typedFrom: 'bac' });
+  assert.deepEqual(at(markdownCiteAt, 'See [@a; @jag'), { anchor: '@', query: 'jag', typedFrom: 'jag' });
+  assert.deepEqual(at(markdownCiteAt, 'As @'), { anchor: '@', query: '', typedFrom: '' });
+  assert.deepEqual(at(markdownCiteAt, '[-@bach2015'), { anchor: '@', query: 'bach2015', typedFrom: 'bach2015' });
+  assert.equal(at(markdownCiteAt, 'mail me@exam'), null, 'not an e-mail address');
+  assert.equal(at(markdownCiteAt, 'no citation'), null);
+  assert.deepEqual(at(latexCiteAt, '\\citep[p.~3]{a, jag'), { anchor: '{', query: 'jag', typedFrom: 'jag' });
+  assert.equal(at(latexCiteAt, '\\cite{a} and'), null);
+});

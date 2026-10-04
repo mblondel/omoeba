@@ -78,6 +78,13 @@ Only these files, and the files inside these folders, can be read or written.
 The supported formats are .md, .tex, .bib, .cls, .sty, .bst and .txt.
 For .md files, the rendered preview is shown next to the text, and follows it as one types.
 The editor is CodeMirror: Markdown, LaTeX (.tex, .cls, .sty) and BibTeX syntax highlighting, search (⌘F), line numbers.
+Markdown notes cite library papers with Pandoc's syntax: [@key], [see @a, p. 3; @b], [-@key] (year only), @key (in the text).
+Typing [@ or @ lists the library's papers; choosing one inserts its key (no BibTeX needed).
+The preview shows citations author–year, "(Bach, 2015)" and "Bach (2015)"; clicking one opens the paper. Keys of no paper are shown as typed, underlined.
+
+Each paper cited gets a citation key (first author's surname, year, first significant word of the title: bach2015duality), saved in its .json file ("citeKey") and in the index (SQLite), where it is unique: a key always leads to one paper.
+If two .json files have the same key (e.g. a copy), the paper indexed first keeps it, and the other gets a new one (bach2015dualityb) when it is cited.
+LaTeX uses the same key for the paper's BibTeX entry.
 In LaTeX files, sections can be folded (\part … \subparagraph: up to the next heading of the same level or above).
 Links to files in the preview (e.g. [notes](notes.md)) are relative to the Markdown file: .md, .tex and .bib files open in the editor, folders in a folder tab, other files with their default app.
 Other files open with their default app.

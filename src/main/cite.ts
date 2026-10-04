@@ -223,18 +223,29 @@ export function appendBibEntry(bib: string, entry: string): string {
   return `${body}${body ? '\n\n' : ''}${entry.trim()}\n`;
 }
 
-/** The entries of a .bib file (not @string, @preamble, @comment): key, title, first author, year. */
-export function parseBibFile(bib: string): { key: string; title: string; authors: string[]; year: string }[] {
-  const out: { key: string; title: string; authors: string[]; year: string }[] = [];
+/** What a citation shows of an entry: title, authors, year, venue. */
+export function entryInfo(entry: string): { title: string; authors: string[]; year: string; venue: string } {
+  const plain = (s: string | null) => (s ?? '').replace(/[{}]/g, '').replace(/\s+/g, ' ').trim();
+  const authors = plain(bibField(entry, 'author'))
+    .split(/\s+and\s+/i)
+    .map((a) => a.trim())
+    .filter(Boolean);
+  const venue = plain(bibField(entry, 'journal') ?? bibField(entry, 'booktitle') ?? bibField(entry, 'publisher') ?? bibField(entry, 'howpublished'));
+  return { title: plain(bibField(entry, 'title')), authors, year: plain(bibField(entry, 'year')), venue };
+}
+
+/** The entries of a .bib file (not @string, @preamble, @comment): key, title, authors, year, venue. */
+export function parseBibFile(bib: string): { key: string; title: string; authors: string[]; year: string; venue: string }[] {
+  const out: { key: string; title: string; authors: string[]; year: string; venue: string }[] = [];
   for (const m of bib.matchAll(/@(\w+)\s*[{(]\s*([^,\s{}()]+)\s*,/g)) {
     if (/^(string|preamble|comment)$/i.test(m[1])) continue;
-    const entry = entryFrom(bib, m.index!);
-    const plain = (s: string | null) => (s ?? '').replace(/[{}]/g, '').replace(/\s+/g, ' ').trim();
-    const authors = plain(bibField(entry, 'author'))
-      .split(/\s+and\s+/i)
-      .map((a) => a.trim())
-      .filter(Boolean);
-    out.push({ key: m[2], title: plain(bibField(entry, 'title')), authors, year: plain(bibField(entry, 'year')) });
+    out.push({ key: m[2], ...entryInfo(entryFrom(bib, m.index!)) });
   }
   return out;
+}
+
+/** A key not among `taken`: key, keyb, keyc, … */
+export function freeKeyAmong(taken: (key: string) => boolean, key: string): string {
+  for (const s of ['', ...'bcdefghijklmnopqrstuvwxyz']) if (!taken(key + s)) return key + s;
+  return `${key}${Date.now()}`;
 }

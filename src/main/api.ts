@@ -90,7 +90,7 @@ import {
 import { downloadPdf, uniquePath, writeFileAtomic } from './download';
 import { RecentStore, createTextFile, insideRoots, isEditable, linkTarget, listFolder, readTextFile, writeTextFile } from './textfiles';
 import * as latex from './latex';
-import { appendBibEntry, bibField, bibliographyFiles, fetchDblpBibtex, findBibEntry, freeKey, parseBibFile, setBibKey, titleSimilarity } from './cite';
+import { appendBibEntry, bibField, bibliographyFiles, fetchDblpBibtex, findBibEntry, freeKey, freeKeyAmong, makeCiteKey, parseBibFile, setBibKey, titleSimilarity } from './cite';
 import { fileNameForTitle, matchLibrary, parseRelated, pdfCandidates, relatedPrompt } from './related';
 import {
   arxivIdOf,
@@ -145,6 +145,7 @@ const WRITABLE_KEYS = new Set([
   'sourceSearch',
   'related',
   'bibtex',
+  'citeKey',
 ]);
 
 export class OmoebaService implements OmoebaAPI {
@@ -821,56 +822,123 @@ export class OmoebaService implements OmoebaAPI {
 
   /** .bib files read (by path), while unchanged. */
   private bibCache = new Map<string, { mtime: number; entries: BibEntrySummary[] }>();
+  /** Citation keys given out in this session (key → paper): taken even before the index has them. */
+  private keysGiven = new Map<string, string>();
 
-  async bibEntries(texFile: string): Promise<BibEntrySummary[]> {
-    const info = await this.latexInfo(texFile);
-    const out: BibEntrySummary[] = [];
-    for (const name of bibliographyFiles(await fs.readFile(info.root, 'utf8'))) {
-      const file = await this.allowed(path.resolve(path.dirname(info.root), name)).catch(() => null);
-      const st = file ? await fs.stat(file).catch(() => null) : null;
-      if (!file || !st) continue;
-      let c = this.bibCache.get(file);
-      if (!c || c.mtime !== st.mtimeMs) {
-        c = { mtime: st.mtimeMs, entries: parseBibFile(await fs.readFile(file, 'utf8')) };
-        this.bibCache.set(file, c);
-      }
-      out.push(...c.entries);
+  /** The library paper with this citation key (null if none): the index's, or one just given the key. */
+  private paperWithKey(key: string): string | null {
+    const given = this.keysGiven.get(key);
+    if (given) return given;
+    const id = this.index.idForCiteKey(key);
+    const folders = this.config.folders.map((f) => path.resolve(f));
+    return id && folders.some((f) => id.startsWith(f + path.sep)) ? id : null;
+  }
+
+  /**
+   * The paper's citation key: the one it has, if no other paper has it (e.g. a copied .json file);
+   * else a new one ("bach2015duality", "bach2015dualityb"…) that no other paper has.
+   */
+  private async citeKeyOf(pdfPath: string, paper: PaperDetail): Promise<{ key: string; isNew: boolean }> {
+    const sc = paper.sidecar;
+    const taken = (k: string) => {
+      const owner = this.paperWithKey(k);
+      return !!owner && owner !== pdfPath;
+    };
+    const have = (typeof sc.citeKey === 'string' && sc.citeKey.trim()) || sc.bibtex?.key;
+    if (have && !taken(have)) {
+      this.keysGiven.set(have, pdfPath);
+      return { key: have, isNew: sc.citeKey !== have };
+    }
+    const key = freeKeyAmong(taken, have || makeCiteKey(paper.authors, sc.year ?? paper.year, paper.title));
+    this.keysGiven.set(key, pdfPath);
+    return { key, isNew: true };
+  }
+
+  /** The .bib files of a LaTeX document (its main file's \bibliography or \addbibresource). */
+  private async documentBibFiles(file: string): Promise<string[]> {
+    const info = await this.latexInfo(await this.allowed(file));
+    const dir = path.dirname(info.root);
+    const out: string[] = [];
+    for (const n of bibliographyFiles(await fs.readFile(info.root, 'utf8'))) {
+      const f = await this.allowed(path.resolve(dir, n)).catch(() => null);
+      if (f) out.push(f);
     }
     return out;
   }
 
-  async citePaper(id: string, texFile: string): Promise<{ key: string; bibFile: string | null; added: boolean; fetched: boolean }> {
+  private async readBibFile(file: string): Promise<BibEntrySummary[]> {
+    const st = await fs.stat(file).catch(() => null);
+    if (!st) return [];
+    let c = this.bibCache.get(file);
+    if (!c || c.mtime !== st.mtimeMs) {
+      c = { mtime: st.mtimeMs, entries: parseBibFile(await fs.readFile(file, 'utf8')) };
+      this.bibCache.set(file, c);
+    }
+    return c.entries;
+  }
+
+  async bibEntries(file: string): Promise<BibEntrySummary[]> {
+    const out: BibEntrySummary[] = [];
+    for (const f of await this.documentBibFiles(file)) out.push(...(await this.readBibFile(f)));
+    return out;
+  }
+
+  async resolveCitations(_file: string, keys: string[]): Promise<Record<string, BibEntrySummary>> {
+    const out: Record<string, BibEntrySummary> = {};
+    let papers: Map<string, PaperSummary> | null = null;
+    for (const key of new Set(keys)) {
+      const id = this.paperWithKey(key);
+      if (!id) continue;
+      papers ??= new Map((await this.listPapers()).map((p) => [p.id, p]));
+      const p = papers.get(id);
+      if (p) out[key] = { key, title: p.title, authors: p.authors, year: String(p.year ?? ''), paperId: id };
+    }
+    return out;
+  }
+
+  async citePaper(id: string, file: string): Promise<{ key: string; bibFile: string | null; added: boolean; fetched: boolean }> {
     const pdfPath = this.checkId(id);
     const paper = await this.getPaper(pdfPath);
-    let bib = paper.sidecar.bibtex;
-    let changed = false;
-    if (!bib?.entry || !bib.key) {
-      bib = await fetchDblpBibtex({ title: paper.title, authors: paper.authors, year: paper.sidecar.year ?? paper.year }, this.platform.webGet);
-      changed = true;
-    }
-    // The document's .bib file.
-    const info = await this.latexInfo(texFile);
-    const name = bibliographyFiles(await fs.readFile(info.root, 'utf8'))[0];
+    const { key, isNew } = await this.citeKeyOf(pdfPath, paper);
+    const patch: Partial<Sidecar> = isNew ? { citeKey: key } : {};
     let bibFile: string | null = null;
     let added = false;
-    if (name) {
-      bibFile = await this.allowed(path.resolve(path.dirname(info.root), name));
-      for (let attempt = 0; attempt < 2 && !added; attempt++) {
-        const st = await fs.stat(bibFile).catch(() => null);
-        const text = st ? await fs.readFile(bibFile, 'utf8') : '';
-        const existing = findBibEntry(text, bib.key);
-        // The key names another paper in this file: another key.
-        if (existing && titleSimilarity(bibField(existing, 'title') ?? '', bibField(bib.entry, 'title') ?? '') < 0.8) {
-          const key = freeKey(text, bib.key);
-          bib = { ...bib, key, entry: setBibKey(bib.entry, key) };
-          changed = true;
-        } else if (existing) break;
-        const r = await writeTextFile(bibFile, appendBibEntry(text, bib.entry), st ? st.mtimeMs : null);
-        added = !r.conflict;
+    let fetched = false;
+    // LaTeX: the BibTeX entry (from DBLP the first time, with the paper's key), in the document's .bib file.
+    if (!/\.(md|markdown)$/i.test(file)) {
+      let bib = paper.sidecar.bibtex;
+      // (A key given anew, e.g. its old one taken by another paper: the entry follows.)
+      if (bib?.entry && bib.key !== key && isNew) {
+        bib = { ...bib, key, entry: setBibKey(bib.entry, key) };
+        patch.bibtex = bib;
       }
+      if (!bib?.entry) {
+        const found = await fetchDblpBibtex({ title: paper.title, authors: paper.authors, year: paper.sidecar.year ?? paper.year }, this.platform.webGet);
+        bib = { ...found, key, entry: setBibKey(found.entry, key) };
+        patch.bibtex = bib;
+        fetched = true;
+      }
+      bibFile = (await this.documentBibFiles(file))[0] ?? null;
+      if (bibFile) {
+        for (let attempt = 0; attempt < 2 && !added; attempt++) {
+          const st = await fs.stat(bibFile).catch(() => null);
+          const text = st ? await fs.readFile(bibFile, 'utf8') : '';
+          const existing = findBibEntry(text, bib.key);
+          // This .bib file has the key for another work: the entry goes in under another key.
+          if (existing && titleSimilarity(bibField(existing, 'title') ?? '', bibField(bib.entry, 'title') ?? '') < 0.8) {
+            const k = freeKey(text, bib.key);
+            bib = { ...bib, key: k, entry: setBibKey(bib.entry, k) };
+            patch.bibtex = bib;
+          } else if (existing) break;
+          const r = await writeTextFile(bibFile, appendBibEntry(text, bib.entry), st ? st.mtimeMs : null);
+          added = !r.conflict;
+        }
+      }
+      if (Object.keys(patch).length) await this.updateSidecar(pdfPath, patch);
+      return { key: bib.key, bibFile, added, fetched };
     }
-    if (changed) await this.updateSidecar(pdfPath, { bibtex: bib });
-    return { key: bib.key, bibFile, added, fetched: changed };
+    if (Object.keys(patch).length) await this.updateSidecar(pdfPath, patch);
+    return { key, bibFile, added, fetched };
   }
 
   async openWithDefaultApp(file: string): Promise<void> {

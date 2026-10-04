@@ -4,7 +4,7 @@
  */
 import { basicSetup } from 'codemirror';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { HighlightStyle, StreamLanguage, foldService, syntaxHighlighting } from '@codemirror/language';
+import { HighlightStyle, StreamLanguage, foldService, syntaxHighlighting, type Language } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { Annotation, EditorState, Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
 import { completionStatus, startCompletion, type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
@@ -95,6 +95,8 @@ export interface CiteSupport {
   searchLibrary(query: string): Promise<{ id: string; title: string; who: string; year: string }[]>;
   /** The key of a library paper, ready to be cited (null if it could not be). */
   cite(id: string): Promise<string | null>;
+  /** Only the library is listed (Markdown notes). */
+  libraryOnly?: boolean;
 }
 
 /** In \cite{a, b…}, \citep[p.~3]{…}, \parencite{…}, …: up to the cursor. */
@@ -127,17 +129,30 @@ let pendingIds = 0;
 const mac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
 const LIBRARY_KEY = mac ? '⇧⌘L' : 'Ctrl+Shift+L';
 
-function citeExtension(support: CiteSupport, lang: StreamLanguage<unknown>): Extension {
-  /** The \cite whose library is listed: the position of its "{" (kept up to date as the text changes). */
+/** Where a citation key is being typed: the citation's anchor (where it starts), what is typed, where it starts. */
+type CiteContext = (state: EditorState, pos: number) => { brace: number; query: string; from: number } | null;
+
+/** LaTeX: in \cite{a, b…}, the "{". */
+export const latexCiteAt: CiteContext = (state, pos) => {
+  const line = state.doc.lineAt(pos);
+  const m = CITE_RE.exec(line.text.slice(0, pos - line.from));
+  if (!m) return null;
+  const typed = m[0].slice(m[0].lastIndexOf('{') + 1).split(',').pop()!;
+  return { brace: line.from + m.index + m[0].lastIndexOf('{'), query: typed.trim(), from: pos - typed.trimStart().length };
+};
+
+/** Markdown (Pandoc): [@key, @key or [-@key: the "@" (not in an e-mail address). */
+const MD_CITE_RE = /(?:^|[\s[;(-])@([\p{L}\p{N}_:.#$%&+?<>~/-]*)$/u;
+export const markdownCiteAt: CiteContext = (state, pos) => {
+  const line = state.doc.lineAt(pos);
+  const m = MD_CITE_RE.exec(line.text.slice(0, pos - line.from));
+  if (!m) return null;
+  return { brace: pos - m[1].length - 1, query: m[1], from: pos - m[1].length };
+};
+
+function citeExtension(support: CiteSupport, lang: Language, citeAt: CiteContext): Extension {
+  /** The citation whose library is listed: the position of its anchor (kept up to date as the text changes). */
   let libraryAt: number | null = null;
-  /** The "{" of the \cite the cursor is in, and what is typed there. */
-  const citeAt = (state: EditorState, pos: number) => {
-    const line = state.doc.lineAt(pos);
-    const m = CITE_RE.exec(line.text.slice(0, pos - line.from));
-    if (!m) return null;
-    const typed = m[0].slice(m[0].lastIndexOf('{') + 1).split(',').pop()!;
-    return { brace: line.from + m.index + m[0].lastIndexOf('{'), query: typed.trim(), from: pos - typed.trimStart().length };
-  };
   /** List the library (true) or the .bib entries (false) for the \cite at the cursor. */
   const switchTo = (view: EditorView, library: boolean) => {
     const at = citeAt(view.state, view.state.selection.main.head);
@@ -153,7 +168,7 @@ function citeExtension(support: CiteSupport, lang: StreamLanguage<unknown>): Ext
   const source = async (ctx: CompletionContext): Promise<CompletionResult | null> => {
     const at = citeAt(ctx.state, ctx.pos);
     if (!at) return null;
-    const library = libraryAt === at.brace;
+    const library = support.libraryOnly || libraryAt === at.brace;
     const options: Completion[] = [];
     if (library) {
       for (const p of await support.searchLibrary(at.query)) {
@@ -171,7 +186,7 @@ function citeExtension(support: CiteSupport, lang: StreamLanguage<unknown>): Ext
           },
         });
       }
-      options.push({ label: 'Back to the .bib entries', apply: (view: EditorView) => void switchTo(view, false), boost: -99 });
+      if (!support.libraryOnly) options.push({ label: 'Back to the .bib entries', apply: (view: EditorView) => void switchTo(view, false), boost: -99 });
     } else {
       for (const e of await support.searchBib(at.query)) {
         options.push({ label: e.key, detail: [[e.who, e.year].filter(Boolean).join(' '), e.title].filter(Boolean).join(' · '), apply: e.key });
@@ -185,7 +200,7 @@ function citeExtension(support: CiteSupport, lang: StreamLanguage<unknown>): Ext
   return [
     pendingCites,
     lang.data.of({ autocomplete: source }),
-    Prec.highest(keymap.of([{ key: 'Mod-Shift-l', run: (view) => switchTo(view, true) }])),
+    support.libraryOnly ? [] : Prec.highest(keymap.of([{ key: 'Mod-Shift-l', run: (view) => switchTo(view, true) }])),
     EditorView.updateListener.of((u) => {
       if (libraryAt === null) return;
       if (u.docChanged) libraryAt = u.changes.mapPos(libraryAt);
@@ -279,7 +294,7 @@ export function createCodeEditor(opts: {
   label: string;
   /** Called when the text is edited (not when it is replaced with replaceText). */
   onEdit: () => void;
-  /** LaTeX: citations while typing \cite{…} (.bib entries, library papers). */
+  /** Citations while typing \cite{…} (LaTeX) or [@… (Markdown): .bib entries, library papers. */
   cite?: CiteSupport;
   /** ⌘-click (Ctrl-click elsewhere) on a line (1-based) and column; ⌥-click then adds a cursor. */
   onModClick?: (line: number, column: number) => void;
@@ -302,9 +317,12 @@ export function createCodeEditor(opts: {
     : [];
   const lang: Extension[] =
     opts.language === 'markdown'
-      ? [markdown({ base: markdownLanguage, extensions: [MathSyntax] }), syntaxHighlighting(markdownStyle)]
+      ? (() => {
+          const md = markdown({ base: markdownLanguage, extensions: [MathSyntax] });
+          return [md, syntaxHighlighting(markdownStyle), ...(opts.cite ? [citeExtension(opts.cite, md.language, markdownCiteAt)] : [])];
+        })()
       : opts.language === 'latex'
-        ? [latexLanguage, syntaxHighlighting(latexStyle), foldService.of(latexSectionFold), ...(opts.cite ? [citeExtension(opts.cite, latexLanguage)] : [])]
+        ? [latexLanguage, syntaxHighlighting(latexStyle), foldService.of(latexSectionFold), ...(opts.cite ? [citeExtension(opts.cite, latexLanguage, latexCiteAt)] : [])]
         : opts.language === 'bibtex'
           ? [StreamLanguage.define(bibtex), syntaxHighlighting(bibtexStyle)]
           : [];

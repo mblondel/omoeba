@@ -35,6 +35,8 @@ export function metaFromSidecar(sc: Sidecar): DocMeta {
   if (sc.year !== undefined && sc.year !== null && sc.year !== '') meta.year = sc.year;
   const arxiv = arxivIdOf(sc.source?.url);
   if (arxiv) meta.arxiv = arxiv.id;
+  const citeKey = typeof sc.citeKey === 'string' && sc.citeKey.trim() ? sc.citeKey.trim() : sc.bibtex?.key;
+  if (citeKey) meta.citeKey = citeKey;
   return meta;
 }
 
