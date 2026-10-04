@@ -17,6 +17,7 @@
 - Markdown notes.
 - Tags.
 - File editor for .md, .tex and .bib files (File › Open File… / Open Folder…), with a live Markdown preview side by side.
+- LaTeX: compile with latexmk (⌘B), errors and warnings linked to the source, SyncTeX (⌘-click from the source to the PDF and back). Requires MacTeX or TeX Live.
 - AI: ask questions, summaries, tagging, related work, audio, ...
 - Metadata are stored in a .json file along the .pdf file.
 - Easy to sync via gdrive or git.

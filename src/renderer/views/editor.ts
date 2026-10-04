@@ -11,7 +11,9 @@ import { redo, undo } from '@codemirror/commands';
 import { openSearchPanel } from '@codemirror/search';
 import type { EditorView } from '@codemirror/view';
 import { api } from '../api';
-import { isActiveView, openFileTab, openFolderTab, type ViewHandle } from '../app';
+import { EditorView as View } from '@codemirror/view';
+import { isActiveView, openFileTab, openFolderTab, openPdfTab, type ViewHandle } from '../app';
+import { compileLatex } from '../latex';
 import { createCodeEditor, replaceText, type CodeLanguage } from '../codeeditor';
 import { choiceDialog, debounce, errorMessage, h, icon, toast } from '../dom';
 import { mountMarkdown } from '../markdown';
@@ -29,6 +31,12 @@ function languageOf(file: string): CodeLanguage {
   return 'plain';
 }
 
+/** Saving each open editor's edits now (before compiling). */
+const savers = new Set<() => Promise<boolean>>();
+export async function saveAllEditors(): Promise<void> {
+  await Promise.all([...savers].map((save) => save()));
+}
+
 const isMod = (e: KeyboardEvent) => (api.platform === 'darwin' ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey);
 
 export function mountEditor(root: HTMLElement, file: string): ViewHandle {
@@ -42,6 +50,9 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
   let conflict = false;
   let chain: Promise<boolean> = Promise.resolve(true);
   const md = isMarkdown(file);
+  const language = languageOf(file);
+  /** A line to show once the file is read. */
+  let pendingLine: number | null = null;
   const text = () => view?.state.doc.toString() ?? '';
 
   // Markdown: the rendered preview, next to the text.
@@ -99,7 +110,15 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
     mtime = at;
     if (view) replaceText(view, t);
     else {
-      view = createCodeEditor({ parent: pane, doc: t, language: languageOf(file), label: baseName(file), onEdit });
+      view = createCodeEditor({
+        parent: pane,
+        doc: t,
+        language,
+        label: baseName(file),
+        onEdit,
+        // LaTeX: ⌘-click shows the place in the PDF (SyncTeX).
+        onModClick: language === 'latex' ? (line, column) => void showInPdf(line, column) : undefined,
+      });
       // The preview follows the text's scrolling (proportionally).
       view.scrollDOM.addEventListener('scroll', () => {
         if (!md || !view) return;
@@ -112,6 +131,31 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
     renderPreview();
   }
 
+  function goToLine(line: number) {
+    if (!view) {
+      pendingLine = line;
+      return;
+    }
+    const l = view.state.doc.line(Math.min(Math.max(1, line), view.state.doc.lines));
+    view.dispatch({ selection: { anchor: l.from }, effects: View.scrollIntoView(l.from, { y: 'center' }) });
+    view.focus();
+  }
+
+  /** Source → PDF (SyncTeX). */
+  async function showInPdf(line: number, column: number) {
+    try {
+      const r = await api.synctexForward(file, line, column);
+      if (!r) {
+        toast('This line is not in the PDF: compile the document first (⌘B).');
+        return;
+      }
+      const { pdf, ...pos } = r;
+      openPdfTab(pdf, { sync: pos });
+    } catch (e) {
+      toast(errorMessage(e), 'error', 6000);
+    }
+  }
+
   async function load() {
     try {
       const f = await api.readTextFile(file);
@@ -119,6 +163,8 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
       api.noteFileOpened(file).catch(() => undefined);
       setText(f.text, f.mtime);
       if (isActiveView(root)) view?.focus();
+      if (pendingLine) goToLine(pendingLine);
+      pendingLine = null;
     } catch (e) {
       if (disposed) return;
       showBanner(errorMessage(e), [{ label: 'Try again', run: () => (hideBanner(), load()) }]);
@@ -213,6 +259,7 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
     if (action === 'undo') undo(view);
     else if (action === 'redo') redo(view);
     else if (action === 'find') openSearchPanel(view);
+    else if (action === 'compile' && (language === 'latex' || language === 'bibtex')) compileLatex(file);
   };
   window.addEventListener('omoeba-menu', onMenu);
   const onFocus = () => isActiveView(root) && checkDisk();
@@ -220,11 +267,18 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
   const onUnload = () => autosave.flush();
   window.addEventListener('beforeunload', onUnload);
 
+  const saveNow = () => {
+    autosave.flush();
+    return chain;
+  };
+  savers.add(saveNow);
+
   load();
 
   const handle: ViewHandle = () => {
     autosave.flush();
     disposed = true;
+    savers.delete(saveNow);
     window.removeEventListener('keydown', onKey);
     window.removeEventListener('omoeba-menu', onMenu);
     window.removeEventListener('focus', onFocus);
@@ -234,6 +288,7 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
       view?.destroy();
     });
   };
+  handle.goToLine = goToLine;
   handle.onShow = () => {
     checkDisk();
     view?.focus();

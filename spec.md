@@ -84,6 +84,16 @@ Other files open with their default app.
 Edits are saved automatically (and with ⌘S).
 If a file is changed on disk by another app, it is reloaded when it has no unsaved edits; otherwise the user chooses which version to keep.
 
+## LaTeX
+
+⌘B (File › Compile LaTeX) compiles the document of the .tex file being edited, with latexmk (MacTeX / TeX Live).
+The main file is the one named by a "% !TEX root = main.tex" comment, the file itself if it has \documentclass, or else the one .tex file with \documentclass in its folder (or the folder above).
+The engine can be chosen with "% !TEX program = xelatex" (or lualatex).
+The PDF is written next to the main file; the other files (.aux, .log, .synctex.gz…) in a .build folder.
+Shell escape is off. A latexmkrc file in the folder is used only if the user agrees (asked once).
+The PDF is shown in its own tab, reloaded after each compile at the same place, with the errors and warnings (clicking one opens the file at its line).
+SyncTeX: ⌘-click on a line of the source shows its place in the PDF; ⌘-click on the PDF opens the source at that line.
+
 ## Software stack
 
 - Electron

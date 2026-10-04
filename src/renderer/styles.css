@@ -2514,3 +2514,102 @@ table.syntheses[hidden],
 .empty-home-actions .btn .muted {
   margin-left: auto;
 }
+
+/* ---------------------------------------------------------------- PDF tab of a LaTeX document */
+.pdfview-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.pdfview-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  margin-left: 8px;
+}
+.pdfview-status .spinner {
+  width: 10px;
+  height: 10px;
+}
+.topbar .btn.small.active:not(.danger) {
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+.pdfview-problems {
+  max-height: 35%;
+  overflow: auto;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 12.5px;
+}
+.pdfview-problems[hidden] {
+  display: none;
+}
+.pdfview-problem {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 14px;
+}
+.pdfview-problem.linked {
+  cursor: pointer;
+}
+.pdfview-problem.linked:hover {
+  background: var(--row-hover);
+}
+.pdfview-problem > .icon {
+  flex: none;
+  align-self: center;
+}
+.pdfview-problem.error > .icon {
+  color: var(--danger);
+}
+.pdfview-problem.warning > .icon {
+  color: var(--warn);
+}
+.pdfview-where {
+  flex: none;
+  color: var(--accent);
+}
+.pdfview-msg {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pdfview-output {
+  padding: 4px 14px;
+}
+.pdfview-output pre {
+  max-height: 260px;
+  overflow: auto;
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  margin: 6px 0 0;
+}
+.pdfview-message {
+  flex-direction: column;
+  gap: 12px;
+}
+/* SyncTeX: the place of a source line, marked for a moment */
+.sync-mark {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--warn) 35%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--warn) 70%, transparent);
+  animation: sync-fade 2.5s ease-out forwards;
+}
+@keyframes sync-fade {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.viewer-loading[hidden] {
+  display: none;
+}

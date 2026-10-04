@@ -163,6 +163,7 @@ function buildMenu() {
         { label: 'Open File…', accelerator: 'CmdOrCtrl+O', click: send('open-file') },
         { label: 'Open Folder…', accelerator: 'CmdOrCtrl+Shift+O', click: send('open-folder') },
         { label: 'Open Recent', submenu: recentMenu },
+        { label: 'Compile LaTeX', accelerator: 'CmdOrCtrl+B', click: send('compile') },
         { type: 'separator' },
         { label: 'Library', accelerator: 'CmdOrCtrl+L', click: send('library') },
         { label: 'Add Paper from URL…', accelerator: 'CmdOrCtrl+N', click: send('add-url') },

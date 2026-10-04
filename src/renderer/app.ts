@@ -1,10 +1,11 @@
 /** Renderer entry: tabs and app-wide actions. */
-import type { Config } from '../shared/types';
+import type { Config, SyncTexPosition } from '../shared/types';
 import { api } from './api';
 import { clear, errorMessage, h, icon, installTooltips, promptDialog, toast } from './dom';
 import { mountDuplicates } from './views/duplicates';
 import { baseName, mountEditor } from './views/editor';
 import { mountFolder } from './views/folder';
+import { mountPdfView } from './views/pdfview';
 import { mountSyntheses, mountSynthesis, type SynthesisRun } from './views/synthesis';
 import { mountList } from './views/list';
 import { mountPaper } from './views/paper';
@@ -39,6 +40,10 @@ export type ViewHandle = (() => void) & {
   goToPage?: (page: number) => void;
   /** Asked before the tab is closed (e.g. the editor saves first); false keeps it open. */
   canClose?: () => boolean | Promise<boolean>;
+  /** File editor: show a line (1-based). */
+  goToLine?: (line: number) => void;
+  /** PDF tab: show a place found by SyncTeX. */
+  showSync?: (pos: SyncTexPosition) => void;
 };
 
 type TabKind =
@@ -54,7 +59,9 @@ type TabKind =
   /** A folder's files (`file`). */
   | 'folder'
   /** A file in the editor (`file`). */
-  | 'file';
+  | 'file'
+  /** A PDF compiled from LaTeX (`file`). */
+  | 'pdf';
 
 /** Tabs of which there is only one. */
 const SINGLE: TabKind[] = ['library', 'settings', 'duplicates', 'recent', 'syntheses'];
@@ -74,6 +81,9 @@ interface Tab {
   handle: ViewHandle | null;
   /** Page to open at when the (lazily mounted) reader is first shown. */
   initialPage?: number;
+  /** Line to show once the editor is mounted; place to show once the PDF tab is. */
+  pendingLine?: number;
+  pendingSync?: SyncTexPosition;
 }
 
 const root = document.getElementById('app')!;
@@ -97,6 +107,7 @@ const TAB_ICON: Record<TabKind, string> = {
   syntheses: 'sparkle',
   folder: 'folder',
   file: 'text',
+  pdf: 'book',
 };
 
 /** Whether an element belongs to the tab currently shown (views use it to gate shortcuts). */
@@ -120,6 +131,7 @@ function mountTab(tab: Tab) {
     else if (tab.kind === 'syntheses') tab.handle = mountSyntheses(tab.panel);
     else if (tab.kind === 'folder') tab.handle = mountFolder(tab.panel, tab.file!);
     else if (tab.kind === 'file') tab.handle = mountEditor(tab.panel, tab.file!);
+    else if (tab.kind === 'pdf') tab.handle = mountPdfView(tab.panel, tab.file!);
     else if (tab.kind === 'synthesis')
       tab.handle = mountSynthesis(
         tab.panel,
@@ -144,6 +156,15 @@ function mountTab(tab: Tab) {
   } catch (e) {
     tab.panel.append(h('div', { class: 'fatal' }, h('h2', null, 'Something went wrong'), h('pre', null, errorMessage(e))));
   }
+  applyPending(tab);
+}
+
+function applyPending(tab: Tab) {
+  if (!tab.handle) return;
+  if (tab.pendingLine && tab.handle.goToLine) tab.handle.goToLine(tab.pendingLine);
+  if (tab.pendingSync && tab.handle.showSync) tab.handle.showSync(tab.pendingSync);
+  tab.pendingLine = undefined;
+  tab.pendingSync = undefined;
 }
 
 function renderTabButton(tab: Tab) {
@@ -217,16 +238,28 @@ function activate(tab: Tab) {
 function openTab(
   kind: TabKind,
   paperId?: string,
-  opts: { page?: number; background?: boolean; query?: string; title?: string; file?: string; run?: SynthesisRun } = {},
+  opts: {
+    page?: number;
+    background?: boolean;
+    query?: string;
+    title?: string;
+    file?: string;
+    run?: SynthesisRun;
+    line?: number;
+    sync?: SyncTexPosition;
+  } = {},
 ): Tab {
   const key = keyFor(
     kind,
-    kind === 'search' ? opts.query : kind === 'synthesis' ? (opts.file ?? `run-${++synthesisRuns}`) : kind === 'file' || kind === 'folder' ? opts.file : paperId,
+    kind === 'search' ? opts.query : kind === 'synthesis' ? (opts.file ?? `run-${++synthesisRuns}`) : kind === 'file' || kind === 'folder' || kind === 'pdf' ? opts.file : paperId,
   );
   let tab = tabs.find((t) => t.key === key);
   if (tab) {
     if (opts.page && tab.handle?.goToPage) tab.handle.goToPage(opts.page);
     else if (opts.page) tab.initialPage = opts.page;
+    tab.pendingLine = opts.line;
+    tab.pendingSync = opts.sync;
+    applyPending(tab);
   } else {
     const panel = h('div', { class: 'tab-panel', role: 'tabpanel', hidden: true });
     const button = h('div', {
@@ -253,6 +286,8 @@ function openTab(
       button,
       handle: null,
       initialPage: opts.page,
+      pendingLine: opts.line,
+      pendingSync: opts.sync,
     };
     // New tabs open right after the current one; the Library, when opened again, first.
     const idx = kind === 'library' ? 0 : active && active.kind !== 'library' ? tabs.indexOf(active) + 1 : tabs.length;
@@ -270,7 +305,7 @@ function openTab(
 function tabTitle(kind: TabKind, opts: { query?: string; title?: string; file?: string; run?: SynthesisRun }): string {
   if (kind === 'synthesis') return opts.title || (opts.run ? `Synthesis: ${opts.run.topic}` : 'Synthesis');
   if (kind === 'search') return opts.title || opts.query || 'Search';
-  if (kind === 'file' || kind === 'folder') return baseName(opts.file ?? '');
+  if (kind === 'file' || kind === 'folder' || kind === 'pdf') return baseName(opts.file ?? '');
   const fixed: Partial<Record<TabKind, string>> = {
     settings: 'Settings',
     library: 'Library',
@@ -339,7 +374,7 @@ function saveSession() {
                 ? { kind: t.kind }
                 : t.kind === 'synthesis'
                 ? { kind: t.kind, file: t.file, title: t.title }
-                : t.kind === 'file' || t.kind === 'folder'
+                : t.kind === 'file' || t.kind === 'folder' || t.kind === 'pdf'
                   ? { kind: t.kind, file: t.file }
                   : { kind: t.kind, paperId: t.paperId },
           ),
@@ -367,7 +402,7 @@ function restoreSession() {
   if (!saved?.withLibrary) openTab('library', undefined, { background: true });
   for (const t of saved?.tabs ?? []) {
     if (['library', 'paper', 'read', 'settings', 'duplicates', 'recent', 'syntheses'].includes(t.kind)) openTab(t.kind, t.paperId, { background: true });
-    else if ((t.kind === 'file' || t.kind === 'folder') && typeof t.file === 'string') openTab(t.kind, undefined, { background: true, file: t.file });
+    else if ((t.kind === 'file' || t.kind === 'folder' || t.kind === 'pdf') && typeof t.file === 'string') openTab(t.kind, undefined, { background: true, file: t.file });
     else if (t.kind === 'synthesis' && typeof t.file === 'string') openTab('synthesis', undefined, { background: true, file: t.file, title: t.title });
     else if (t.kind === 'search' && typeof t.query === 'string') openTab('search', undefined, { background: true, query: t.query, title: t.title });
   }
@@ -426,8 +461,18 @@ export function openFolderTab(folder: string) {
 }
 
 /** Open (or switch to) a file in the editor. */
-export function openFileTab(file: string) {
-  openTab('file', undefined, { file });
+export function openFileTab(file: string, opts: { line?: number; background?: boolean } = {}) {
+  openTab('file', undefined, { file, ...opts });
+}
+
+/** Open (or switch to) the tab showing a PDF compiled from LaTeX; `sync`: a place to show. */
+export function openPdfTab(pdf: string, opts: { sync?: SyncTexPosition; background?: boolean } = {}) {
+  openTab('pdf', undefined, { file: pdf, ...opts });
+}
+
+/** Whether a tab shows this PDF. */
+export function isPdfTabOpen(pdf: string): boolean {
+  return tabs.some((t) => t.kind === 'pdf' && t.file === pdf);
 }
 
 /** Open (or switch to) the tab listing identical PDFs. */

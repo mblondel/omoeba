@@ -452,6 +452,53 @@ export interface TextFile {
 /** Saved (`conflict: false`), or not because the file changed on disk since it was read. */
 export type TextWriteResult = { conflict: boolean; mtime: number };
 
+/** A LaTeX document: its main file, its PDF, and the folder's latexmkrc file (if any). */
+export interface LatexInfo {
+  root: string;
+  pdf: string;
+  rc: string | null;
+}
+
+export interface LatexProblem {
+  severity: 'error' | 'warning';
+  /** null when the log does not tell. */
+  file: string | null;
+  line: number | null;
+  message: string;
+}
+
+export interface LatexResult {
+  root: string;
+  pdf: string;
+  /** Compiled without error. */
+  ok: boolean;
+  /** Stopped (by a newer compile, or because it took too long). */
+  stopped: boolean;
+  /** A new PDF was written. */
+  pdfUpdated: boolean;
+  problems: LatexProblem[];
+  /** The end of latexmk's output. */
+  output: string;
+  seconds: number;
+}
+
+/** A place in a PDF (SyncTeX): page, point, and box (left h, baseline v, width, height), in PDF points from the page's top left. */
+export interface SyncTexPosition {
+  page: number;
+  x: number;
+  y: number;
+  h: number;
+  v: number;
+  width: number;
+  height: number;
+}
+
+export interface SyncTexSource {
+  file: string;
+  line: number;
+  column: number;
+}
+
 export interface OmoebaAPI {
   getConfig(): Promise<Config>;
   saveConfig(config: Config): Promise<Config>;
@@ -575,4 +622,16 @@ export interface OmoebaAPI {
    * are opened with their default app ("other").
    */
   followFileLink(fromFile: string, href: string): Promise<{ path: string; kind: 'file' | 'folder' | 'other' }>;
+
+  // --- LaTeX (latexmk, SyncTeX)
+  /** The document a .tex file belongs to (its main file, PDF, latexmkrc). */
+  latexInfo(file: string): Promise<LatexInfo>;
+  /** Compile the document `file` belongs to; `useRc`: use the folder's latexmkrc file. */
+  compileLatex(file: string, useRc: boolean): Promise<LatexResult>;
+  /** A PDF compiled from LaTeX (or one in an opened folder). */
+  readPdfFile(pdf: string): Promise<Uint8Array>;
+  /** Where a line of a .tex file is in the document's PDF (null if SyncTeX does not know). */
+  synctexForward(texFile: string, line: number, column: number): Promise<(SyncTexPosition & { pdf: string }) | null>;
+  /** The source line at a point of a PDF page (PDF points from the page's top left). */
+  synctexBackward(pdf: string, page: number, x: number, y: number): Promise<SyncTexSource | null>;
 }

@@ -157,7 +157,26 @@ export function createCodeEditor(opts: {
   label: string;
   /** Called when the text is edited (not when it is replaced with replaceText). */
   onEdit: () => void;
+  /** ⌘-click (Ctrl-click elsewhere) on a line (1-based) and column; ⌥-click then adds a cursor. */
+  onModClick?: (line: number, column: number) => void;
 }): EditorView {
+  const mac = /Mac/.test(navigator.platform);
+  const modClick: Extension[] = opts.onModClick
+    ? [
+        EditorView.clickAddsSelectionRange.of((e) => e.altKey),
+        EditorView.domEventHandlers({
+          mousedown(e, view) {
+            if (e.button !== 0 || !(mac ? e.metaKey : e.ctrlKey) || e.altKey || e.shiftKey) return false;
+            const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+            if (pos === null) return false;
+            const line = view.state.doc.lineAt(pos);
+            e.preventDefault();
+            opts.onModClick!(line.number, pos - line.from);
+            return true;
+          },
+        }),
+      ]
+    : [];
   const lang: Extension[] =
     opts.language === 'markdown'
       ? [markdown({ base: markdownLanguage, extensions: [MathSyntax] }), syntaxHighlighting(markdownStyle)]
@@ -177,6 +196,7 @@ export function createCodeEditor(opts: {
         EditorState.tabSize.of(4),
         theme,
         ...lang,
+        ...modClick,
         EditorView.contentAttributes.of({ spellcheck: opts.language === 'markdown' ? 'true' : 'false', 'aria-label': opts.label }),
         EditorView.updateListener.of((u) => {
           if (u.docChanged && !u.transactions.some((tr) => tr.annotation(External))) opts.onEdit();

@@ -60,4 +60,9 @@ export const API_METHODS: (keyof OmoebaAPI)[] = [
   'revealFile',
   'openWithDefaultApp',
   'followFileLink',
+  'latexInfo',
+  'compileLatex',
+  'readPdfFile',
+  'synctexForward',
+  'synctexBackward',
 ];

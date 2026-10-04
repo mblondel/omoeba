@@ -24,7 +24,11 @@ import type {
   OmoebaAPI,
   OmoebaEvent,
   FileEntry,
+  LatexInfo,
+  LatexResult,
   RecentItems,
+  SyncTexPosition,
+  SyncTexSource,
   TextFile,
   TextWriteResult,
   PaperDetail,
@@ -83,7 +87,8 @@ import {
   writeNewFile,
 } from './syntheses';
 import { downloadPdf, uniquePath, writeFileAtomic } from './download';
-import { RecentStore, createTextFile, isEditable, linkTarget, listFolder, readTextFile, writeTextFile } from './textfiles';
+import { RecentStore, createTextFile, insideRoots, isEditable, linkTarget, listFolder, readTextFile, writeTextFile } from './textfiles';
+import * as latex from './latex';
 import { fileNameForTitle, matchLibrary, parseRelated, pdfCandidates, relatedPrompt } from './related';
 import {
   arxivIdOf,
@@ -677,6 +682,34 @@ export class OmoebaService implements OmoebaAPI {
 
   readonly recent = new RecentStore(cfg.recentPath());
 
+  /** Folders of LaTeX documents compiled (their files may be opened, e.g. from an error or the PDF). */
+  private latexDirs = new Set<string>();
+
+  /** `p` if it may be read or written: opened (or in a folder opened), or part of a document compiled. */
+  private async allowed(p: string): Promise<string> {
+    try {
+      return await this.recent.allows(p);
+    } catch (e) {
+      if (this.latexDirs.size) {
+        try {
+          return await insideRoots(p, [...this.latexDirs]);
+        } catch {
+          /* no */
+        }
+      }
+      // The PDF of a .tex file opened.
+      if (typeof p === 'string' && /\.pdf$/i.test(p)) {
+        try {
+          await this.recent.allows(p.replace(/\.pdf$/i, '.tex'));
+          return path.resolve(p);
+        } catch {
+          /* no */
+        }
+      }
+      throw e;
+    }
+  }
+
   private recentChanged<T>(r: T): T {
     this.platform.emit({ type: 'recent-changed' });
     return r;
@@ -703,7 +736,7 @@ export class OmoebaService implements OmoebaAPI {
   }
 
   async noteFileOpened(file: string): Promise<void> {
-    const p = await this.recent.allows(file);
+    const p = await this.allowed(file);
     if ((await this.recent.list()).files[0] !== p) this.recentChanged(await this.recent.add('files', p));
   }
 
@@ -712,28 +745,28 @@ export class OmoebaService implements OmoebaAPI {
   }
 
   async listFolder(dir: string): Promise<FileEntry[]> {
-    return listFolder(await this.recent.allows(dir));
+    return listFolder(await this.allowed(dir));
   }
 
   async readTextFile(file: string): Promise<TextFile> {
-    return readTextFile(await this.recent.allows(file));
+    return readTextFile(await this.allowed(file));
   }
 
   async writeTextFile(file: string, text: string, expectedMtime: number | null): Promise<TextWriteResult> {
     if (typeof text !== 'string') throw new Error('Nothing to save.');
-    return writeTextFile(await this.recent.allows(file), text, expectedMtime);
+    return writeTextFile(await this.allowed(file), text, expectedMtime);
   }
 
   async createTextFile(dir: string, name: string): Promise<string> {
-    return createTextFile(await this.recent.allows(dir), name);
+    return createTextFile(await this.allowed(dir), name);
   }
 
   async revealFile(file: string): Promise<void> {
-    await this.platform.revealInFolder(await this.recent.allows(file));
+    await this.platform.revealInFolder(await this.allowed(file));
   }
 
   async followFileLink(fromFile: string, href: string): Promise<{ path: string; kind: 'file' | 'folder' | 'other' }> {
-    const from = await this.recent.allows(fromFile);
+    const from = await this.allowed(fromFile);
     const target = linkTarget(path.dirname(from), href);
     const st = await fs.stat(target).catch(() => null);
     if (!st) throw new Error(`${path.basename(target)} was not found in ${path.dirname(target)}.`);
@@ -750,8 +783,39 @@ export class OmoebaService implements OmoebaAPI {
     return { path: target, kind: 'other' };
   }
 
+  // --- LaTeX ------------------------------------------------------------------------
+
+  async latexInfo(file: string): Promise<LatexInfo> {
+    const info = await latex.latexInfo(await this.allowed(file));
+    this.latexDirs.add(path.dirname(info.root));
+    return info;
+  }
+
+  async compileLatex(file: string, useRc: boolean): Promise<LatexResult> {
+    return latex.compileLatex(await this.latexInfo(file), !!useRc);
+  }
+
+  async readPdfFile(pdf: string): Promise<Uint8Array> {
+    const p = await this.allowed(pdf);
+    if (path.extname(p).toLowerCase() !== '.pdf') throw new Error('Not a PDF file.');
+    return new Uint8Array(await fs.readFile(p));
+  }
+
+  async synctexForward(texFile: string, line: number, column: number): Promise<(SyncTexPosition & { pdf: string }) | null> {
+    const p = await this.allowed(texFile);
+    const info = await this.latexInfo(p);
+    const pos = await latex.synctexForward(info.pdf, p, Math.max(1, Math.floor(line)), Math.max(0, Math.floor(column)));
+    return pos ? { ...pos, pdf: info.pdf } : null;
+  }
+
+  async synctexBackward(pdf: string, page: number, x: number, y: number): Promise<SyncTexSource | null> {
+    const p = await this.allowed(pdf);
+    this.latexDirs.add(path.dirname(p));
+    return latex.synctexBackward(p, Math.max(1, Math.floor(page)), Number(x) || 0, Number(y) || 0);
+  }
+
   async openWithDefaultApp(file: string): Promise<void> {
-    const p = await this.recent.allows(file);
+    const p = await this.allowed(file);
     if (!this.platform.openPath) throw new Error('Files cannot be opened with other apps here.');
     await this.platform.openPath(p);
   }

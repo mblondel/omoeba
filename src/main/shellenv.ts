@@ -30,6 +30,8 @@ export function userPath(): string {
   const home = os.homedir();
   parts.push(
     '/opt/homebrew/bin',
+    // MacTeX (latexmk, synctex).
+    '/Library/TeX/texbin',
     '/usr/local/bin',
     path.join(home, '.local/bin'),
     path.join(home, '.npm-global/bin'),
