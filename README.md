@@ -14,16 +14,11 @@
 
 - Manage a local library of PDFs.
 - PDF annotations (compatible with Skim).
-- Markdown notes.
-- Tags.
-- File editor for .md, .tex and .bib files (File › Open File… / Open Folder…), with a live Markdown preview side by side.
-- LaTeX: compile with latexmk (⌘B), errors and warnings linked to the source, SyncTeX (⌘-click from the source to the PDF and back). Requires MacTeX or TeX Live.
-- Citations in Markdown notes ([@key], Pandoc syntax): each paper has a unique key; in the preview, citations show author–year and open the paper.
-- Citations while writing LaTeX: \cite{… lists the .bib entries, ⇧⌘L the library's papers; their BibTeX entry (from DBLP) is saved in the .json file and added to the document's .bib file.
+- Markdown & LaTeX editing.
+- Citations.
 - AI: ask questions, summaries, tagging, related work, audio, ...
 - Metadata are stored in a .json file along the .pdf file.
 - Easy to sync via gdrive or git.
-- Markdown and LaTeX file editor.
 
 ## Getting started
 
