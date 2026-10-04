@@ -151,7 +151,7 @@ function renderTabButton(tab: Tab) {
   tab.button.title = tab.title;
   const tabIcon = tab.kind === 'library' ? h('img', { class: 'apptab-logo', src: 'logo-mark.svg', alt: '' }) : icon(TAB_ICON[tab.kind], 13);
   tab.button.append(tabIcon, h('span', { class: 'apptab-title' }, tab.kind === 'library' ? 'Library' : tab.title));
-  if (tab.kind !== 'library') {
+  {
     tab.button.append(
       h(
         'span',
@@ -170,8 +170,31 @@ function renderTabButton(tab: Tab) {
   }
 }
 
+/** Shown when every tab is closed. */
+const home = h(
+  'div',
+  { class: 'tab-panel empty-home', hidden: true },
+  h('img', { class: 'empty-home-logo', src: 'logo-mark.svg', alt: '' }),
+  h(
+    'div',
+    { class: 'empty-home-actions' },
+    h('button', { class: 'btn', onclick: () => openTab('library') }, icon('list'), 'Library', h('span', { class: 'muted small' }, api.platform === 'darwin' ? '⌘L' : 'Ctrl+L')),
+    h('button', { class: 'btn', onclick: () => openFileFromDialog() }, icon('text'), 'Open File…', h('span', { class: 'muted small' }, api.platform === 'darwin' ? '⌘O' : 'Ctrl+O')),
+    h('button', { class: 'btn', onclick: () => openFolderFromDialog() }, icon('folder'), 'Open Folder…', h('span', { class: 'muted small' }, api.platform === 'darwin' ? '⇧⌘O' : 'Ctrl+Shift+O')),
+  ),
+);
+
+function showHome() {
+  active = null;
+  home.hidden = false;
+  document.title = 'Omoeba';
+  api.setMenuState?.({ canCloseTab: false });
+  saveSession();
+}
+
 function activate(tab: Tab) {
   if (active === tab) return;
+  home.hidden = true;
   if (active) {
     // Keyboard focus does not stay in the tab being hidden (keys would go to it).
     if (document.activeElement instanceof HTMLElement && active.panel.contains(document.activeElement)) document.activeElement.blur();
@@ -187,7 +210,7 @@ function activate(tab: Tab) {
   if (!tab.handle) mountTab(tab);
   else tab.handle.onShow?.();
   document.title = tab.kind === 'library' ? 'Omoeba' : `${tab.title} — Omoeba`;
-  api.setMenuState?.({ canCloseTab: tab.kind !== 'library' });
+  api.setMenuState?.({ canCloseTab: true });
   saveSession();
 }
 
@@ -211,7 +234,7 @@ function openTab(
       role: 'tab',
       tabIndex: 0,
       onmousedown: (e: MouseEvent) => {
-        if (e.button === 1 && kind !== 'library') {
+        if (e.button === 1) {
           e.preventDefault();
           closeTab(tab!);
         }
@@ -231,8 +254,8 @@ function openTab(
       handle: null,
       initialPage: opts.page,
     };
-    // New tabs open right after the current one (the Library stays first).
-    const idx = active && active.kind !== 'library' ? tabs.indexOf(active) + 1 : tabs.length;
+    // New tabs open right after the current one; the Library, when opened again, first.
+    const idx = kind === 'library' ? 0 : active && active.kind !== 'library' ? tabs.indexOf(active) + 1 : tabs.length;
     tabs.splice(idx, 0, tab);
     tabbar.insertBefore(button, tabs[idx + 1]?.button ?? null);
     panels.append(panel);
@@ -259,7 +282,6 @@ function tabTitle(kind: TabKind, opts: { query?: string; title?: string; file?: 
 }
 
 function closeTab(tab: Tab, force = false) {
-  if (tab.kind === 'library') return;
   if (!force && tab.handle?.canClose) {
     Promise.resolve(tab.handle.canClose()).then(
       (ok) => ok && closeTab(tab, true),
@@ -279,7 +301,9 @@ function closeTab(tab: Tab, force = false) {
   tab.panel.remove();
   if (active === tab) {
     active = null;
-    activate(tabs[Math.min(i, tabs.length - 1)] ?? tabs[0]);
+    const next = tabs[Math.min(i, tabs.length - 1)];
+    if (next) activate(next);
+    else showHome();
   } else saveSession();
 }
 
@@ -303,14 +327,17 @@ function saveSession() {
     localStorage.setItem(
       'omoeba.tabs',
       JSON.stringify({
+        // (Before the Library could be closed, it was not listed: it was always open.)
+        withLibrary: true,
         tabs: tabs
-          .filter((t) => t.kind !== 'library')
           // (A synthesis still being made is not restored: it is saved, and listed, when done.)
           .filter((t) => t.kind !== 'synthesis' || t.file)
           .map((t) =>
             t.kind === 'search'
               ? { kind: t.kind, query: t.query, title: t.title }
-              : t.kind === 'synthesis'
+              : t.kind === 'library'
+                ? { kind: t.kind }
+                : t.kind === 'synthesis'
                 ? { kind: t.kind, file: t.file, title: t.title }
                 : t.kind === 'file' || t.kind === 'folder'
                   ? { kind: t.kind, file: t.file }
@@ -325,23 +352,29 @@ function saveSession() {
 }
 
 function restoreSession() {
-  let saved: { tabs: { kind: TabKind; paperId?: string; query?: string; title?: string; file?: string }[]; active?: string } | null = null;
+  let saved: {
+    withLibrary?: boolean;
+    tabs: { kind: TabKind; paperId?: string; query?: string; title?: string; file?: string }[];
+    active?: string;
+  } | null = null;
   try {
     saved = JSON.parse(localStorage.getItem('omoeba.tabs') || 'null');
   } catch {
     saved = null;
   }
   restoring = true;
+  // The Library is open unless it was closed.
+  if (!saved?.withLibrary) openTab('library', undefined, { background: true });
   for (const t of saved?.tabs ?? []) {
-    if (['paper', 'read', 'settings', 'duplicates', 'recent', 'syntheses'].includes(t.kind)) openTab(t.kind, t.paperId, { background: true });
+    if (['library', 'paper', 'read', 'settings', 'duplicates', 'recent', 'syntheses'].includes(t.kind)) openTab(t.kind, t.paperId, { background: true });
     else if ((t.kind === 'file' || t.kind === 'folder') && typeof t.file === 'string') openTab(t.kind, undefined, { background: true, file: t.file });
     else if (t.kind === 'synthesis' && typeof t.file === 'string') openTab('synthesis', undefined, { background: true, file: t.file, title: t.title });
     else if (t.kind === 'search' && typeof t.query === 'string') openTab('search', undefined, { background: true, query: t.query, title: t.title });
   }
   const want = tabs.find((t) => t.key === saved?.active) ?? tabs[0];
-  activate(want);
   restoring = false;
-  saveSession();
+  if (want) activate(want);
+  else showHome();
 }
 
 // --- Navigation API used by the views (kept as hash-like routes).
@@ -521,8 +554,7 @@ function startTabs() {
   setupCleanup = null;
   clear(root);
   root.append(h('div', { class: 'app-shell' }, tabbar, panels));
-  restoring = true;
-  openTab('library', undefined, { background: true });
+  panels.append(home);
   restoreSession();
 }
 
@@ -582,7 +614,7 @@ window.addEventListener(
   (e) => {
     const mod = api.platform === 'darwin' ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
     if (!mod || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'w') return;
-    if (!active || active.kind === 'library' || !api.setMenuState) return;
+    if (!active || !api.setMenuState) return;
     e.preventDefault();
     e.stopPropagation();
     closeTab(active);
@@ -596,7 +628,7 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     cycleTab(e.shiftKey ? -1 : 1);
   } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key) && tabs.length) {
-    // ⌘1 = Library, ⌘2… = following tabs, ⌘9 = last tab.
+    // ⌘1… = tabs in order, ⌘9 = last tab.
     e.preventDefault();
     const n = Number(e.key);
     activate(n === 9 ? tabs[tabs.length - 1] : tabs[Math.min(n, tabs.length) - 1]);

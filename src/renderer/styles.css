@@ -2484,3 +2484,33 @@ table.syntheses[hidden],
   line-height: 1.65;
 }
 
+
+/* Shown when every tab is closed */
+.empty-home {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+}
+.empty-home[hidden] {
+  display: none;
+}
+.empty-home-logo {
+  width: 72px;
+  height: 72px;
+  opacity: 0.85;
+}
+.empty-home-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 220px;
+}
+.empty-home-actions .btn {
+  justify-content: flex-start;
+  gap: 8px;
+}
+.empty-home-actions .btn .muted {
+  margin-left: auto;
+}
