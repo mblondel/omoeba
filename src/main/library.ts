@@ -296,6 +296,50 @@ export function removeSidecar(jsonPath: string, remove: (p: string) => Promise<v
   });
 }
 
+/** Whether two paths are the same file (e.g. differing only in case, on macOS). */
+async function sameFile(a: string, b: string): Promise<boolean> {
+  const [x, y] = await Promise.all([fs.stat(a).catch(() => null), fs.stat(b).catch(() => null)]);
+  return !!x && !!y && x.dev === y.dev && x.ino === y.ino;
+}
+
+/**
+ * Rename a PDF and the files that go with it (.json, .skim, .m4a), all or none: nothing is
+ * renamed if a file with a new name exists already, and the renames done are undone if one fails.
+ * Writes to the sidecar in progress finish first.
+ */
+export async function renamePaperFiles(pdfPath: string, newPdfPath: string): Promise<void> {
+  const pairs: [string, string][] = [
+    [pdfPath, newPdfPath],
+    [jsonPathOf(pdfPath), jsonPathOf(newPdfPath)],
+    [skimPathOf(pdfPath), skimPathOf(newPdfPath)],
+    [audioPathOf(pdfPath), audioPathOf(newPdfPath)],
+  ];
+  return withLock(jsonPathOf(pdfPath), () =>
+    withLock(jsonPathOf(newPdfPath), async () => {
+      if (!(await fs.stat(pdfPath).catch(() => null))?.isFile()) throw new Error('The PDF is no longer there.');
+      const todo: [string, string][] = [];
+      for (const [from, to] of pairs) {
+        if (!(await fs.stat(from).catch(() => null))) continue;
+        // Taken by another file (the same file under another case is fine: a change of case).
+        if ((await fs.stat(to).catch(() => null)) && !(await sameFile(from, to))) {
+          throw new Error(`${path.basename(to)} already exists in this folder.`);
+        }
+        todo.push([from, to]);
+      }
+      const done: [string, string][] = [];
+      try {
+        for (const [from, to] of todo) {
+          await fs.rename(from, to);
+          done.push([from, to]);
+        }
+      } catch (e) {
+        for (const [from, to] of done.reverse()) await fs.rename(to, from).catch(() => undefined);
+        throw e;
+      }
+    }),
+  );
+}
+
 async function writeTextAtomic(file: string, text: string): Promise<void> {
   const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
   await fs.writeFile(tmp, text);

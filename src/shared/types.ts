@@ -600,6 +600,8 @@ export interface OmoebaAPI {
    * copy of the PDF is in the library.
    */
   trashDuplicate(id: string): Promise<void>;
+  /** Rename a paper's PDF (in its folder) with its .json, .skim and audio files; returns its new id. */
+  renamePaper(id: string, newName: string): Promise<string>;
 
   loadAnnotations(id: string): Promise<AnnotationSources>;
   saveAnnotations(id: string, annotations: Annotation[]): Promise<void>;

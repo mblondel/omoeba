@@ -4,6 +4,7 @@
  * driven by Electron IPC (main.ts) or by the development bridge used in tests.
  */
 import { promises as fs, watch } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type {
   AIDetectResult,
@@ -55,12 +56,13 @@ import {
   audioPathOf,
   updateSidecar,
   removeSidecar,
+  renamePaperFiles,
 } from './library';
 import { loadAnnotationSources, saveAnnotationsBoth, skimMtimeOf } from './annostore';
 import { SKIM_CHANGED } from '../shared/annotations';
 import { HashCache, findIdenticalFiles, otherCopyOf } from './duplicates';
 import { ReadingHistory, type LiveFile } from './history';
-import { extractPdf } from './pdftext';
+import { extractPdf, plausibleTitle } from './pdftext';
 import {
   askPrompt,
   cancelAI as cancelAIJob,
@@ -87,14 +89,16 @@ import {
   synthesesDir,
   synthesisFileName,
   writeNewFile,
+  renamePaperInSyntheses,
 } from './syntheses';
+import { cleanPdfStem } from '../shared/filenames';
 import { downloadPdf, uniquePath, writeFileAtomic } from './download';
 import { RecentStore, createTextFile, insideRoots, isEditable, linkTarget, listFolder, readTextFile, writeTextFile } from './textfiles';
 import * as latex from './latex';
 import { assistPrompt, parseAssistReply, type AssistResult, type AssistTurn } from '../shared/assist';
 import { Conversations } from './conversations';
 import { appendBibEntry, bibField, bibliographyFiles, fetchDblpBibtex, findBibEntry, freeKey, freeKeyAmong, makeCiteKey, parseBibFile, setBibKey, titleSimilarity } from './cite';
-import { fileNameForTitle, matchLibrary, parseRelated, pdfCandidates, relatedPrompt } from './related';
+import { arxivTitle, fileNameForTitle, matchLibrary, parseRelated, pdfCandidates, relatedPrompt, uninformativeFileName } from './related';
 import {
   arxivIdOf,
   arxivStampOf,
@@ -529,12 +533,42 @@ export class OmoebaService implements OmoebaAPI {
     const dir = path.resolve(folder || this.config.folders[0] || '');
     if (!this.inLibrary(dir)) throw new Error('Choose a folder inside your library to download into.');
     if (!(await fs.stat(dir).catch(() => null))?.isDirectory()) throw new Error('That folder does not exist anymore.');
-    const { data, fileName } = await downloadPdf(url);
-    const pdfPath = await uniquePath(dir, fileName);
+    const { data, fileName, finalUrl } = await downloadPdf(url);
+    const named = await this.downloadName(url, finalUrl, fileName, data);
+    const pdfPath = await uniquePath(dir, named.fileName);
     await writeFileAtomic(pdfPath, data);
-    await updateSidecar(jsonPathOf(pdfPath), { source: { url, downloadedAt: new Date().toISOString() } });
+    await updateSidecar(jsonPathOf(pdfPath), {
+      source: { url, downloadedAt: new Date().toISOString() },
+      ...(named.title ? { title: named.title } : {}),
+    });
     this.newFiles(pdfPath);
     return this.getPaper(pdfPath);
+  }
+
+  /**
+   * The name of a downloaded PDF: from the paper's title (short) for arXiv papers, and for files
+   * whose name says nothing about the paper; otherwise the name it was served with. The title is
+   * arXiv's (also recorded), or the one in the PDF's own metadata.
+   */
+  private async downloadName(url: string, finalUrl: string, fileName: string, data: Buffer): Promise<{ fileName: string; title?: string }> {
+    const arxiv = arxivIdOf(url) ?? arxivIdOf(finalUrl);
+    if (!arxiv && !uninformativeFileName(fileName)) return { fileName };
+    if (arxiv) {
+      const title = await arxivTitle(arxiv.id).catch(() => null);
+      if (title) return { fileName: fileNameForTitle(title), title };
+    }
+    // The title in the PDF itself (read from a temporary copy).
+    const tmp = path.join(os.tmpdir(), `omoeba-download-${process.pid}-${Date.now()}.pdf`);
+    try {
+      await fs.writeFile(tmp, data);
+      const t = (await extractPdf(tmp, 1, 2000)).info.title;
+      if (plausibleTitle(t)) return { fileName: fileNameForTitle(t) };
+    } catch {
+      /* the name it came with */
+    } finally {
+      await fs.rm(tmp, { force: true });
+    }
+    return { fileName };
   }
 
   // --- Syntheses (several papers summarized together) ---------------------------
@@ -1008,11 +1042,53 @@ export class OmoebaService implements OmoebaAPI {
   /** PDFs moved to the Trash here (a view still open on one must not re-create its files). */
   private trashed = new Set<string>();
 
-  /** A paper moved to the Trash (and not put back) cannot be written to. */
+  /** PDFs renamed here: old path → new path (a view still open on the old name must not re-create its files). */
+  private renamedTo = new Map<string, string>();
+
+  /** A paper moved to the Trash or renamed (and not put back) cannot be written to. */
   private async checkNotTrashed(pdfPath: string) {
-    if (this.trashed.has(pdfPath) && !(await fs.stat(pdfPath).catch(() => null))) {
-      throw new Error('This paper was moved to the Trash.');
+    if ((this.trashed.has(pdfPath) || this.renamedTo.has(pdfPath)) && !(await fs.stat(pdfPath).catch(() => null))) {
+      const to = this.renamedTo.get(pdfPath);
+      throw new Error(to ? `This paper was renamed to ${path.basename(to)}.` : 'This paper was moved to the Trash.');
     }
+  }
+
+  /** Operations on one paper's files, one after the other (e.g. saving annotations, then renaming). */
+  private paperOps = new Map<string, Promise<unknown>>();
+  private serially<T>(pdfPath: string, fn: () => Promise<T>): Promise<T> {
+    const run = (this.paperOps.get(pdfPath) ?? Promise.resolve()).catch(() => undefined).then(fn);
+    this.paperOps.set(pdfPath, run);
+    run.finally(() => this.paperOps.get(pdfPath) === run && this.paperOps.delete(pdfPath)).catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * Rename a paper's PDF (within its folder) with its .json, .skim and audio files. Returns the
+   * paper's new id. Its reading history and the syntheses listing it follow.
+   */
+  async renamePaper(id: string, newName: string): Promise<string> {
+    const pdfPath = this.checkId(id);
+    return this.serially(pdfPath, async () => {
+      await this.checkNotTrashed(pdfPath);
+      const target = this.checkId(path.join(path.dirname(pdfPath), cleanPdfStem(newName) + '.pdf'));
+      if (target === pdfPath) return pdfPath;
+      // (No sidecar or job in flight for the new name: it is a new paper id.)
+      await renamePaperFiles(pdfPath, target);
+      this.renamedTo.set(pdfPath, target);
+      this.renamedTo.delete(target);
+      this.trashed.delete(target);
+      const seen = this.skimSeen.get(pdfPath);
+      this.skimSeen.delete(pdfPath);
+      if (seen !== undefined) this.skimSeen.set(target, seen);
+      this.history.renamed(pdfPath, target);
+      const sc = await readSidecar(jsonPathOf(target));
+      // The audio summary names its file.
+      if (sc.audioSummary?.file) await updateSidecar(jsonPathOf(target), { audioSummary: { ...sc.audioSummary, file: path.basename(audioPathOf(target)) } } as Partial<Sidecar>);
+      await renamePaperInSyntheses(this.config.folders, pdfPath, target).catch((e) => console.error('Syntheses not updated after a rename:', e));
+      if (this.index.available) this.index.refresh([pdfPath, target], 0);
+      else this.platform.emit({ type: 'library-changed' });
+      return target;
+    });
   }
 
   /**
@@ -1112,6 +1188,11 @@ export class OmoebaService implements OmoebaAPI {
    */
   async saveAnnotations(id: string, annotations: Annotation[]): Promise<void> {
     const pdfPath = this.checkId(id);
+    // (After a save already asked for, before a rename asked for later.)
+    return this.serially(pdfPath, () => this.saveAnnotationsNow(pdfPath, annotations));
+  }
+
+  private async saveAnnotationsNow(pdfPath: string, annotations: Annotation[]): Promise<void> {
     await this.checkNotTrashed(pdfPath);
     if (this.config.saveSkim && this.skimSeen.has(pdfPath)) {
       if ((await skimMtimeOf(pdfPath)) !== this.skimSeen.get(pdfPath)) {

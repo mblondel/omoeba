@@ -3,7 +3,8 @@ import type { AIProvider, Config, FigureRef, JobStep, PaperDetail, RelatedPaper,
 import { api, newJobId } from '../api';
 import { clear, confirmDialog, errorMessage, formatAuthors, h, icon, iconButton, toast, tagColor, setTagPalette } from '../dom';
 import { mountMarkdown } from '../markdown';
-import { navigate, refreshConfig, isActiveView, openSearchTab } from '../app';
+import { closePaperTabs, navigate, refreshConfig, isActiveView, openSearchTab } from '../app';
+import { fileStemForTitle } from '../../shared/filenames';
 import { authorQuery, institutionQuery, tagQuery } from '../authors';
 import { loadDocument, type PDFDocumentProxy } from '../pdfjs';
 import { locateFigure, renderFigureRef } from '../figures';
@@ -245,6 +246,94 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     return display;
   }
 
+  /**
+   * The PDF's name, which can be changed (its .json, .skim and audio files follow): click it,
+   * type, ⏎ to rename, Esc to cancel.
+   */
+  function fileNameField(p: PaperDetail): HTMLElement {
+    const ext = /\.pdf$/i.exec(p.fileName)?.[0] ?? '.pdf';
+    const stem = p.fileName.slice(0, p.fileName.length - ext.length);
+    const wrap = h('span', { class: 'paper-file mono small', title: p.pdfPath });
+    const folder = () => h('span', { class: 'paper-file-folder' }, p.folder + '/');
+    const show = () =>
+      wrap.replaceChildren(
+        folder(),
+        h(
+          'span',
+          {
+            class: 'paper-file-name',
+            tabIndex: 0,
+            title: 'Click to rename the PDF (its .json and .skim files are renamed with it)',
+            onclick: edit,
+            onkeydown: (e: KeyboardEvent) => e.key === 'Enter' && edit(),
+          },
+          stem,
+        ),
+        ext,
+      );
+    function edit() {
+      const input = h('input', { type: 'text', class: 'paper-file-input mono', spellcheck: false });
+      input.value = stem;
+      input.size = Math.max(24, Math.min(70, stem.length + 2));
+      let busy = false;
+      const commit = async () => {
+        const v = input.value.trim().replace(/\.pdf$/i, '');
+        if (!v || v === stem) return show();
+        busy = true;
+        input.disabled = true;
+        try {
+          await renameFile(v);
+        } catch (e) {
+          toast(errorMessage(e), 'error', 8000);
+          busy = false;
+          input.disabled = false;
+          input.focus();
+        }
+      };
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commit();
+        } else if (e.key === 'Escape') show();
+      });
+      input.addEventListener('input', () => (input.size = Math.max(24, Math.min(70, input.value.length + 2))));
+      input.addEventListener('blur', () => !busy && show());
+      const title = (paper?.sidecar.title ?? p.title ?? '').trim();
+      const fromTitle = title
+        ? h(
+            'button',
+            {
+              class: 'btn small',
+              title: `A short name from the title: ${fileStemForTitle(title)}.pdf`,
+              // (Not blurring the field.)
+              onmousedown: (e: MouseEvent) => e.preventDefault(),
+              onclick: () => {
+                input.value = fileStemForTitle(title);
+                input.dispatchEvent(new Event('input'));
+                input.focus();
+              },
+            },
+            'Name from title',
+          )
+        : null;
+      wrap.replaceChildren(folder(), input, ext, fromTitle ?? '');
+      input.focus();
+      input.select();
+    }
+    show();
+    return wrap;
+  }
+
+  async function renameFile(name: string) {
+    // Readers open on it close first: they save their annotations under the current name.
+    closePaperTabs(id, 'read');
+    const newId = await api.renamePaper(id, name);
+    if (newId === id) return render();
+    toast(`Renamed to ${newId.split(/[\\/]/).pop()}`);
+    navigate(`#/paper/${encodeURIComponent(newId)}`);
+    closePaperTabs(id);
+  }
+
   /** A clickable name (author, institution) inside an editable field. */
   const nameLink = (text: string, title: string, onOpen: () => void) =>
     h(
@@ -395,7 +484,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
         'div',
         { class: 'paper-meta muted' },
         [sc.venue, sc.year ?? p.year].filter(Boolean).join(' · ') || null,
-        h('span', { class: 'mono small', title: p.pdfPath }, p.folder + '/' + p.fileName),
+        fileNameField(p),
       ),
       tagEditor(p),
       sourceRow(p),

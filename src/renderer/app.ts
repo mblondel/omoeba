@@ -481,8 +481,8 @@ export function openDuplicatesTab() {
 }
 
 /** Close the tabs showing a paper (e.g. before it is moved to the Trash). */
-export function closePaperTabs(paperId: string) {
-  for (const t of tabs.filter((t) => t.paperId === paperId)) closeTab(t);
+export function closePaperTabs(paperId: string, kind?: TabKind) {
+  for (const t of tabs.filter((t) => t.paperId === paperId && (!kind || t.kind === kind))) closeTab(t);
 }
 
 /** Open (or switch to) a tab listing the papers matching a search query. */

@@ -7,6 +7,7 @@
  * already in the library is decided when the list is shown, so it stays current as papers
  * are added.
  */
+import { fileStemForTitle } from '../shared/filenames';
 import type { RelatedPaper } from '../shared/types';
 import { arxivIdOf, halCandidates, openReviewCandidates } from './sourcefinder';
 import { paperTextBlock } from './ai';
@@ -211,18 +212,7 @@ export function matchLibrary(papers: RelatedPaper[], library: LibraryEntry[], se
 
 /** File name for a downloaded paper: its title in lowercase words joined by hyphens. */
 export function fileNameForTitle(title: string): string {
-  const words = title
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean);
-  let name = '';
-  for (const w of words) {
-    if (name && name.length + 1 + w.length > 60) break;
-    name = name ? `${name}-${w}` : w;
-  }
-  return (name || 'paper') + '.pdf';
+  return fileStemForTitle(title) + '.pdf';
 }
 
 /** Parse an arXiv API (Atom) response into [arXiv id, title] pairs. */
@@ -234,6 +224,27 @@ export function parseArxivFeed(xml: string): { id: string; title: string }[] {
     if (id && title) out.push({ id: id.replace(/v\d+$/, ''), title: title.replace(/\s+/g, ' ').trim() });
   }
   return out;
+}
+
+/** The title of an arXiv paper (arXiv API), or null if it cannot be had. */
+export async function arxivTitle(arxivId: string, timeoutMs = 10_000): Promise<string | null> {
+  const id = arxivId.replace(/v\d+$/, '');
+  const res = await fetch(`https://export.arxiv.org/api/query?id_list=${encodeURIComponent(id)}&max_results=1`, {
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: { 'User-Agent': 'Omoeba/0.1' },
+  });
+  if (!res.ok) return null;
+  return parseArxivFeed(await res.text()).find((e) => e.id === id)?.title ?? null;
+}
+
+/**
+ * Whether a downloaded file's name says nothing about the paper ("2605.07105v1.pdf",
+ * "document.pdf", "pdf?id=…"): it is then named after the paper's title.
+ */
+export function uninformativeFileName(fileName: string): boolean {
+  const stem = fileName.replace(/\.pdf$/i, '').toLowerCase();
+  const generic = new Set(['pdf', 'document', 'download', 'fulltext', 'full', 'file', 'paper', 'arxiv', 'abs', 'view', 'viewcontent', 'content', 'article', 'main', 'preprint']);
+  return !(stem.match(/[a-z]{3,}/g) ?? []).some((w) => !generic.has(w));
 }
 
 /** arXiv papers whose title is exactly this one (arXiv API title search). */

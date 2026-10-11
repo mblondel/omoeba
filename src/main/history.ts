@@ -71,6 +71,15 @@ export class ReadingHistory {
     this.changed();
   }
 
+  /** A PDF renamed here keeps its history. */
+  renamed(from: string, to: string): void {
+    const e = this.entries.get(from);
+    if (!e) return;
+    this.entries.delete(from);
+    this.entries.set(to, e);
+    this.changed();
+  }
+
   /**
    * Papers moved or renamed keep their history: an entry whose PDF is no longer in the library
    * goes to a PDF without history that has the same size and date (only when exactly one does).

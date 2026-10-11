@@ -100,6 +100,40 @@ export async function listSynthesisFiles(libraryFolders: string[]): Promise<Synt
 }
 
 /**
+ * A paper renamed: the syntheses listing it now point to its new name (only their metadata comment
+ * changes; the text is left as it is). Returns how many were updated.
+ */
+export async function renamePaperInSyntheses(libraryFolders: string[], from: string, to: string): Promise<number> {
+  let n = 0;
+  for (const root of libraryFolders) {
+    const dir = synthesesDir(root);
+    const names = await fs.readdir(dir).catch(() => [] as string[]);
+    for (const name of names) {
+      if (!name.endsWith('.md') || name.startsWith('.')) continue;
+      const file = path.join(dir, name);
+      const text = await fs.readFile(file, 'utf8').catch(() => null);
+      const parsed = text ? parseSynthesis(text) : null;
+      if (!text || !parsed) continue;
+      let changed = false;
+      for (const p of parsed.meta.papers) {
+        const abs = path.isAbsolute(p.path) ? p.path : path.resolve(root, ...p.path.split('/'));
+        if (abs !== from) continue;
+        p.path = path.isAbsolute(p.path) ? to : path.relative(path.resolve(root), to).split(path.sep).join('/');
+        changed = true;
+      }
+      if (!changed) continue;
+      const end = text.indexOf(CLOSE, OPEN.length);
+      const json = JSON.stringify(parsed.meta, null, 1).replace(/--/g, '-\\u002d');
+      const tmp = `${file}.tmp-${process.pid}`;
+      await fs.writeFile(tmp, OPEN + json + text.slice(end));
+      await fs.rename(tmp, file);
+      n++;
+    }
+  }
+  return n;
+}
+
+/**
  * The library folder holding a synthesis file (its Syntheses folder is directly inside), or null
  * if the file is not in one: only those files are read or shown.
  */
