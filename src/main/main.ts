@@ -279,6 +279,8 @@ function buildMenu() {
         { role: 'pasteAndMatchStyle' },
         { role: 'delete' },
         { role: 'selectAll' },
+        { type: 'separator' },
+        { label: 'Ask AI…', accelerator: 'CmdOrCtrl+K', click: send('ask-ai') },
       ],
     },
     {

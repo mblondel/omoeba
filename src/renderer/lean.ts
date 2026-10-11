@@ -4,6 +4,19 @@
  * only wrapped in spans and escaped).
  */
 
+/**
+ * Whether typing `ch` after the abbreviation `abbr` (\abbr) converts it first, as in Lean's
+ * editors: a space always does; other punctuation does unless the abbreviation goes on with it
+ * (\- then > for \->). Letters and digits never do, so that a longer name not in the table
+ * (\Rightarrow) is not cut short.
+ */
+export function leanConvertsBefore(abbr: string, ch: string): boolean {
+  if (ch === ' ') return true;
+  if (ch.length !== 1 || /[\p{L}\p{N}_]/u.test(ch)) return false;
+  const longer = abbr + ch;
+  return !Object.keys(LEAN_ABBREVIATIONS).some((k) => k.startsWith(longer));
+}
+
 /** Lean's input abbreviations (the most used ones). */
 export const LEAN_ABBREVIATIONS: Record<string, string> = {
   // Logic
@@ -26,9 +39,10 @@ export const LEAN_ABBREVIATIONS: Record<string, string> = {
   // Greek
   a: 'α', alpha: 'α', b: 'β', beta: 'β', g: 'γ', gamma: 'γ', delta: 'δ', e: 'ε', epsilon: 'ε', varepsilon: 'ε',
   zeta: 'ζ', eta: 'η', th: 'θ', theta: 'θ', iota: 'ι', k: 'κ', kappa: 'κ', lam: 'λ', lambda: 'λ', fun: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ',
-  pi: 'π', rho: 'ρ', s: 'σ', sigma: 'σ', tau: 'τ', phi: 'φ', varphi: 'ϕ', chi: 'χ', psi: 'ψ', w: 'ω', omega: 'ω',
+  omicron: 'ο', pi: 'π', varpi: 'ϖ', rho: 'ρ', varrho: 'ϱ', s: 'σ', sigma: 'σ', varsigma: 'ς', tau: 'τ', upsilon: 'υ', phi: 'φ', varphi: 'ϕ',
+  chi: 'χ', psi: 'ψ', w: 'ω', omega: 'ω', vartheta: 'ϑ', varkappa: 'ϰ',
   G: 'Γ', Gamma: 'Γ', D: 'Δ', Delta: 'Δ', Theta: 'Θ', L: 'Λ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π', S: 'Σ', Sigma: 'Σ',
-  Phi: 'Φ', Psi: 'Ψ', W: 'Ω', Omega: 'Ω',
+  Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', W: 'Ω', Omega: 'Ω',
   // Subscripts
   _0: '₀', _1: '₁', _2: '₂', _3: '₃', _4: '₄', _5: '₅', _6: '₆', _7: '₇', _8: '₈', _9: '₉', _i: 'ᵢ', _j: 'ⱼ', _n: 'ₙ', _k: 'ₖ',
 };

@@ -92,6 +92,9 @@ Other files open with their default app.
 Edits are saved automatically (and with ⌘S).
 If a file is changed on disk by another app, it is reloaded when it has no unsaved edits; otherwise the user chooses which version to keep.
 
+⌘K (Edit › Ask AI…) asks one of the authorized AIs about the file being edited, or about the selected text.
+The AI decides whether the request is a question or an operation on the file: a question is answered under the editor; an operation is applied as edits (only the passages that change), marked until kept, and undone in one step (Undo, or ⌘Z).
+
 ## LaTeX
 
 ⌘B (File › Compile LaTeX) compiles the document of the .tex file being edited, with latexmk (MacTeX / TeX Live).

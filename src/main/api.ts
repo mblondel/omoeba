@@ -90,6 +90,8 @@ import {
 import { downloadPdf, uniquePath, writeFileAtomic } from './download';
 import { RecentStore, createTextFile, insideRoots, isEditable, linkTarget, listFolder, readTextFile, writeTextFile } from './textfiles';
 import * as latex from './latex';
+import { assistPrompt, parseAssistReply, type AssistResult, type AssistTurn } from '../shared/assist';
+import { Conversations } from './conversations';
 import { appendBibEntry, bibField, bibliographyFiles, fetchDblpBibtex, findBibEntry, freeKey, freeKeyAmong, makeCiteKey, parseBibFile, setBibKey, titleSimilarity } from './cite';
 import { fileNameForTitle, matchLibrary, parseRelated, pdfCandidates, relatedPrompt } from './related';
 import {
@@ -939,6 +941,46 @@ export class OmoebaService implements OmoebaAPI {
     }
     if (Object.keys(patch).length) await this.updateSidecar(pdfPath, patch);
     return { key, bibFile, added, fetched };
+  }
+
+  // --- Asking an AI about a file (⌘K); conversations in ~/omoeba/conversations/ ----------
+  private conversations = new Conversations(cfg.conversationsDir());
+
+  async assistFile(file: string, aiId: string, request: string, text: string, selection: string | null, jobId?: string): Promise<AssistResult> {
+    const p = await this.allowed(file);
+    request = String(request ?? '').trim();
+    if (!request) throw new Error('Nothing was asked.');
+    const ai = this.aiFor(aiId);
+    const history = await this.conversations.get(p);
+    const at = new Date().toISOString();
+    const out = await runAI(ai, assistPrompt({ fileName: path.basename(p), text: String(text ?? ''), request, selection, history }), {
+      jobId,
+      onChunk: this.progress(jobId),
+    });
+    const reply = parseAssistReply(out);
+    const turn: AssistTurn = {
+      at,
+      ai: ai.name,
+      request,
+      selection: selection || null,
+      kind: reply.kind,
+      text: reply.kind === 'answer' ? reply.text : reply.summary || `${reply.edits.length} change${reply.edits.length > 1 ? 's' : ''} made`,
+    };
+    await this.conversations.append(p, turn).catch((e) => console.error('Cannot save the conversation:', e));
+    return { ...reply, turn };
+  }
+
+  async assistConversation(file: string): Promise<AssistTurn[]> {
+    return this.conversations.get(await this.allowed(file));
+  }
+
+  /** Change what a turn says was done (edits that could not be made, or were undone). */
+  async amendAssistTurn(file: string, at: string, text: string): Promise<AssistTurn[]> {
+    return this.conversations.amend(await this.allowed(file), String(at), String(text));
+  }
+
+  async clearAssistConversation(file: string): Promise<void> {
+    await this.conversations.clear(await this.allowed(file));
   }
 
   async openWithDefaultApp(file: string): Promise<void> {

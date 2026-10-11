@@ -18,6 +18,8 @@ export const thumbnailsPath = () => path.join(appDir(), 'thumbnails.cache');
 export const historyPath = () => path.join(appDir(), 'history.json');
 /** Files and folders opened in the file editor (File › Open Recent). */
 export const recentPath = () => path.join(appDir(), 'recent.json');
+/** Conversations with the AIs about files being edited (⌘K), one JSON file per file. */
+export const conversationsDir = () => path.join(appDir(), 'conversations');
 /** Empty working directory in which AI CLIs are run. */
 export const aiWorkDir = () => path.join(appDir(), 'ai-workdir');
 

@@ -16,6 +16,7 @@ import { isActiveView, navigate, openFileTab, openFolderTab, openPdfTab, type Vi
 import type { BibEntrySummary } from '../../shared/types';
 import { citedKeys } from '../citeformat';
 import { compileLatex } from '../latex';
+import { createAssist } from './assist';
 import { searchBib, searchLibrary } from '../citations';
 import { createCodeEditor, replaceText, type CodeLanguage } from '../codeeditor';
 import { choiceDialog, debounce, errorMessage, h, icon, toast } from '../dom';
@@ -116,7 +117,9 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
   const banner = h('div', { class: 'editor-banner', hidden: true });
   const wrap = h('div', { class: 'editor-wrap' }, pane);
   if (md) wrap.append(previewScroll);
-  root.append(h('div', { class: 'view editor-view' }, banner, wrap));
+  // Ask an AI about the file (⌘K).
+  const assist = createAssist(file, () => view);
+  root.append(h('div', { class: 'view editor-view' }, banner, wrap, assist.el));
 
   const dirty = () => !!view && text() !== savedText;
 
@@ -315,6 +318,7 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
     else if (action === 'redo') redo(view);
     else if (action === 'find') openSearchPanel(view);
     else if (action === 'compile' && (language === 'latex' || language === 'bibtex')) compileLatex(file);
+    else if (action === 'ask-ai') assist.open();
   };
   window.addEventListener('omoeba-menu', onMenu);
   const onFocus = () => isActiveView(root) && checkDisk();
@@ -334,6 +338,7 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
     autosave.flush();
     disposed = true;
     savers.delete(saveNow);
+    assist.dispose();
     window.removeEventListener('keydown', onKey);
     window.removeEventListener('omoeba-menu', onMenu);
     window.removeEventListener('focus', onFocus);

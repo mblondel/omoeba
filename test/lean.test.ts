@@ -1,7 +1,7 @@
 /** Lean in Markdown code blocks: syntax highlighting in the preview. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { highlightLean } from '../src/renderer/lean';
+import { LEAN_ABBREVIATIONS, highlightLean, leanConvertsBefore } from '../src/renderer/lean';
 
 const textOf = (html: string) => html.replace(/<[^>]*>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 
@@ -44,4 +44,18 @@ test('lean: the text is never changed; syntax is marked', () => {
   has('lean-sym', '⟨');
   has('lean-sym', ':=');
   assert.ok(html.includes("h'"), 'primes in names are not characters');
+});
+
+test('lean: abbreviations converted on a space or punctuation, as in Lean', () => {
+  assert.equal(LEAN_ABBREVIATIONS.alpha, 'α');
+  assert.equal(LEAN_ABBREVIATIONS.Gamma, 'Γ');
+  assert.equal(LEAN_ABBREVIATIONS.upsilon, 'υ');
+  assert.ok(leanConvertsBefore('alpha', ' '));
+  assert.ok(leanConvertsBefore('alpha', ')'), '(x : \\alpha)');
+  assert.ok(leanConvertsBefore('beta', ','));
+  assert.ok(!leanConvertsBefore('al', 'p'), 'letters go on with the abbreviation');
+  assert.ok(!leanConvertsBefore('R', 'i'), 'nor cut a longer name short');
+  assert.ok(!leanConvertsBefore('<', '='), '\\<= is still being typed');
+  assert.ok(!leanConvertsBefore('-', '>'));
+  assert.ok(leanConvertsBefore('->', ')'));
 });

@@ -277,6 +277,10 @@ a:hover {
   cursor: pointer;
   white-space: nowrap;
 }
+/* (Its display would otherwise win over the hidden attribute.) */
+.btn[hidden] {
+  display: none;
+}
 .btn:hover:not(:disabled) {
   background: var(--bg-soft);
 }
@@ -2710,4 +2714,151 @@ table.syntheses[hidden],
   font-weight: 600;
   text-decoration: underline wavy;
   text-decoration-thickness: 1px;
+}
+
+/* File editor: asking an AI (⌘K) */
+.assist {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 60%;
+  display: flex;
+  flex-direction: column;
+}
+.assist.expanded {
+  max-height: 85%;
+}
+.assist-bar,
+.assist-thread,
+.assist-review {
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  padding: 8px 14px;
+}
+.assist-bar,
+.assist-review {
+  flex: none;
+}
+.assist-bar[hidden],
+.assist-thread[hidden],
+.assist-review[hidden] {
+  display: none;
+}
+.assist-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+.assist-row > .icon,
+.assist-review > .icon {
+  color: var(--accent);
+  flex: none;
+}
+.assist-subject {
+  color: var(--fg-soft);
+  font-weight: 550;
+}
+.assist-ai {
+  height: 24px;
+  font-size: 12px;
+}
+textarea.assist-input {
+  width: 100%;
+  margin: 6px 0 4px;
+  resize: none;
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.45;
+  min-height: 34px;
+  max-height: 140px;
+}
+.assist-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The conversation: its header stays put, the exchanges scroll. */
+.assist-thread {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+.assist-thread > .assist-row {
+  flex: none;
+}
+.assist-question {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
+}
+.assist-expand {
+  display: contents;
+}
+.assist-thread-body {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 2px 8px 22px;
+}
+.assist-turn + .assist-turn {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+.assist-q {
+  margin: 4px 0 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg));
+  width: fit-content;
+  max-width: 100%;
+}
+.assist-q-text {
+  white-space: pre-wrap;
+  font-size: 13.5px;
+  font-weight: 550;
+}
+.assist-q-meta:empty {
+  display: none;
+}
+.assist-a {
+  position: relative;
+}
+.assist-a-body {
+  font-size: 14px;
+  line-height: 1.6;
+}
+.assist-a-tools {
+  position: absolute;
+  top: 0;
+  right: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.assist-a:hover > .assist-a-tools {
+  opacity: 1;
+}
+.assist-a-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-soft);
+}
+.assist-a-edit > .icon {
+  color: var(--ok);
+  flex: none;
+}
+.assist-review {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: color-mix(in srgb, var(--ok) 10%, var(--panel));
+}
+.assist-summary {
+  min-width: 0;
 }

@@ -66,6 +66,10 @@ export const API_METHODS: (keyof OmoebaAPI)[] = [
   'synctexForward',
   'synctexBackward',
   'citePaper',
+  'assistFile',
+  'assistConversation',
+  'amendAssistTurn',
+  'clearAssistConversation',
   'bibEntries',
   'resolveCitations',
 ];

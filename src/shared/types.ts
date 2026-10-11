@@ -528,6 +528,9 @@ export interface SyncTexSource {
   column: number;
 }
 
+export type { AssistReply, AssistEdit, AssistResult, AssistTurn } from './assist';
+import type { AssistResult, AssistTurn } from './assist';
+
 export interface OmoebaAPI {
   getConfig(): Promise<Config>;
   saveConfig(config: Config): Promise<Config>;
@@ -670,6 +673,16 @@ export interface OmoebaAPI {
    * none).
    */
   citePaper(id: string, texFile: string): Promise<{ key: string; bibFile: string | null; added: boolean; fetched: boolean }>;
+  /**
+   * Ask an AI about a file being edited (its text as in the editor, and the part selected): it
+   * answers, or gives edits to make (it decides which the request is).
+   */
+  /** Ask an AI about a file (it sees the file's earlier conversation); the exchange is saved. */
+  assistFile(file: string, aiId: string, request: string, text: string, selection: string | null, jobId?: string): Promise<AssistResult>;
+  /** A file's conversation with the AIs, oldest first. */
+  assistConversation(file: string): Promise<AssistTurn[]>;
+  amendAssistTurn(file: string, at: string, text: string): Promise<AssistTurn[]>;
+  clearAssistConversation(file: string): Promise<void>;
   /** The entries of the .bib files of the LaTeX document a .tex file belongs to. */
   bibEntries(file: string): Promise<BibEntrySummary[]>;
   /** The library papers with these citation keys (as a Markdown note cites them: [@key]). */

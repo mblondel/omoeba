@@ -5,7 +5,7 @@
 import { basicSetup } from 'codemirror';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { HighlightStyle, StreamLanguage, foldService, syntaxHighlighting, syntaxTree, type Language } from '@codemirror/language';
-import { LEAN_ABBREVIATIONS } from './lean';
+import { LEAN_ABBREVIATIONS, leanConvertsBefore } from './lean';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { Annotation, EditorState, Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
 import { completionStatus, startCompletion, type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
@@ -234,16 +234,57 @@ export function leanAbbreviationBefore(state: EditorState, pos: number): { from:
   return { from: pos - m[0].length, to: pos, symbol };
 }
 
-const leanAbbreviations = EditorView.inputHandler.of((view, from, to, text) => {
-  if (text !== ' ' || from !== to) return false;
+/** Typing a space or punctuation after an abbreviation converts it (\alpha then ) gives α)). */
+const leanAbbreviationTyped = EditorView.inputHandler.of((view, from, to, text) => {
+  if (from !== to) return false;
   const a = leanAbbreviationBefore(view.state, from);
-  if (!a) return false;
+  if (!a || !leanConvertsBefore(view.state.sliceDoc(a.from + 1, a.to), text)) return false;
   view.dispatch({
-    changes: { from: a.from, to: a.to, insert: a.symbol + ' ' },
-    selection: { anchor: a.from + a.symbol.length + 1 },
+    changes: { from: a.from, to: a.to, insert: a.symbol + text },
+    selection: { anchor: a.from + a.symbol.length + text.length },
     userEvent: 'input.type',
   });
   return true;
+});
+
+/** Convert the abbreviation before the cursor, if there is one (for Enter and Tab). */
+function convertLeanAbbreviation(view: EditorView): boolean {
+  const sel = view.state.selection.main;
+  if (!sel.empty) return false;
+  const a = leanAbbreviationBefore(view.state, sel.head);
+  if (!a) return false;
+  view.dispatch({ changes: { from: a.from, to: a.to, insert: a.symbol }, selection: { anchor: a.from + a.symbol.length }, userEvent: 'input.type' });
+  return true;
+}
+
+const leanAbbreviations = [
+  leanAbbreviationTyped,
+  Prec.high(
+    keymap.of([
+      // Enter: converted, then the new line as usual.
+      { key: 'Enter', run: (view) => (convertLeanAbbreviation(view), false) },
+      // Tab: converted (and nothing else); otherwise Tab as usual.
+      { key: 'Tab', run: convertLeanAbbreviation },
+    ]),
+  ),
+];
+
+// --- Changes made by an AI (⌘K), marked until kept or undone.
+
+export const setAIChanges = StateEffect.define<{ from: number; to: number }[]>();
+const aiChanges = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(set, tr) {
+    set = set.map(tr.changes);
+    for (const e of tr.effects)
+      if (e.is(setAIChanges))
+        set = Decoration.set(
+          e.value.filter((r) => r.to > r.from).map((r) => Decoration.mark({ class: 'cm-ai-change' }).range(r.from, r.to)),
+          true,
+        );
+    return set;
+  },
+  provide: (f) => EditorView.decorations.from(f),
 });
 
 // --- Colours
@@ -321,6 +362,7 @@ const theme = EditorView.theme({
   '.cm-completionDetail': { marginLeft: '8px', fontStyle: 'normal', opacity: '0.75', whiteSpace: 'nowrap' },
   '.cm-completionIcon': { display: 'none' },
   '.cm-cite-pending': { color: 'var(--muted)' },
+  '.cm-ai-change': { backgroundColor: 'color-mix(in srgb, var(--ok) 18%, transparent)', borderRadius: '2px' },
 });
 
 export function createCodeEditor(opts: {
@@ -374,6 +416,7 @@ export function createCodeEditor(opts: {
         theme,
         ...lang,
         ...modClick,
+        aiChanges,
         EditorView.contentAttributes.of({ spellcheck: opts.language === 'markdown' ? 'true' : 'false', 'aria-label': opts.label }),
         EditorView.updateListener.of((u) => {
           if (u.docChanged && !u.transactions.some((tr) => tr.annotation(External))) opts.onEdit();
