@@ -42,6 +42,16 @@ Only AIs with a command-line interface are used, and only those authorized in Se
 
 The prompt is sent on standard input, or in place of `{prompt}` when an argument contains it.
 
+## Syncing
+
+I personally sync PDFs using Google Drive.
+In Omoeba, each .pdf file has a corresponding .json file containing annotations.
+I also store these .json files in a git repository.
+
+```sh
+cd "~/My Drive/papers"
+git init --separate-git-dir ~/git/papers.git
+```
 
 ## Development
 
