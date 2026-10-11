@@ -4,6 +4,7 @@ import katex from 'katex';
 import { isFigureRef, type FigureRef, type SummaryImage } from '../shared/types';
 import { figureDisplaySize } from './figures';
 import { formatCitation, formatReferences, replaceCitations, type CiteEntry } from './citeformat';
+import { highlightLean } from './lean';
 
 const marked = new Marked({ gfm: true, breaks: false });
 
@@ -215,6 +216,10 @@ export function mountMarkdown(
   const tpl = document.createElement('template');
   tpl.innerHTML = renderMarkdown(src, opts);
   el.classList.add('markdown');
+  // Lean code blocks: syntax highlighting.
+  for (const code of tpl.content.querySelectorAll<HTMLElement>('pre > code.language-lean, pre > code.language-lean4')) {
+    code.innerHTML = highlightLean(code.textContent ?? '');
+  }
   // Figures of the paper: laid out at their final size now, rendered from the PDF below.
   const pendingFigures: { img: HTMLImageElement; ref: FigureRef }[] = [];
   for (const img of tpl.content.querySelectorAll<HTMLImageElement>('img[src^="img:"]')) {

@@ -2676,3 +2676,38 @@ table.syntheses[hidden],
   text-indent: -1.6em;
   margin: 4px 0;
 }
+
+/* Lean code blocks in Markdown (```lean) */
+.markdown .lean-keyword {
+  color: var(--accent);
+  font-weight: 600;
+}
+.markdown .lean-tactic {
+  color: var(--hl-math);
+}
+.markdown .lean-comment {
+  color: var(--muted);
+  font-style: italic;
+}
+.markdown .lean-string {
+  color: var(--hl-html);
+}
+.markdown .lean-num {
+  color: var(--hl-list);
+}
+.markdown .lean-const,
+.markdown .lean-type {
+  color: var(--hl-code);
+}
+.markdown .lean-attr {
+  color: var(--hl-list);
+}
+.markdown .lean-sym {
+  color: var(--accent);
+}
+.markdown .lean-sorry {
+  color: var(--danger);
+  font-weight: 600;
+  text-decoration: underline wavy;
+  text-decoration-thickness: 1px;
+}

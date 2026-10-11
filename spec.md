@@ -78,6 +78,7 @@ Only these files, and the files inside these folders, can be read or written.
 The supported formats are .md, .tex, .bib, .cls, .sty, .bst and .txt.
 For .md files, the rendered preview is shown next to the text, and follows it as one types.
 The editor is CodeMirror: Markdown, LaTeX (.tex, .cls, .sty) and BibTeX syntax highlighting, search (⌘F), line numbers.
+In Lean code blocks (```lean), Lean's abbreviations become their symbols when followed by a space, as in Lean's editors (\forall → ∀, \to → →, \N → ℕ…); the preview highlights Lean code.
 Markdown notes cite library papers with Pandoc's syntax: [@key], [see @a, p. 3; @b], [-@key] (year only), @key (in the text).
 Typing [@ or @ lists the library's papers; choosing one inserts its key (no BibTeX needed).
 The preview shows citations author–year, "(Bach, 2015)" and "Bach (2015)"; clicking one opens the paper. Keys of no paper are shown as typed, underlined.

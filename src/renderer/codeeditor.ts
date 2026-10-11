@@ -4,7 +4,8 @@
  */
 import { basicSetup } from 'codemirror';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { HighlightStyle, StreamLanguage, foldService, syntaxHighlighting, type Language } from '@codemirror/language';
+import { HighlightStyle, StreamLanguage, foldService, syntaxHighlighting, syntaxTree, type Language } from '@codemirror/language';
+import { LEAN_ABBREVIATIONS } from './lean';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { Annotation, EditorState, Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
 import { completionStatus, startCompletion, type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
@@ -210,6 +211,41 @@ function citeExtension(support: CiteSupport, lang: Language, citeAt: CiteContext
   ];
 }
 
+// --- Markdown: Lean's abbreviations in ```lean blocks (\forall then a space gives ∀, as in Lean's editors).
+
+/** Whether `pos` is in a fenced code block of Lean (```lean or ```lean4). */
+function inLeanBlock(state: EditorState, pos: number): boolean {
+  for (let n: ReturnType<typeof syntaxTree>['topNode'] | null = syntaxTree(state).resolveInner(pos, -1); n; n = n.parent) {
+    if (n.name === 'FencedCode') {
+      const info = n.getChild('CodeInfo');
+      const lang = info ? state.sliceDoc(info.from, info.to).trim().toLowerCase() : '';
+      return (lang === 'lean' || lang === 'lean4') && !!n.getChild('CodeText') && pos > n.getChild('CodeText')!.from - 1;
+    }
+  }
+  return false;
+}
+
+/** The abbreviation (\forall) just before `pos` in a Lean block, and its symbol (null if none). */
+export function leanAbbreviationBefore(state: EditorState, pos: number): { from: number; to: number; symbol: string } | null {
+  const line = state.doc.lineAt(pos);
+  const m = /\\([^\s\\]+)$/.exec(line.text.slice(0, pos - line.from));
+  const symbol = m && Object.prototype.hasOwnProperty.call(LEAN_ABBREVIATIONS, m[1]) ? LEAN_ABBREVIATIONS[m[1]] : null;
+  if (!m || !symbol || !inLeanBlock(state, pos)) return null;
+  return { from: pos - m[0].length, to: pos, symbol };
+}
+
+const leanAbbreviations = EditorView.inputHandler.of((view, from, to, text) => {
+  if (text !== ' ' || from !== to) return false;
+  const a = leanAbbreviationBefore(view.state, from);
+  if (!a) return false;
+  view.dispatch({
+    changes: { from: a.from, to: a.to, insert: a.symbol + ' ' },
+    selection: { anchor: a.from + a.symbol.length + 1 },
+    userEvent: 'input.type',
+  });
+  return true;
+});
+
 // --- Colours
 
 const markdownStyle = HighlightStyle.define([
@@ -222,7 +258,7 @@ const markdownStyle = HighlightStyle.define([
   { tag: t.url, color: 'var(--muted)', textDecoration: 'underline' },
   { tag: t.monospace, color: 'var(--hl-code)' },
   { tag: t.quote, color: 'var(--fg-soft)', fontStyle: 'italic' },
-  { tag: t.list, color: 'var(--hl-list)' },
+  // (No colour for t.list: it covers the whole text of a list's items; their markers are t.processingInstruction.)
   { tag: t.contentSeparator, color: 'var(--muted)' },
   { tag: [t.meta, t.comment, t.angleBracket, t.tagName, t.attributeName], color: 'var(--hl-html)' },
   { tag: mathTag, color: 'var(--hl-math)' },
@@ -319,7 +355,7 @@ export function createCodeEditor(opts: {
     opts.language === 'markdown'
       ? (() => {
           const md = markdown({ base: markdownLanguage, extensions: [MathSyntax] });
-          return [md, syntaxHighlighting(markdownStyle), ...(opts.cite ? [citeExtension(opts.cite, md.language, markdownCiteAt)] : [])];
+          return [md, syntaxHighlighting(markdownStyle), leanAbbreviations, ...(opts.cite ? [citeExtension(opts.cite, md.language, markdownCiteAt)] : [])];
         })()
       : opts.language === 'latex'
         ? [latexLanguage, syntaxHighlighting(latexStyle), foldService.of(latexSectionFold), ...(opts.cite ? [citeExtension(opts.cite, latexLanguage, latexCiteAt)] : [])]

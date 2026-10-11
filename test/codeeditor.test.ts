@@ -76,3 +76,28 @@ test('editor: where a citation key is being typed (LaTeX, Markdown)', async () =
   assert.deepEqual(at(latexCiteAt, '\\citep[p.~3]{a, jag'), { anchor: '{', query: 'jag', typedFrom: 'jag' });
   assert.equal(at(latexCiteAt, '\\cite{a} and'), null);
 });
+
+test('editor: Lean abbreviations (\\forall + space → ∀) in ```lean blocks only', async () => {
+  const { EditorState } = await import('@codemirror/state');
+  const { ensureSyntaxTree } = await import('@codemirror/language');
+  const { markdown, markdownLanguage } = await import('@codemirror/lang-markdown');
+  const { leanAbbreviationBefore } = await import('../src/renderer/codeeditor');
+  /** What typing a space at the end of `before` (in the document `before` + `after`) does. */
+  const space = (before: string, after = '') => {
+    const doc = before + after;
+    const state = EditorState.create({ doc, extensions: [markdown({ base: markdownLanguage })] });
+    ensureSyntaxTree(state, doc.length, 5000);
+    const a = leanAbbreviationBefore(state, before.length);
+    return a ? doc.slice(0, a.from) + a.symbol + ' ' + doc.slice(a.to) : null;
+  };
+  assert.equal(space('# Notes\n\n```lean\ntheorem t : \\forall', '\n```\n'), '# Notes\n\n```lean\ntheorem t : ∀ \n```\n');
+  assert.equal(space('```lean4\nexample : \\N', '\n```'), '```lean4\nexample : ℕ \n```');
+  assert.equal(space('```lean\nx \\le'), '```lean\nx ≤ ', 'block not closed yet');
+  assert.equal(space('```lean\nfun x \\to y\n\\alpha', '\n```'), '```lean\nfun x \\to y\nα \n```', 'only the abbreviation just typed');
+  // Not converted: outside Lean blocks, other languages, unknown abbreviations, after the block.
+  assert.equal(space('Prose with \\forall'), null);
+  assert.equal(space('```python\nx = "\\forall"'), null);
+  assert.equal(space('```lean\nx \\qqq', '\n```'), null);
+  assert.equal(space('```lean\nx\n```\nafter \\forall'), null);
+  assert.equal(space('`inline \\forall'), null);
+});
