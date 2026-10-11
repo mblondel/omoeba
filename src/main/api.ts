@@ -54,6 +54,7 @@ import {
   skimPathOf,
   audioPathOf,
   updateSidecar,
+  removeSidecar,
 } from './library';
 import { loadAnnotationSources, saveAnnotationsBoth, skimMtimeOf } from './annostore';
 import { SKIM_CHANGED } from '../shared/annotations';
@@ -1066,7 +1067,8 @@ export class OmoebaService implements OmoebaAPI {
     this.skimSeen.delete(pdfPath);
     await this.platform.trashItem(pdfPath);
     // Its notes and annotations go with it (to the Trash, where they can be restored from).
-    for (const p of [jsonPathOf(pdfPath), skimPathOf(pdfPath), audioPathOf(pdfPath)]) {
+    await removeSidecar(jsonPathOf(pdfPath), (p) => this.platform.trashItem(p));
+    for (const p of [skimPathOf(pdfPath), audioPathOf(pdfPath)]) {
       if (await fs.stat(p).catch(() => null)) await this.platform.trashItem(p);
     }
     if (this.index.available) this.index.refresh([pdfPath], 0);
@@ -1397,6 +1399,8 @@ export class OmoebaService implements OmoebaAPI {
       });
       steps[1].detail = 'saving';
       showSteps();
+      // (Not next to a PDF moved to the Trash meanwhile.)
+      await this.checkNotTrashed(pdfPath);
       await encodeM4a(parts, audio, { jobId, tools: this.audioTools, pauseSec: 0.2 });
     } catch (e) {
       if (e instanceof GeminiError) throw new Error(e.message);

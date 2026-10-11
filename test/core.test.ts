@@ -463,6 +463,9 @@ test('canonical json: sorted keys, compact numeric arrays, stable output', () =>
 test('sidecars: written only when the content changes; empty ones are not kept', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'omoeba-sc-'));
   const json = path.join(root, 'p.json');
+  // No sidecar without its PDF.
+  await assert.rejects(updateSidecar(json, { notes: 'x' }), /no longer there/);
+  await writeFile(path.join(root, 'p.pdf'), '%PDF-1.4');
 
   // Nothing to record: no file is created.
   await updateSidecar(json, { tags: null } as never);

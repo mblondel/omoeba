@@ -249,6 +249,9 @@ export async function updateSidecar(jsonPath: string, patch: Partial<Sidecar>): 
     // Never overwrite a file that could not be read (hand-edited with a typo, mid-sync, not a
     // sidecar): writing the patch alone would lose everything else it holds.
     if (state === 'invalid') throw unreadableError(jsonPath);
+    // A sidecar is never created for a PDF that is gone (moved to the Trash, e.g. as a duplicate,
+    // while something was still saving to it).
+    if (state === 'missing' && !(await pdfExistsFor(jsonPath))) throw new Error('The PDF of this paper is no longer there.');
     const next: Sidecar = { ...cur };
     for (const [k, v] of Object.entries(patch)) {
       if ((k === 'summaries' || k === 'chats') && v && typeof v === 'object') {
@@ -273,6 +276,23 @@ export async function updateSidecar(jsonPath: string, patch: Partial<Sidecar>): 
     next.updatedAt = new Date().toISOString();
     await writeTextAtomic(jsonPath, formatSidecar(next));
     return next;
+  });
+}
+
+/** Whether the PDF that a sidecar belongs to exists (paper.json: paper.pdf or paper.PDF). */
+async function pdfExistsFor(jsonPath: string): Promise<boolean> {
+  const base = jsonPath.replace(/\.json$/i, '');
+  for (const ext of ['.pdf', '.PDF']) if ((await fs.stat(base + ext).catch(() => null))?.isFile()) return true;
+  return false;
+}
+
+/**
+ * Move a sidecar away (to the Trash), once any write to it in progress is done, so that the write
+ * cannot put it back afterwards.
+ */
+export function removeSidecar(jsonPath: string, remove: (p: string) => Promise<void>): Promise<void> {
+  return withLock(jsonPath, async () => {
+    if (await fs.stat(jsonPath).catch(() => null)) await remove(jsonPath);
   });
 }
 

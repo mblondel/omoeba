@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { OmoebaService, type Platform } from '../src/main/api';
 import { defaultConfig } from '../src/main/config';
+import { updateSidecar } from '../src/main/library';
 import { HashCache, findIdenticalFiles, otherCopyOf } from '../src/main/duplicates';
 import type { Config } from '../src/shared/types';
 
@@ -99,6 +100,11 @@ test('duplicates: a copy goes to the Trash with its sidecar; the last copy never
     // Nothing re-creates its files (e.g. a view still open on it).
     await assert.rejects(svc.updateSidecar(copy, { tags: ['x'] }), /moved to the Trash/);
     await assert.rejects(svc.saveAnnotations(copy, []), /moved to the Trash/);
+    // Nor a tag added from the list, or anything else writing to the sidecar directly.
+    const tagged = await svc.tagPapers([copy], 'to read');
+    assert.equal(tagged.changed, 0);
+    assert.equal(tagged.failed.length, 1);
+    await assert.rejects(updateSidecar(path.join(lib, 'copy.json'), { notes: 'late' }), /no longer there/);
     assert.deepEqual((await readdir(lib)).sort(), ['old', 'other.pdf']);
 
     // The remaining copy is now the only one: refused.
