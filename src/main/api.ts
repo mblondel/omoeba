@@ -1141,9 +1141,27 @@ export class OmoebaService implements OmoebaAPI {
     if (!other) {
       throw new Error('No other copy of this PDF was found in the library, so it was not moved to the Trash.');
     }
+    await this.serially(pdfPath, () => this.trashPaperFiles(pdfPath));
+  }
+
+  /**
+   * Delete a paper: its PDF, .json, .skim and audio files go to the Trash (where they can be put
+   * back from). A paper whose PDF is missing can be deleted too (its .json).
+   */
+  async trashPaper(id: string): Promise<void> {
+    const pdfPath = this.checkId(id);
+    return this.serially(pdfPath, async () => {
+      const files = [pdfPath, jsonPathOf(pdfPath), skimPathOf(pdfPath), audioPathOf(pdfPath)];
+      const exists = await Promise.all(files.map((f) => fs.stat(f).then(() => true, () => false)));
+      if (!exists.some(Boolean)) throw new Error('This paper’s files are no longer there.');
+      await this.trashPaperFiles(pdfPath);
+    });
+  }
+
+  private async trashPaperFiles(pdfPath: string): Promise<void> {
     this.trashed.add(pdfPath);
     this.skimSeen.delete(pdfPath);
-    await this.platform.trashItem(pdfPath);
+    if (await fs.stat(pdfPath).catch(() => null)) await this.platform.trashItem(pdfPath);
     // Its notes and annotations go with it (to the Trash, where they can be restored from).
     await removeSidecar(jsonPathOf(pdfPath), (p) => this.platform.trashItem(p));
     for (const p of [skimPathOf(pdfPath), audioPathOf(pdfPath)]) {

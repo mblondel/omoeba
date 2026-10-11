@@ -82,3 +82,39 @@ test('rename: the PDF and its files together, all or none', async () => {
     for (const d of [lib, process.env.OMOEBA_HOME!]) await rm(d, { recursive: true, force: true });
   }
 });
+
+test('delete: a paper goes to the Trash with its .json, .skim and audio', async () => {
+  const lib = await tmp('omoeba-del-lib-');
+  const trashDir = await tmp('omoeba-del-trash-');
+  process.env.OMOEBA_HOME = await tmp('omoeba-del-home-');
+  const { rename } = await import('node:fs/promises');
+  const platform: Platform = {
+    pickFolders: async () => [],
+    pickFolder: async () => null,
+    revealInFolder: async () => undefined,
+    openExternal: async () => undefined,
+    trashItem: async (p) => rename(p, path.join(trashDir, path.basename(p))),
+    emit: () => undefined,
+    workerScript: '/nonexistent-worker.js',
+  };
+  const svc = new OmoebaService(platform);
+  (svc as unknown as { config: Config }).config = { ...defaultConfig(), folders: [lib] };
+  try {
+    const p = path.join(lib, 'paper.pdf');
+    for (const f of ['paper.pdf', 'paper.skim', 'paper.m4a', 'keep.pdf']) await writeFile(path.join(lib, f), 'x');
+    await writeFile(path.join(lib, 'paper.json'), '{"omoeba":1,"notes":"n"}');
+    await svc.trashPaper(p);
+    assert.deepEqual((await readdir(lib)).sort(), ['keep.pdf']);
+    assert.deepEqual((await readdir(trashDir)).sort(), ['paper.json', 'paper.m4a', 'paper.pdf', 'paper.skim']);
+    // Nothing re-creates it; deleting it again says so.
+    await assert.rejects(svc.saveAnnotations(p, []), /moved to the Trash/);
+    await assert.rejects(svc.trashPaper(p), /no longer there/);
+    // A paper whose PDF is missing: its .json alone.
+    await writeFile(path.join(lib, 'orphan.json'), '{"omoeba":1,"notes":"n"}');
+    await svc.trashPaper(path.join(lib, 'orphan.pdf'));
+    assert.deepEqual((await readdir(lib)).sort(), ['keep.pdf']);
+  } finally {
+    svc.dispose();
+    for (const d of [lib, trashDir, process.env.OMOEBA_HOME!]) await rm(d, { recursive: true, force: true });
+  }
+});

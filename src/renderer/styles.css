@@ -297,6 +297,11 @@ a:hover {
   background: var(--accent);
   filter: brightness(1.08);
 }
+/* A delete button that only turns red on hover (a solid red one would draw the eye). */
+.btn.btn-delete:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
 .btn.danger {
   background: var(--danger);
   border-color: var(--danger);

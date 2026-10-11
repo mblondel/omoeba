@@ -176,6 +176,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       'Show in Finder',
     ),
     readBtn,
+    h('button', { class: 'btn btn-delete', title: 'Delete this paper (moved to the Trash)', onclick: () => deletePaper() }, icon('trash'), 'Delete paper'),
   );
   root.append(h('div', { class: 'view paper-view' }, header, h('div', { class: 'paper-scroll' }, content)));
 
@@ -322,6 +323,34 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     }
     show();
     return wrap;
+  }
+
+  /** Move the paper (PDF, .json, .skim, audio) to the Trash, once confirmed. */
+  async function deletePaper() {
+    if (!paper) return;
+    const sc = paper.sidecar;
+    const plural = (n: number, w: string, ws = w + 's') => `${n} ${n === 1 ? w : ws}`;
+    const files = [paper.hasPdf ? paper.fileName : null, paper.hasJson ? '.json' : null, paper.hasSkim ? '.skim' : null, sc.audioSummary ? 'audio summary' : null].filter(Boolean);
+    const content = [
+      typeof sc.notes === 'string' && sc.notes.trim() ? 'notes' : null,
+      Array.isArray(sc.annotations) && sc.annotations.length ? plural(sc.annotations.length, 'annotation') : null,
+      Object.keys(sc.summaries ?? {}).length ? plural(Object.keys(sc.summaries ?? {}).length, 'summary', 'summaries') : null,
+      Object.keys(sc.chats ?? {}).length ? 'AI conversations' : null,
+    ].filter(Boolean);
+    const message =
+      `“${paper.title || paper.fileName}” will be moved to the Trash: ${files.join(', ')}.` +
+      (content.length ? ` Its ${content.join(', ')} go with it.` : '') +
+      ' You can put it back from the Trash.';
+    if (!(await confirmDialog('Delete this paper?', message, 'Move to Trash', true))) return;
+    // Readers open on it close first, so that they save nothing more to it.
+    closePaperTabs(id, 'read');
+    try {
+      await api.trashPaper(id);
+      toast(`Moved ${paper.fileName} to the Trash`);
+      closePaperTabs(id);
+    } catch (e) {
+      toast(errorMessage(e), 'error', 10000);
+    }
   }
 
   async function renameFile(name: string) {

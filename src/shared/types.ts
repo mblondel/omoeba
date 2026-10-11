@@ -602,6 +602,8 @@ export interface OmoebaAPI {
   trashDuplicate(id: string): Promise<void>;
   /** Rename a paper's PDF (in its folder) with its .json, .skim and audio files; returns its new id. */
   renamePaper(id: string, newName: string): Promise<string>;
+  /** Move a paper's PDF, .json, .skim and audio files to the Trash. */
+  trashPaper(id: string): Promise<void>;
 
   loadAnnotations(id: string): Promise<AnnotationSources>;
   saveAnnotations(id: string, annotations: Annotation[]): Promise<void>;
