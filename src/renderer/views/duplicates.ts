@@ -42,7 +42,7 @@ export function mountDuplicates(root: HTMLElement): () => void {
     h(
       'thead',
       null,
-      h('tr', null, h('th', { class: 'c-title' }, 'Title'), h('th', { class: 'c-file' }, 'File'), h('th', { class: 'c-added' }, 'Added'), h('th', { class: 'c-content' }, 'Notes & annotations'), h('th', { class: 'c-actions' })),
+      h('tr', null, h('th', { class: 'c-title' }, 'Title'), h('th', { class: 'c-file' }, 'File'), h('th', { class: 'c-added' }, 'Added'), h('th', { class: 'c-content' }, 'Notes & annotations'), h('th', { class: 'c-skim' }, 'Skim file'), h('th', { class: 'c-actions' })),
     ),
     tbody,
   );
@@ -94,7 +94,7 @@ export function mountDuplicates(root: HTMLElement): () => void {
         h(
           'tr',
           { class: 'dup-group' },
-          h('td', { colSpan: 5 }, `${g.papers.length} identical copies · ${formatSize(g.size)}`, h('span', { class: 'mono muted small dup-sha', title: `SHA-256 ${g.sha256}` }, g.sha256.slice(0, 12))),
+          h('td', { colSpan: 6 }, `${g.papers.length} identical copies · ${formatSize(g.size)}`, h('span', { class: 'mono muted small dup-sha', title: `SHA-256 ${g.sha256}` }, g.sha256.slice(0, 12))),
         ),
       );
       for (const p of g.papers) tbody.append(row(g, p));
@@ -110,6 +110,11 @@ export function mountDuplicates(root: HTMLElement): () => void {
       h('td', { class: 'c-file', title: p.pdfPath }, `${p.folder}/${p.fileName}`),
       h('td', { class: 'c-added' }, p.addedAt ? new Date(p.addedAt).toLocaleDateString() : ''),
       h('td', { class: 'c-content muted' }, content.join(', ') || '—'),
+      h(
+        'td',
+        { class: `c-skim ${p.hasSkim ? '' : 'muted'}`, title: p.hasSkim ? p.skimPath : 'No .skim file next to this PDF' },
+        p.hasSkim ? 'Yes' : 'No',
+      ),
       h(
         'td',
         { class: 'c-actions' },
@@ -133,7 +138,7 @@ export function mountDuplicates(root: HTMLElement): () => void {
     const content = contentOf(p);
     const others = g.papers.filter((x) => x !== p);
     const message =
-      `“${p.fileName}” in ${p.folder} will be moved to the Trash, with its .json and .skim files. ` +
+      `“${p.fileName}” in ${p.folder} will be moved to the Trash, with its .json file${p.hasSkim ? ' and its .skim file' : ''}. ` +
       (content.length
         ? `This copy has ${content.join(', ')}: they go to the Trash with it (other copies keep their own). `
         : '') +

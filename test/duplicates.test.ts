@@ -80,6 +80,7 @@ test('duplicates: a copy goes to the Trash with its sidecar; the last copy never
     const copy = path.join(lib, 'copy.pdf');
     await writeFile(keep, pdf('the paper'));
     await writeFile(copy, pdf('the paper'));
+    await writeFile(path.join(lib, 'old', 'paper.skim'), 'skim notes');
     await writeFile(path.join(lib, 'copy.json'), JSON.stringify({ omoeba: 1, notes: 'some notes', annotations: [{ type: 'Note', page: 0, bounds: [0, 0, 1, 1] }] }));
     await writeFile(path.join(lib, 'other.pdf'), pdf('another paper'));
 
@@ -90,6 +91,8 @@ test('duplicates: a copy goes to the Trash with its sidecar; the last copy never
     assert.equal(byName['copy.pdf'].hasNotes, true);
     assert.equal(byName['copy.pdf'].annotationCount, 1);
     assert.equal(byName['paper.pdf'].hasNotes, false);
+    assert.equal(byName['copy.pdf'].hasSkim, false);
+    assert.equal(byName['paper.pdf'].hasSkim, true);
 
     // A paper without an identical copy cannot be trashed from here.
     await assert.rejects(svc.trashDuplicate(path.join(lib, 'other.pdf')), /No other copy/);

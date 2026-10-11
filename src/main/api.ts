@@ -1044,6 +1044,8 @@ export class OmoebaService implements OmoebaAPI {
           hasNotes: typeof sc.notes === 'string' && sc.notes.trim() !== '',
           annotationCount: Array.isArray(sc.annotations) ? sc.annotations.length : 0,
           summaryCount: Object.keys(sc.summaries ?? {}).length,
+          // (Seen on disk now, not as last indexed.)
+          hasSkim: !!(await fs.stat(skimPathOf(f.path)).catch(() => null))?.isFile(),
         });
       }
       // Oldest first (usually the one to keep).

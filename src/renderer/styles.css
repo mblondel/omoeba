@@ -2119,6 +2119,9 @@ table.duplicates .c-added {
 table.duplicates .c-content {
   width: 18%;
 }
+table.duplicates .c-skim {
+  width: 76px;
+}
 table.duplicates .c-actions {
   /* Two 28px buttons, their gap and the cell padding: nothing may be clipped. */
   width: 84px;
