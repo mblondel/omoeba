@@ -83,6 +83,7 @@ const ICONS: Record<string, string> = {
   up: '<path d="m4 10 4-4 4 4"/>',
   down: '<path d="m4 6 4 4 4-4"/>',
   cursor: '<path d="M4 2.5 12 8l-3.5.8L10.5 13l-1.6.8-2-4.2L4 12z"/>',
+  star: '<path d="M8 2.2 9.8 5.9l4 .6-2.9 2.8.7 4L8 11.4l-3.6 1.9.7-4-2.9-2.8 4-.6z"/>',
   tag: '<path d="M2.5 2.5h5l6 6-5 5-6-6z"/><circle cx="5.5" cy="5.5" r=".8"/>',
 };
 

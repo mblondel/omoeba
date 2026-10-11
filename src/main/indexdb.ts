@@ -31,6 +31,8 @@ export interface DocMeta {
   arxiv?: string;
   /** The key citing the paper ("bach2015duality"), unique in the library. */
   citeKey?: string;
+  /** Starred by the user. */
+  starred?: boolean;
 }
 
 /** Metadata read from the PDF itself. */

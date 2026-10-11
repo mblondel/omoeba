@@ -144,6 +144,7 @@ const WRITABLE_KEYS = new Set([
   'abstract',
   'keywords',
   'tags',
+  'starred',
   'notes',
   'summaries',
   'source',
@@ -473,6 +474,8 @@ export class OmoebaService implements OmoebaAPI {
     if (Array.isArray(clean.tags)) {
       clean.tags = [...new Set(clean.tags.map((t) => String(t).trim()).filter(Boolean))];
     }
+    // Starred: true, or no key at all.
+    if ('starred' in clean) clean.starred = clean.starred === true ? true : (null as unknown as undefined);
     await updateSidecar(jsonPathOf(pdfPath), clean);
     this.index.refresh([pdfPath]);
     this.platform.emit({ type: 'paper-updated', id: pdfPath });

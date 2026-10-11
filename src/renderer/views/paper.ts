@@ -472,6 +472,13 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       ? iconButton('sparkle', 'Re-extract information with AI', () => runMetadata(cfg?.defaultAI ?? ais[0].id), 'reextract-btn')
       : null;
     if (reextract) reextract.disabled = !p.hasPdf || jobs.has('meta');
+    const starred = sc.starred === true;
+    const star = iconButton(
+      'star',
+      starred ? 'Starred: click to unstar' : 'Star this paper (File › Starred Papers lists them)',
+      () => patch({ starred: starred ? (null as unknown as undefined) : true }),
+      `star-btn${starred ? ' on' : ''}`,
+    );
     content.append(
       h(
         'div',
@@ -483,6 +490,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
           cls: 'paper-title',
           onSave: (v) => patch({ title: v || null, metadataSource: 'user' } as Partial<Sidecar>),
         }),
+        star,
         reextract,
       ),
       editable({

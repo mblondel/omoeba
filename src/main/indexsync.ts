@@ -37,6 +37,7 @@ export function metaFromSidecar(sc: Sidecar): DocMeta {
   if (arxiv) meta.arxiv = arxiv.id;
   const citeKey = typeof sc.citeKey === 'string' && sc.citeKey.trim() ? sc.citeKey.trim() : sc.bibtex?.key;
   if (citeKey) meta.citeKey = citeKey;
+  if (sc.starred === true) meta.starred = true;
   return meta;
 }
 

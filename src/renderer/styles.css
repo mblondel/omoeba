@@ -297,6 +297,24 @@ a:hover {
   background: var(--accent);
   filter: brightness(1.08);
 }
+/* Stars: the paper page's button, and the mark in lists. */
+.title-row > .star-btn {
+  flex: none;
+  margin-top: 4px;
+}
+.icon-btn.star-btn.on {
+  color: var(--star, #d99a00);
+}
+.icon-btn.star-btn.on .icon,
+.star-mark .icon {
+  fill: currentColor;
+}
+.star-mark {
+  color: var(--star, #d99a00);
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-right: 5px;
+}
 /* A delete button that only turns red on hover (a solid red one would draw the eye). */
 .btn.btn-delete:hover:not(:disabled) {
   color: var(--danger);

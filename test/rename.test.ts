@@ -118,3 +118,40 @@ test('delete: a paper goes to the Trash with its .json, .skim and audio', async 
     for (const d of [lib, trashDir, process.env.OMOEBA_HOME!]) await rm(d, { recursive: true, force: true });
   }
 });
+
+test('star: saved in the .json, listed, and removed', async () => {
+  const lib = await tmp('omoeba-star-lib-');
+  process.env.OMOEBA_HOME = await tmp('omoeba-star-home-');
+  const platform: Platform = {
+    pickFolders: async () => [],
+    pickFolder: async () => null,
+    revealInFolder: async () => undefined,
+    openExternal: async () => undefined,
+    trashItem: async () => undefined,
+    emit: () => undefined,
+    workerScript: '/nonexistent-worker.js',
+  };
+  const svc = new OmoebaService(platform);
+  (svc as unknown as { config: Config }).config = { ...defaultConfig(), folders: [lib] };
+  try {
+    const p = path.join(lib, 'paper.pdf');
+    await writeFile(p, '%PDF-1.4\n');
+    await writeFile(path.join(lib, 'other.pdf'), '%PDF-1.4\n');
+    // Only true stars it.
+    assert.equal((await svc.updateSidecar(p, { starred: 'yes' as unknown as boolean })).sidecar.starred, undefined);
+    const d = await svc.updateSidecar(p, { starred: true });
+    assert.equal(d.sidecar.starred, true);
+    assert.equal(JSON.parse(await readFile(path.join(lib, 'paper.json'), 'utf8')).starred, true);
+    const { metaFromSidecar } = await import('../src/main/indexsync');
+    assert.equal(metaFromSidecar({ omoeba: 1, starred: true }).starred, true);
+    assert.equal(metaFromSidecar({ omoeba: 1 }).starred, undefined);
+    const listed = await svc.listPapers();
+    assert.deepEqual(listed.filter((x) => x.starred).map((x) => x.fileName), ['paper.pdf']);
+    // Unstarred: the key goes (and an otherwise empty .json with it).
+    await svc.updateSidecar(p, { starred: null as unknown as boolean });
+    assert.deepEqual(await readdir(lib).then((f) => f.sort()), ['other.pdf', 'paper.pdf']);
+  } finally {
+    svc.dispose();
+    for (const d of [lib, process.env.OMOEBA_HOME!]) await rm(d, { recursive: true, force: true });
+  }
+});

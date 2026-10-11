@@ -120,6 +120,8 @@ export interface Sidecar {
   abstract?: string;
   keywords?: string[];
   tags?: string[];
+  /** Starred by the user (listed in File › Starred Papers). */
+  starred?: boolean;
   /** User notes (Markdown with LaTeX). */
   notes?: string;
   /** AI id -> summary. */
@@ -238,6 +240,8 @@ export interface PaperSummary {
   authors: string[];
   institutions: string[];
   tags: string[];
+  /** Starred by the user. */
+  starred?: boolean;
   year?: number | string;
   mtime: number;
   pdfMtime: number;

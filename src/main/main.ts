@@ -256,6 +256,7 @@ function buildMenu() {
         { label: 'Library', accelerator: 'CmdOrCtrl+L', click: send('library') },
         { label: 'Add Paper from URL…', accelerator: 'CmdOrCtrl+N', click: send('add-url') },
         { label: 'Recently Seen', accelerator: 'CmdOrCtrl+Shift+R', click: send('recent') },
+        { label: 'Starred Papers', accelerator: 'CmdOrCtrl+Shift+S', click: send('starred') },
         { label: 'Syntheses', click: send('syntheses') },
         { label: 'Find Duplicates', click: send('duplicates') },
         { type: 'separator' },

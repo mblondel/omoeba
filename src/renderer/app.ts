@@ -54,6 +54,7 @@ type TabKind =
   | 'search'
   | 'duplicates'
   | 'recent'
+  | 'starred'
   | 'synthesis'
   | 'syntheses'
   /** A folder's files (`file`). */
@@ -64,7 +65,7 @@ type TabKind =
   | 'pdf';
 
 /** Tabs of which there is only one. */
-const SINGLE: TabKind[] = ['library', 'settings', 'duplicates', 'recent', 'syntheses'];
+const SINGLE: TabKind[] = ['library', 'settings', 'duplicates', 'recent', 'starred', 'syntheses'];
 
 interface Tab {
   key: string;
@@ -103,6 +104,7 @@ const TAB_ICON: Record<TabKind, string> = {
   search: 'search',
   duplicates: 'copy',
   recent: 'book',
+  starred: 'star',
   synthesis: 'sparkle',
   syntheses: 'sparkle',
   folder: 'folder',
@@ -128,6 +130,7 @@ function mountTab(tab: Tab) {
     else if (tab.kind === 'search') tab.handle = mountList(tab.panel, { query: tab.query ?? '' });
     else if (tab.kind === 'duplicates') tab.handle = mountDuplicates(tab.panel);
     else if (tab.kind === 'recent') tab.handle = mountList(tab.panel, { recent: true });
+    else if (tab.kind === 'starred') tab.handle = mountList(tab.panel, { starred: true });
     else if (tab.kind === 'syntheses') tab.handle = mountSyntheses(tab.panel);
     else if (tab.kind === 'folder') tab.handle = mountFolder(tab.panel, tab.file!);
     else if (tab.kind === 'file') tab.handle = mountEditor(tab.panel, tab.file!);
@@ -311,6 +314,7 @@ function tabTitle(kind: TabKind, opts: { query?: string; title?: string; file?: 
     library: 'Library',
     duplicates: 'Duplicates',
     recent: 'Recently Seen',
+    starred: 'Starred',
     syntheses: 'Syntheses',
   };
   return fixed[kind] ?? 'Loading…';
@@ -401,7 +405,7 @@ function restoreSession() {
   // The Library is open unless it was closed.
   if (!saved?.withLibrary) openTab('library', undefined, { background: true });
   for (const t of saved?.tabs ?? []) {
-    if (['library', 'paper', 'read', 'settings', 'duplicates', 'recent', 'syntheses'].includes(t.kind)) openTab(t.kind, t.paperId, { background: true });
+    if (['library', 'paper', 'read', 'settings', 'duplicates', 'recent', 'starred', 'syntheses'].includes(t.kind)) openTab(t.kind, t.paperId, { background: true });
     else if ((t.kind === 'file' || t.kind === 'folder' || t.kind === 'pdf') && typeof t.file === 'string') openTab(t.kind, undefined, { background: true, file: t.file });
     else if (t.kind === 'synthesis' && typeof t.file === 'string') openTab('synthesis', undefined, { background: true, file: t.file, title: t.title });
     else if (t.kind === 'search' && typeof t.query === 'string') openTab('search', undefined, { background: true, query: t.query, title: t.title });
@@ -630,6 +634,7 @@ api.onMenu((action) => {
   else if (action === 'add-url') addPaperFromUrl();
   else if (action === 'duplicates') openDuplicatesTab();
   else if (action === 'recent') openTab('recent');
+  else if (action === 'starred') openTab('starred');
   else if (action === 'syntheses') openTab('syntheses');
   else if (action === 'open-file') openFileFromDialog();
   else if (action === 'open-folder') openFolderFromDialog();

@@ -98,11 +98,13 @@ let savedSelected: string | null = null;
 
 /**
  * `query`: a search tab, starting from its own query. `recent`: the Recently Seen tab (papers
- * whose page or PDF was opened, most recent first).
+ * whose page or PDF was opened, most recent first). `starred`: the Starred Papers tab.
  */
-export function mountList(root: HTMLElement, opts: { query?: string; recent?: boolean } = {}): () => void {
+export function mountList(root: HTMLElement, opts: { query?: string; recent?: boolean; starred?: boolean } = {}): () => void {
   /** A search tab: starts from its own query and leaves the Library's query/scroll alone. */
-  const isSearchTab = opts.query !== undefined || !!opts.recent;
+  const isSearchTab = opts.query !== undefined || !!opts.recent || !!opts.starred;
+  /** The papers this tab lists (before any search). */
+  const inTab = (p: PaperSummary) => (!opts.recent || !!p.openedAt) && (!opts.starred || !!p.starred);
   let papers: PaperSummary[] = [];
   let visible: PaperSummary[] = [];
   // The Recently Seen tab lists the most recently seen first (there is no column for it).
@@ -456,7 +458,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
     clear(tbody);
     rendered = 0;
     renderMore(upTo);
-    const total = opts.recent ? papers.filter((p) => p.openedAt).length : papers.length;
+    const total = papers.filter(inTab).length;
     count.textContent = visible.length === total ? `${total} papers` : `${visible.length} of ${total} papers`;
     empty.style.display = visible.length ? 'none' : '';
     clear(empty);
@@ -469,6 +471,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
             h('button', { class: 'btn', onclick: () => navigate('#/settings') }, 'Manage folders'),
           );
       } else if (opts.recent && !papers.some((p) => p.openedAt)) empty.append(h('p', null, 'No paper seen yet: papers appear here once you open their page or PDF.'));
+      else if (opts.starred && !papers.some((p) => p.starred)) empty.append(h('p', null, 'No starred paper yet: click the ☆ next to a paper’s title on its page to list it here.'));
       else empty.append(h('p', null, 'No papers match your search.'));
     }
   }
@@ -497,6 +500,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
         'td',
         { class: 'c-title', title: p.title },
         !p.hasPdf ? h('span', { class: 'warn', title: 'PDF missing' }, icon('warn', 14)) : null,
+        p.starred ? h('span', { class: 'star-mark', title: 'Starred' }, icon('star', 13)) : null,
         h('span', null, p.title),
         p.titleIsFallback
           ? h(
@@ -589,7 +593,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
     updateRenameBtn();
     renderTagBar();
     const { rest, folders, authors, insts, tags } = splitQuery(q);
-    let list = opts.recent ? papers.filter((p) => p.openedAt) : papers;
+    let list = papers.filter(inTab);
     if (folders.length) list = list.filter((p) => folders.every((f) => p.folder.toLowerCase().includes(f)));
     if (authors.length) list = list.filter((p) => authors.every((a) => p.authors.some((b) => sameAuthor(a, b))));
     if (insts.length) list = list.filter((p) => insts.every((a) => p.institutions.some((b) => sameInstitution(a, b))));
