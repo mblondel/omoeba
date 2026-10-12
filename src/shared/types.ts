@@ -375,7 +375,7 @@ export type OmoebaEvent =
   | { type: 'ai-progress'; jobId: string; chunk: string }
   | { type: 'paper-updated'; id: string }
   | { type: 'config-changed' }
-  | { type: 'duplicates-progress'; done: number; total: number }
+  | { type: 'duplicates-progress'; done: number; total: number; phase?: 'text' }
   | { type: 'syntheses-changed' }
   /** The recently opened files and folders changed (File › Open Recent). */
   | { type: 'recent-changed' }
@@ -457,6 +457,22 @@ export interface DuplicateGroup {
   sha256: string;
   size: number;
   papers: DuplicatePaper[];
+}
+
+/** A copy of a paper that is probably the same as others (its file differs). */
+export interface ProbableCopy extends DuplicatePaper {
+  numPages: number;
+  /** Annotations saved inside the PDF itself (e.g. made in Preview). */
+  pdfAnnotationCount: number;
+  /** What only this copy has: lines of text and PDF annotations the others lack (a few), and how many more. */
+  onlyHere: { passages: string[]; annotations: string[]; more: number };
+}
+
+/** Papers that are probably the same: nearly the same text, different files. */
+export interface ProbableGroup {
+  /** How much of their text is the same (0–1, the least similar pair). */
+  similarity: number;
+  papers: ProbableCopy[];
 }
 
 /** The API exposed to the renderer (window.omoeba). Every method is async. */
@@ -572,6 +588,8 @@ export interface OmoebaAPI {
    * not read). Progress is reported by "duplicates-progress" events.
    */
   findDuplicates(): Promise<DuplicateGroup[]>;
+  /** Papers that are probably the same though their files differ (see ProbableGroup). */
+  findProbableDuplicates(): Promise<{ groups: ProbableGroup[]; unread: number }>;
   /**
    * Summarize several papers together (at most MAX_SYNTHESIS_PAPERS), in one consistent
    * notation, following the user's instructions. Saved as a new Markdown file in

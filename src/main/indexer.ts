@@ -9,7 +9,7 @@
 import { Worker } from 'node:worker_threads';
 import { promises as fs } from 'node:fs';
 import type { IndexStatus } from '../shared/types';
-import { IndexDb, type DocInfo, type ListRow } from './indexdb';
+import { IndexDb, type DocInfo, type DocRow, type ListRow } from './indexdb';
 import { parseQuery } from './searchindex';
 import type { SyncProgress, SyncResult } from './indexsync';
 
@@ -312,5 +312,10 @@ export class IndexManager {
 
   list(): ListRow[] | null {
     return this.db ? this.db.list() : null;
+  }
+
+  /** Every paper with all that is indexed about it (terms of its first pages included). */
+  docs(): DocRow[] | null {
+    return this.db ? this.db.all() : null;
   }
 }

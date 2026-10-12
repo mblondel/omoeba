@@ -15,6 +15,9 @@ import type {
   AITraceKind,
   Config,
   DuplicateGroup,
+  DuplicatePaper,
+  ProbableCopy,
+  ProbableGroup,
   GeminiKeyStatus,
   JobStep,
   Synthesis,
@@ -63,6 +66,7 @@ import { SKIM_CHANGED } from '../shared/annotations';
 import { HashCache, findIdenticalFiles, otherCopyOf } from './duplicates';
 import { ReadingHistory, type LiveFile } from './history';
 import { extractPdf, plausibleTitle } from './pdftext';
+import { TEXT_MIN, candidatePairs, groupPairs, onlyIn, textSimilarity, type PaperText } from './nearduplicates';
 import {
   askPrompt,
   cancelAI as cancelAIJob,
@@ -1112,26 +1116,112 @@ export class OmoebaService implements OmoebaAPI {
     );
     const out: DuplicateGroup[] = [];
     for (const g of groups) {
-      const papers = [];
+      const papers: DuplicatePaper[] = [];
       for (const f of g) {
-        const d = await this.getPaper(f.path).catch(() => null);
-        if (!d) continue;
-        const { sidecar: sc, ...summary } = d;
-        papers.push({
-          ...summary,
-          size: f.size,
-          hasNotes: typeof sc.notes === 'string' && sc.notes.trim() !== '',
-          annotationCount: Array.isArray(sc.annotations) ? sc.annotations.length : 0,
-          summaryCount: Object.keys(sc.summaries ?? {}).length,
-          // (Seen on disk now, not as last indexed.)
-          hasSkim: !!(await fs.stat(skimPathOf(f.path)).catch(() => null))?.isFile(),
-        });
+        const p = await this.duplicatePaper(f.path, f.size);
+        if (p) papers.push(p);
       }
       // Oldest first (usually the one to keep).
       papers.sort((a, b) => (a.addedAt || 0) - (b.addedAt || 0) || a.pdfPath.localeCompare(b.pdfPath));
       if (papers.length > 1) out.push({ sha256: g[0].sha256, size: g[0].size, papers });
     }
     return out;
+  }
+
+  /** A copy as the Duplicates tab shows it (what its sidecar holds), or null if it is gone. */
+  private async duplicatePaper(pdfPath: string, size?: number): Promise<DuplicatePaper | null> {
+    const d = await this.getPaper(pdfPath).catch(() => null);
+    if (!d) return null;
+    const { sidecar: sc, ...summary } = d;
+    return {
+      ...summary,
+      size: size ?? (await fs.stat(pdfPath).catch(() => null))?.size ?? 0,
+      hasNotes: typeof sc.notes === 'string' && sc.notes.trim() !== '',
+      annotationCount: Array.isArray(sc.annotations) ? sc.annotations.length : 0,
+      summaryCount: Object.keys(sc.summaries ?? {}).length,
+      // (Seen on disk now, not as last indexed.)
+      hasSkim: !!(await fs.stat(skimPathOf(pdfPath)).catch(() => null))?.isFile(),
+    };
+  }
+
+  /** Texts of PDFs read for comparison, while the file is unchanged. */
+  private texts = new Map<string, { size: number; mtime: number; text: PaperText }>();
+  private async paperText(pdfPath: string): Promise<PaperText | null> {
+    const st = await fs.stat(pdfPath).catch(() => null);
+    if (!st?.isFile()) return null;
+    const c = this.texts.get(pdfPath);
+    if (c && c.size === st.size && c.mtime === st.mtimeMs) return c.text;
+    try {
+      const ex = await extractPdf(pdfPath, 120, 2_000_000, { annotations: true });
+      const text = { pages: ex.pages, annotations: ex.annotations ?? [] };
+      this.texts.set(pdfPath, { size: st.size, mtime: st.mtimeMs, text });
+      return text;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Papers that are probably the same, though their files differ (e.g. a copy annotated in
+   * Preview): candidates from the index (same number of pages, same first page or title, nearly
+   * the same words), then compared in full. Identical files are left to findDuplicates. Each copy
+   * comes with what only it contains. `unread`: PDFs the index has not read yet (not compared).
+   */
+  async findProbableDuplicates(): Promise<{ groups: ProbableGroup[]; unread: number }> {
+    const rows = this.index.docs();
+    if (!rows) throw new Error('The search index is not ready yet: try again in a moment.');
+    const folders = new Set(this.config.folders.map((f) => path.resolve(f)));
+    const live = rows.filter((r) => folders.has(r.root) && r.hasPdf && !r.pdfCloud && !this.trashed.has(r.id));
+    const unread = live.filter((r) => !r.info?.numPages || !r.pdfTerms).length;
+    const pairs = candidatePairs(
+      live.map((r) => ({
+        id: r.id,
+        numPages: r.info?.numPages,
+        title: r.meta.title ?? r.info?.title,
+        head: r.info?.head,
+        terms: r.pdfTerms ? r.pdfTerms.split(' ') : undefined,
+      })),
+    );
+    const sizes = new Map(live.map((r) => [r.id, r.pdfSize]));
+    const similar: [string, string][] = [];
+    const scores = new Map<string, number>();
+    let done = 0;
+    for (const [a, b] of pairs) {
+      this.platform.emit({ type: 'duplicates-progress', done: done++, total: pairs.length, phase: 'text' });
+      // Identical files are the other list's.
+      if (sizes.get(a) === sizes.get(b)) {
+        const [ha, hb] = await Promise.all([this.hashes.hash(a), this.hashes.hash(b)]);
+        if (ha && hb && ha.sha256 === hb.sha256) continue;
+      }
+      const [ta, tb] = await Promise.all([this.paperText(a), this.paperText(b)]);
+      if (!ta || !tb) continue;
+      const s = textSimilarity(ta, tb);
+      if (s < TEXT_MIN) continue;
+      similar.push([a, b]);
+      scores.set(`${a}\n${b}`, s);
+    }
+    this.platform.emit({ type: 'duplicates-progress', done: pairs.length, total: pairs.length, phase: 'text' });
+    const groups: ProbableGroup[] = [];
+    for (const ids of groupPairs(similar)) {
+      const texts = new Map<string, PaperText>();
+      for (const id of ids) {
+        const t = await this.paperText(id);
+        if (t) texts.set(id, t);
+      }
+      const papers: ProbableCopy[] = [];
+      for (const id of ids) {
+        const p = await this.duplicatePaper(id);
+        const t = texts.get(id);
+        if (!p || !t) continue;
+        const others = ids.filter((x) => x !== id && texts.has(x)).map((x) => texts.get(x)!);
+        papers.push({ ...p, numPages: t.pages.length, pdfAnnotationCount: t.annotations.length, onlyHere: onlyIn(t, others) });
+      }
+      if (papers.length < 2) continue;
+      papers.sort((a, b) => (a.addedAt || 0) - (b.addedAt || 0) || a.pdfPath.localeCompare(b.pdfPath));
+      const inGroup = [...scores].filter(([k]) => ids.some((id) => k.startsWith(id + '\n')));
+      groups.push({ similarity: Math.min(...inGroup.map(([, s]) => s)), papers });
+    }
+    return { groups, unread };
   }
 
   async trashDuplicate(id: string): Promise<void> {

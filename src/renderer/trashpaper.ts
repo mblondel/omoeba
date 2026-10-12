@@ -4,7 +4,7 @@ import { closePaperTabs } from './app';
 import { confirmDialog, errorMessage, toast } from './dom';
 
 /** Ask, then move the paper to the Trash. Resolves to true if it was. */
-export async function confirmTrashPaper(id: string): Promise<boolean> {
+export async function confirmTrashPaper(id: string, warning?: string): Promise<boolean> {
   let paper;
   try {
     paper = await api.getPaper(id);
@@ -23,6 +23,7 @@ export async function confirmTrashPaper(id: string): Promise<boolean> {
     Object.keys(sc.chats ?? {}).length ? 'AI conversations' : null,
   ].filter(Boolean);
   const message =
+    (warning ? `${warning}\n\n` : '') +
     `“${paper.title || paper.fileName}” will be moved to the Trash: ${files.join(', ')}.` +
     (content.length ? ` Its ${content.join(', ')} go with it.` : '') +
     ' You can put it back from the Trash.';

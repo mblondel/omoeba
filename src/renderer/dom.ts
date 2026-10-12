@@ -70,6 +70,7 @@ const ICONS: Record<string, string> = {
   underline: '<path d="M4.5 2.5V7a3.5 3.5 0 0 0 7 0V2.5M3 14h10"/>',
   strike: '<path d="M3 8h10M11 4.5C10.5 3.3 9.4 2.8 8 2.8c-1.8 0-3 .9-3 2.2M5 11.3c.5 1.2 1.6 1.9 3.1 1.9 1.8 0 3-.9 3-2.3"/>',
   note: '<path d="M3 2.5h10v8l-3 3H3z"/><path d="M10 13.5v-3h3"/>',
+  'open-file': '<path d="M8.5 14.5H3.5v-13h5l3 3V8"/><path d="M8.5 1.5v3h3"/><path d="M10 14.5l4-4M11 10.5h3v3"/>',
   text: '<path d="M3.5 3.5h9M8 3.5v9M6 12.5h4"/>',
   chat: '<path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/>',
   list: '<path d="M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01"/>',

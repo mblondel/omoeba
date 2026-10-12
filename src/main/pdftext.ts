@@ -29,6 +29,8 @@ export interface PdfExtract {
   info: PdfInfo;
   /** Text per page (only the requested pages). */
   pages: string[];
+  /** With `annotations`: the text of the PDF's own annotations (notes, highlights' comments…). */
+  annotations?: string[];
 }
 
 function pageText(items: { str?: string; hasEOL?: boolean }[]): string {
@@ -48,7 +50,7 @@ const clean = (v: unknown): string | undefined => {
   return t || undefined;
 };
 
-export async function extractPdf(filePath: string, maxPages = Infinity, maxChars = Infinity): Promise<PdfExtract> {
+export async function extractPdf(filePath: string, maxPages = Infinity, maxChars = Infinity, opts: { annotations?: boolean } = {}): Promise<PdfExtract> {
   const pdfjs = await loadPdfJs();
   const data = new Uint8Array(await fs.readFile(filePath));
   const doc = await pdfjs.getDocument({
@@ -86,6 +88,13 @@ export async function extractPdf(filePath: string, maxPages = Infinity, maxChars
       const t = pageText(tc.items as { str?: string; hasEOL?: boolean }[]);
       out.pages.push(t);
       chars += t.length;
+      if (opts.annotations) {
+        for (const a of (await page.getAnnotations().catch(() => [])) as { subtype?: string; contentsObj?: { str?: string }; contents?: string }[]) {
+          if (['Link', 'Widget', 'Popup'].includes(a.subtype ?? '')) continue;
+          const s = (a.contentsObj?.str ?? a.contents ?? '').trim();
+          (out.annotations ??= []).push(s ? s : `(${a.subtype ?? 'annotation'})`);
+        }
+      }
       page.cleanup();
     }
     return out;

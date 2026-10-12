@@ -1228,6 +1228,8 @@ input.narrow {
 .dialog p {
   margin: 0;
   color: var(--fg-soft);
+  /* (Paragraphs of a message, separated by blank lines.) */
+  white-space: pre-line;
 }
 .dialog input[type='text'] {
   width: 100%;
@@ -2190,8 +2192,8 @@ table.duplicates .c-skim {
   width: 76px;
 }
 table.duplicates .c-actions {
-  /* Two 28px buttons, their gap and the cell padding: nothing may be clipped. */
-  width: 84px;
+  /* Three 28px buttons, their gaps and the cell padding: nothing may be clipped. */
+  width: 116px;
 }
 table.duplicates td.c-actions {
   padding: 2px 8px 2px 4px;
@@ -2200,6 +2202,31 @@ table.duplicates td.c-actions {
   display: flex;
   justify-content: flex-end;
   gap: 4px;
+}
+table.duplicates tbody tr.dup-section td {
+  padding: 18px 12px 6px;
+  border-bottom: 1px solid var(--border);
+  white-space: normal;
+}
+table.duplicates tbody tr.dup-section {
+  cursor: default;
+  background: none;
+}
+.dup-section-title {
+  font-weight: 650;
+  margin-right: 10px;
+}
+.dup-only {
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-soft);
+}
+label.check.dup-probable-check {
+  margin: 0 12px 0 0;
+  align-items: center;
+  font-size: 13px;
 }
 table.duplicates tbody tr.dup-group {
   cursor: default;
