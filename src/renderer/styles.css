@@ -506,6 +506,23 @@ table.papers tbody tr.selected {
 .c-thumb {
   width: 48px;
 }
+/* Row actions (delete): hidden until the pointer is over the end of the row. */
+.c-row-actions {
+  width: 44px;
+}
+table.papers td.c-row-actions {
+  padding: 2px 10px 2px 2px;
+  text-align: right;
+  overflow: visible;
+}
+.row-delete {
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+table.papers td.c-row-actions:hover .row-delete,
+.row-delete:focus-visible {
+  opacity: 1;
+}
 table.papers td.c-thumb {
   padding: 5px 4px 5px 14px;
 }

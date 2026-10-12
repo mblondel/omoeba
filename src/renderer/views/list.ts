@@ -20,6 +20,7 @@ import { navigate, state, addPaperFromUrl, isActiveView, openSynthesesTab as nav
 import { openSummarizeDialog } from './synthesis';
 import { renderThumbnail } from '../thumbnail';
 import { sameAuthor, sameInstitution, tagQuery } from '../authors';
+import { confirmTrashPaper } from '../trashpaper';
 
 type SortKey = 'title' | 'authors' | 'folder' | 'tags' | 'added' | 'opened';
 
@@ -386,6 +387,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
             sort.key === c.key ? h('span', { class: 'sort-arrow' }, sort.dir === 1 ? '▲' : '▼') : null,
           ),
         ),
+        h('th', { class: 'c-row-actions' }),
       ),
     );
   }
@@ -413,7 +415,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
    */
   const CHUNK = 200;
   let rendered = 0;
-  const sentinel = h('tr', { class: 'list-sentinel' }, h('td', { colSpan: 5 }));
+  const sentinel = h('tr', { class: 'list-sentinel' }, h('td', { colSpan: 6 }));
   const moreObserver = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && renderMore(), {
     root: wrap,
     rootMargin: '800px 0px',
@@ -530,6 +532,23 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
             },
             t,
           ),
+        ),
+      ),
+      // Shown when the pointer is over the end of the row.
+      h(
+        'td',
+        { class: 'c-row-actions' },
+        iconButton(
+          'trash',
+          'Move to Trash',
+          async (e) => {
+            e.stopPropagation();
+            if (await confirmTrashPaper(p.id)) {
+              papers = papers.filter((x) => x.id !== p.id);
+              applyFilter(true);
+            }
+          },
+          'danger row-delete',
         ),
       ),
     );
