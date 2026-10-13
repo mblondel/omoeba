@@ -257,6 +257,9 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       render();
       if (r.status !== 'present') toast(r.status === 'drive' ? 'PDF downloaded from Google Drive (checked: same file).' : 'PDF downloaded (checked: same file).');
       if (open) openReader();
+      // Now that the PDF is here: what opening the paper does (title and authors, summary,
+      // related work, if missing and enabled in the settings).
+      autoRun();
     } catch (e) {
       if (!/^Stopped/.test(errorMessage(e))) toast(errorMessage(e), 'error', 12000);
     } finally {
