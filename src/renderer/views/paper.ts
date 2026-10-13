@@ -250,7 +250,16 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       if (r.status === 'drive') {
         showFetch('Downloading the PDF from Google Drive in your browser… it is moved here once in your Downloads folder.', true);
         await api.openExternal(r.url);
-        await api.awaitPdfDownload(id, jobId);
+        // The browser comes to the front to start the download: Omoeba comes back a moment later
+        // (the download goes on in the browser).
+        const back = window.setTimeout(() => api.focusWindow().catch(() => undefined), 3000);
+        try {
+          await api.awaitPdfDownload(id, jobId);
+        } finally {
+          window.clearTimeout(back);
+        }
+        // (Arrived sooner than that: back now.)
+        api.focusWindow().catch(() => undefined);
       }
       if (disposed) return;
       paper = await api.getPaper(id);

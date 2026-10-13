@@ -381,6 +381,14 @@ app.whenReady().then(async () => {
       await shell.trashItem(p);
     },
     downloadsDir: () => app.getPath('downloads'),
+    focusWindow() {
+      if (!win || win.isDestroyed()) return;
+      if (win.isMinimized()) win.restore();
+      win.show();
+      // (macOS: bring the app itself back in front of the browser.)
+      app.focus({ steal: true });
+      win.focus();
+    },
     // The Gemini API key, encrypted with a key kept in the macOS Keychain.
     secrets: fileSecretStore(path.join(appDir(), 'secrets.json'), {
       available: () => safeStorage.isEncryptionAvailable(),

@@ -125,6 +125,8 @@ export interface Platform {
   pickFolders(): Promise<string[]>;
   /** The user's Downloads folder (where the browser saves files). */
   downloadsDir?(): string;
+  /** Bring Omoeba's window back to the front (e.g. after opening something in the browser). */
+  focusWindow?(): void;
   /** Native dialog to choose a file to open (with these extensions, without the dot). */
   pickFile?(title: string, extensions: string[]): Promise<string | null>;
   /** Native dialog to choose one folder, starting at `defaultPath`. */
@@ -1442,6 +1444,10 @@ export class OmoebaService implements OmoebaAPI {
     const p = this.checkId(id);
     const exists = await fs.stat(p).catch(() => null);
     await this.platform.revealInFolder(exists ? p : path.dirname(p));
+  }
+
+  async focusWindow(): Promise<void> {
+    this.platform.focusWindow?.();
   }
 
   async openExternal(url: string): Promise<void> {

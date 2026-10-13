@@ -658,6 +658,8 @@ export interface OmoebaAPI {
   fetchMissingPdf(id: string): Promise<FetchPdfResult>;
   /** Wait for the paper's PDF in the Downloads folder (from Google Drive), check it, put it next to its .json. Stopped by cancelAI(jobId). */
   awaitPdfDownload(id: string, jobId?: string): Promise<void>;
+  /** Bring Omoeba's window back to the front (e.g. after opening a download in the browser). */
+  focusWindow(): Promise<void>;
 
   loadAnnotations(id: string): Promise<AnnotationSources>;
   saveAnnotations(id: string, annotations: Annotation[]): Promise<void>;
