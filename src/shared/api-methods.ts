@@ -27,6 +27,7 @@ export const API_METHODS: (keyof OmoebaAPI)[] = [
   'findProbableDuplicates',
   'renamePaper',
   'trashPaper',
+  'recordDriveLinks',
   'markOpened',
   'generateAudioSummary',
   'readAudioSummary',

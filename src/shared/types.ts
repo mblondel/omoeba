@@ -122,6 +122,8 @@ export interface Sidecar {
   tags?: string[];
   /** Starred by the user (listed in File › Starred Papers). */
   starred?: boolean;
+  /** The PDF in Google Drive (recorded from Google Drive for desktop): open at drive.google.com/file/d/<id>/view. */
+  googleDrive?: { id: string };
   /** User notes (Markdown with LaTeX). */
   notes?: string;
   /** AI id -> summary. */
@@ -626,6 +628,13 @@ export interface OmoebaAPI {
   renamePaper(id: string, newName: string): Promise<string>;
   /** Move a paper's PDF, .json, .skim and audio files to the Trash. */
   trashPaper(id: string): Promise<void>;
+  /**
+   * Record in the papers' .json files the Google Drive ids of their PDFs (done after each index
+   * sync when Google Drive for desktop syncs the library). `found`: PDFs whose id was found;
+   * `recorded`: .json files written (new or changed ids); `notFound`: PDFs Drive does not sync
+   * from this computer (or not yet).
+   */
+  recordDriveLinks(): Promise<{ found: number; recorded: number; notFound: number }>;
 
   loadAnnotations(id: string): Promise<AnnotationSources>;
   saveAnnotations(id: string, annotations: Annotation[]): Promise<void>;

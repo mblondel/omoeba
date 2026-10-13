@@ -166,6 +166,21 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
 
   const content = h('div', { class: 'paper-content' });
   const readBtn = h('button', { class: 'btn primary', onclick: () => openReader() }, icon('book'), 'Read PDF');
+  /** The PDF in Drive's web interface (when its Google Drive id was recorded in the .json). */
+  const driveBtn = h(
+    'button',
+    {
+      class: 'btn',
+      hidden: true,
+      title: 'Open the PDF in Google Drive’s web interface',
+      onclick: () => {
+        const driveId = paper?.sidecar.googleDrive?.id;
+        if (driveId) api.openExternal(`https://drive.google.com/file/d/${encodeURIComponent(driveId)}/view`).catch((e) => toast(errorMessage(e), 'error'));
+      },
+    },
+    icon('open-file'),
+    'Open in Google Drive',
+  );
   const header = h(
     'header',
     { class: 'topbar' },
@@ -176,6 +191,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       icon('folder'),
       'Show in Finder',
     ),
+    driveBtn,
     readBtn,
     h('button', { class: 'btn btn-delete', title: 'Move to Trash', onclick: () => deletePaper() }, icon('trash'), 'Delete paper'),
   );
@@ -369,6 +385,11 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     const p = paper;
     const sc = p.sidecar;
     readBtn.disabled = !p.hasPdf;
+    // Without the PDF here (e.g. a library of .json files synced with git), Drive is the way to read it.
+    const inDrive = !!sc.googleDrive?.id;
+    driveBtn.hidden = !inDrive;
+    readBtn.hidden = !p.hasPdf && inDrive;
+    driveBtn.classList.toggle('primary', !p.hasPdf);
     clear(content);
 
     const jobs = jobsFor(id);

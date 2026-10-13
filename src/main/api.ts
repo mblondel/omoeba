@@ -101,6 +101,7 @@ import { RecentStore, createTextFile, insideRoots, isEditable, linkTarget, listF
 import * as latex from './latex';
 import { assistPrompt, parseAssistReply, type AssistResult, type AssistTurn } from '../shared/assist';
 import { Conversations } from './conversations';
+import { byInode, driveFsState, driveIdOf, readDriveFiles } from './gdrive';
 import { appendBibEntry, bibField, bibliographyFiles, fetchDblpBibtex, findBibEntry, freeKey, freeKeyAmong, makeCiteKey, parseBibFile, setBibKey, titleSimilarity } from './cite';
 import { arxivTitle, fileNameForTitle, matchLibrary, parseRelated, pdfCandidates, relatedPrompt, uninformativeFileName } from './related';
 import {
@@ -177,6 +178,12 @@ export class OmoebaService implements OmoebaAPI {
       (status, changed) => {
         platform.emit({ type: 'index-status', status });
         if (changed) platform.emit({ type: 'library-changed' });
+        // After each sync: the Google Drive links of PDFs that Google Drive for desktop syncs
+        // (nothing at all on a computer without it).
+        if (!status.running && status.lastSync && status.lastSync !== this.lastDriveSync) {
+          this.lastDriveSync = status.lastSync;
+          void this.recordDriveLinks(true).catch((e) => console.error('Google Drive links:', e));
+        }
       },
       cfg.legacyIndexPath(),
     );
@@ -1058,6 +1065,58 @@ export class OmoebaService implements OmoebaAPI {
       const to = this.renamedTo.get(pdfPath);
       throw new Error(to ? `This paper was renamed to ${path.basename(to)}.` : 'This paper was moved to the Trash.');
     }
+  }
+
+  // --- Google Drive links (Settings › recordDriveLinks) --------------------------------
+  private lastDriveSync: string | null = null;
+  private drivePass: Promise<{ found: number; recorded: number; notFound: number }> | null = null;
+
+  /** What the last pass saw (Drive's databases, the library): the same again means nothing to do. */
+  private driveSeen = '';
+
+  /** `quiet`: an automatic pass, which does nothing if nothing changed or Drive is not there. */
+  recordDriveLinks(quiet = false): Promise<{ found: number; recorded: number; notFound: number }> {
+    // (One pass at a time.)
+    this.drivePass ??= this.recordDriveLinksNow(quiet).finally(() => (this.drivePass = null));
+    return this.drivePass;
+  }
+
+  private async recordDriveLinksNow(quiet: boolean): Promise<{ found: number; recorded: number; notFound: number }> {
+    const none = { found: 0, recorded: 0, notFound: 0 };
+    const state = await driveFsState();
+    if (!state) {
+      if (quiet) return none;
+      throw new Error('Google Drive for desktop does not sync files from this computer.');
+    }
+    const papers = (await this.listPapers()).filter((p) => p.hasPdf && !p.cloudOnly);
+    const seen = `${state}\n${papers.map((p) => `${p.id}:${p.pdfMtime}`).join('\n')}`;
+    if (quiet && seen === this.driveSeen) return none;
+    const files = byInode(await readDriveFiles());
+    this.driveSeen = seen;
+    let found = 0;
+    let recorded = 0;
+    for (const p of papers) {
+      const st = await fs.stat(p.pdfPath).catch(() => null);
+      if (!st) continue;
+      const id = driveIdOf(files, { path: p.pdfPath, inode: st.ino });
+      if (!id) continue;
+      found++;
+      try {
+        await this.serially(p.pdfPath, async () => {
+          await this.checkNotTrashed(p.pdfPath);
+          const sc = await readSidecarStrict(jsonPathOf(p.pdfPath));
+          if (sc.googleDrive?.id === id) return;
+          await updateSidecar(jsonPathOf(p.pdfPath), { googleDrive: { id } });
+          recorded++;
+          this.index.refresh([p.pdfPath]);
+          this.platform.emit({ type: 'paper-updated', id: p.pdfPath });
+        });
+      } catch (e) {
+        // (An unreadable .json is left alone.)
+        console.error(`Google Drive link not recorded for ${p.pdfPath}:`, (e as Error).message);
+      }
+    }
+    return { found, recorded, notFound: papers.length - found };
   }
 
   /** Operations on one paper's files, one after the other (e.g. saving annotations, then renaming). */
