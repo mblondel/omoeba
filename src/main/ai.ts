@@ -36,6 +36,16 @@ export function cleanPrompt(prompt: string): string {
   return prompt.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
 }
 
+/**
+ * Said at the end of every prompt. The AI CLIs are agents: given a large task (e.g. a long list
+ * of related papers), one may decide to run a command or look at files first, which needs a
+ * permission that cannot be asked for when it runs in the background; it then stops without an
+ * answer (Antigravity: "agent executor error"). Everything it needs is in the prompt.
+ */
+export const ANSWER_DIRECTLY =
+  '\n\nAnswer from the text of this request only, in your reply: do not use any tools — do not run commands, ' +
+  'do not read, list or write files, do not search the web.';
+
 export async function runAI(ai: AIProvider, rawPrompt: string, opts: RunOptions = {}): Promise<string> {
   if (!opts.onTrace) return runOnce(ai, rawPrompt, opts, 'text');
   const inv = streamingInvocation(ai);
@@ -51,7 +61,7 @@ export async function runAI(ai: AIProvider, rawPrompt: string, opts: RunOptions 
 }
 
 async function runOnce(ai: AIProvider, rawPrompt: string, opts: RunOptions, format: StreamFormat): Promise<string> {
-  const prompt = cleanPrompt(rawPrompt);
+  const prompt = cleanPrompt(rawPrompt) + ANSWER_DIRECTLY;
   if (!ai.enabled) throw new Error(`${ai.name} is not authorized. Enable it in Settings.`);
   const exe = await resolveAI(ai);
   if (!exe) throw new Error(`Could not find "${ai.command}" on your PATH. Check Settings → AI.`);
@@ -67,7 +77,9 @@ async function runOnce(ai: AIProvider, rawPrompt: string, opts: RunOptions, form
     const name = `prompt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.md`;
     promptFile = path.join(cwd, name);
     await fs.writeFile(promptFile, prompt);
-    argPrompt = `Your full instructions are in the file ${name} in the current directory. Read that file and follow the instructions in it exactly.`;
+    argPrompt =
+      `Your full instructions are in the file ${name} in the current directory. Read that file and follow the instructions in it exactly. ` +
+      'Apart from reading that file, do not use any tools (no commands, no other files, no web search): answer in your reply.';
   }
   const removePromptFile = () => {
     if (promptFile) fs.rm(promptFile, { force: true }).catch(() => undefined);
@@ -116,7 +128,11 @@ async function runOnce(ai: AIProvider, rawPrompt: string, opts: RunOptions, form
         if (!killedByTimeout && !signal && parsed.error) return reject(new Error(`${ai.name}: ${parsed.error}`));
       }
       if (code === 0 && out.trim() && format === 'text') resolve(out.trim());
-      else if (killedByTimeout) reject(new Error(`${ai.name} timed out.`));
+      else if (code === 0 && !killedByTimeout && !signal) {
+        // Finished without an answer (e.g. it tried to use a tool it was not allowed to).
+        const tail = err.trim().split('\n').slice(-4).join('\n');
+        reject(new Error(`${ai.name} gave no answer.${tail ? '\n' + tail : ''}`));
+      } else if (killedByTimeout) reject(new Error(`${ai.name} timed out.`));
       else if (signal) reject(new Error(`${ai.name} was stopped.`));
       else {
         const tail = (err || out).trim().split('\n').slice(-8).join('\n');
