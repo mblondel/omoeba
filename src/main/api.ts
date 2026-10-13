@@ -596,6 +596,14 @@ export class OmoebaService implements OmoebaAPI {
    * Reports the steps of a job ("ai-trace" events). The answer and thinking arrive in many small
    * pieces: consecutive pieces are sent together, a few times a second.
    */
+  /**
+   * What an AI job reports as it works (thinking, writing, tools), sent to the window as
+   * "ai-trace" events; undefined without a job id (nothing to report to).
+   */
+  private traceOf(jobId?: string) {
+    return jobId ? this.tracer(jobId).trace : undefined;
+  }
+
   private tracer(jobId?: string) {
     let pending: { kind: AITraceKind; text: string } | null = null;
     let timer: NodeJS.Timeout | null = null;
@@ -1009,7 +1017,7 @@ export class OmoebaService implements OmoebaAPI {
     const at = new Date().toISOString();
     const out = await runAI(ai, assistPrompt({ fileName: path.basename(p), text: String(text ?? ''), request, selection, history }), {
       jobId,
-      onChunk: this.progress(jobId),
+      onTrace: this.traceOf(jobId),
     });
     const reply = parseAssistReply(out);
     const turn: AssistTurn = {
@@ -1517,7 +1525,7 @@ export class OmoebaService implements OmoebaAPI {
     const prompt = metadataPrompt(pages, path.basename(pdfPath), wantTags ? { existing } : undefined);
     const out = await runAI(ai, prompt, {
       jobId,
-      onChunk: this.progress(jobId),
+      onTrace: this.traceOf(jobId),
       timeoutMs: 5 * 60_000,
     });
     const meta = parseJsonObject(out);
@@ -1556,7 +1564,7 @@ export class OmoebaService implements OmoebaAPI {
     const ai = this.aiFor(aiId);
     const detail = await this.getPaper(pdfPath);
     const pages = await this.paperPages(pdfPath);
-    const out = await runAI(ai, summaryPrompt(pages, detail.title), { jobId, onChunk: this.progress(jobId) });
+    const out = await runAI(ai, summaryPrompt(pages, detail.title), { jobId, onTrace: this.traceOf(jobId) });
     const entry: SummaryEntry = { markdown: stripFences(out), images: {}, createdAt: new Date().toISOString() };
     return this.updateSidecar(pdfPath, { summaries: { [ai.id]: entry } });
   }
@@ -1575,7 +1583,7 @@ export class OmoebaService implements OmoebaAPI {
     const pages = await this.paperPages(pdfPath);
     const out = await runAI(ai, askPrompt(pages, detail.title, history, question, context ?? {}), {
       jobId,
-      onChunk: this.progress(jobId),
+      onTrace: this.traceOf(jobId),
     });
     const now = new Date().toISOString();
     const next: ChatMessage[] = [
@@ -1597,7 +1605,7 @@ export class OmoebaService implements OmoebaAPI {
     const pages = await this.paperPages(pdfPath);
     const out = await runAI(ai, relatedPrompt(pages, detail.title), {
       jobId,
-      onChunk: this.progress(jobId),
+      onTrace: this.traceOf(jobId),
       timeoutMs: 10 * 60_000,
     });
     const { papers, dropped } = parseRelated(parseJsonObject(out), pages);
@@ -1741,7 +1749,7 @@ export class OmoebaService implements OmoebaAPI {
     const pages = await this.paperPages(pdfPath);
     const script = await runAI(ai, audioScriptPrompt(pages, detail.title, detail.authors, language, names), {
       jobId,
-      onChunk: this.progress(jobId),
+      onTrace: this.traceOf(jobId),
     });
     const turns = parseDialog(script, names);
     if (turns.length < 2) throw new Error(`${ai.name} did not write a conversation that can be read (no "${names[0]}: …" lines).`);

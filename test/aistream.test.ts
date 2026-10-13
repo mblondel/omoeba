@@ -130,3 +130,42 @@ test('trace: runAI follows a CLI step by step, and falls back when it does not k
     await rm(cwdHome, { recursive: true, force: true });
   }
 });
+
+test('trace: Antigravity (agy) events (thinking, writing, tools) and its answer', () => {
+  const inv = streamingInvocation(ai({ id: 'antigravity', command: 'agy', args: ['-p', '{prompt}', '--output-format', 'text', '--print-timeout', '15m'] }));
+  assert.equal(inv.format, 'agy');
+  assert.deepEqual(inv.args, ['-p', '{prompt}', '--output-format', 'stream-json', '--print-timeout', '15m']);
+  const run = (lines: object[]) => {
+    const events: TraceEvent[] = [];
+    const p = new StreamParser('agy', (e) => events.push(e));
+    p.push(lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+    return { events, ...p.end() };
+  };
+  const step = (s: object) => ({ event: 'step_update', step_update: { conversation_id: 'c', ...s } });
+  // As recorded from agy 1.3.4.
+  const ok = run([
+    { event: 'init', init: { cwd: '/x', tools: [], permission_mode: 'default' } },
+    step({ step_index: 0, state: 'DONE', step_type: 'user_input' }),
+    step({ step_index: 1, state: 'ACTIVE', step_type: 'agent_response', text_delta: 'There are ' }),
+    step({ step_index: 1, state: 'DONE', step_type: 'agent_response', text_delta: '**17** primes.', usage: { thinking_tokens: 925 } }),
+    { event: 'result', result: { status: 'SUCCESS', response: 'There are **17** primes.' } },
+  ]);
+  assert.deepEqual(
+    ok.events.map((e) => e.kind),
+    ['status', 'thinking-start', 'thinking-end', 'text', 'text'],
+  );
+  assert.equal(ok.final, 'There are **17** primes.');
+  assert.equal(ok.error, null);
+  // It tried to run a command, which was refused (no answer): said so.
+  const denied = run([
+    step({ step_index: 0, state: 'DONE', step_type: 'user_input' }),
+    step({ step_index: 1, state: 'DONE', step_type: 'agent_response', usage: { thinking_tokens: 15496 } }),
+    step({ step_index: 2, state: 'ACTIVE', step_type: 'tool', tool_name: 'run_command', tool_info: { name: 'run_command', parameters: { CommandLine: 'ls -la' } } }),
+    step({ step_index: 2, state: 'ERROR', step_type: 'tool', tool_name: 'run_command', tool_info: { name: 'run_command', error: { type: 'TOOL_ERROR', message: 'permission check failed' } } }),
+    { event: 'result', result: { status: 'SUCCESS', response: '', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] } },
+  ]);
+  assert.ok(denied.events.some((e) => e.kind === 'tool' && e.text === 'Using run_command: ls -la'));
+  assert.ok(denied.events.some((e) => e.kind === 'status' && /run_command failed: permission check failed/.test(e.text)));
+  assert.equal(denied.final, null);
+  assert.match(denied.error!, /not allowed to use here \(command\)/);
+});

@@ -8,12 +8,15 @@
  *    it out), then the answer as it is written, then a final "result" event.
  *  - Codex: `exec --json`. Reasoning summaries ("**Comparing the rates**"), commands, then the
  *    answer ("agent_message").
+ *  - Antigravity (agy): `--output-format stream-json`. Steps ("step_update"): the answer as it is
+ *    written (text_delta), tools used; then a "result" event. Its thinking is not shared, only
+ *    how much it did (thinking_tokens).
  * Other CLIs, and arguments customized so that they cannot be recognized, keep printing text.
  */
 import path from 'node:path';
 import type { AIProvider, AITraceKind } from '../shared/types';
 
-export type StreamFormat = 'claude' | 'codex' | 'text';
+export type StreamFormat = 'claude' | 'codex' | 'agy' | 'text';
 
 export interface TraceEvent {
   kind: AITraceKind;
@@ -31,6 +34,13 @@ export function streamingInvocation(ai: AIProvider): { args: string[]; format: S
     if (i >= 0 && args[i + 1] === 'text') {
       args.splice(i, 2, '--output-format', 'stream-json', '--verbose', '--include-partial-messages');
       return { args, format: 'claude' };
+    }
+  }
+  if (cmd === 'agy' || ai.id === 'antigravity') {
+    const i = args.indexOf('--output-format');
+    if (i >= 0 && args[i + 1] === 'text') {
+      args.splice(i, 2, '--output-format', 'stream-json');
+      return { args, format: 'agy' };
     }
   }
   if ((cmd === 'codex' || ai.id === 'codex') && args[0] === 'exec' && !args.includes('--json')) {
@@ -101,6 +111,7 @@ export class StreamParser {
       return;
     }
     if (this.format === 'claude') this.claude(o);
+    else if (this.format === 'agy') this.agy(o);
     else this.codex(o);
   }
 
@@ -144,6 +155,57 @@ export class StreamParser {
     } else if (type === 'result') {
       if (o.is_error || (o.subtype && o.subtype !== 'success')) this.error = str(o.result) || `Claude Code stopped (${str(o.subtype) || 'error'}).`;
       else if (str(o.result)) this.final = str(o.result);
+    }
+  }
+
+  /** Antigravity: whether it is thinking (between the request and the first words of its answer). */
+  private agyThinking = false;
+
+  private agy(o: Json) {
+    const event = str(o.event);
+    if (event === 'init') {
+      this.onTrace({ kind: 'status', text: 'Started' });
+    } else if (event === 'step_update') {
+      const s = obj(o.step_update);
+      const type = str(s.step_type);
+      const state = str(s.state);
+      if (type === 'user_input' && state === 'DONE') {
+        // Its thinking is not shared: only that it thinks, until it starts writing.
+        this.agyThinking = true;
+        this.onTrace({ kind: 'thinking-start', text: '' });
+      } else if (type === 'agent_response') {
+        const delta = str(s.text_delta);
+        if (delta) {
+          if (this.agyThinking) {
+            this.agyThinking = false;
+            this.onTrace({ kind: 'thinking-end', text: '' });
+          }
+          this.written += delta;
+          this.onTrace({ kind: 'text', text: delta });
+        }
+        if (state === 'DONE' && this.agyThinking) {
+          this.agyThinking = false;
+          this.onTrace({ kind: 'thinking-end', text: '' });
+        }
+      } else if (type === 'tool') {
+        const info = obj(s.tool_info);
+        const name = str(s.tool_name) || str(info.name) || 'a tool';
+        const command = str(obj(info.parameters).CommandLine);
+        if (state === 'ACTIVE') this.onTrace({ kind: 'tool', text: `Using ${name}${command ? `: ${command}` : ''}` });
+        else if (state === 'ERROR') this.onTrace({ kind: 'status', text: `${name} failed: ${str(obj(info.error).message) || 'error'}` });
+      }
+    } else if (event === 'result') {
+      const r = obj(o.result);
+      const response = str(r.response);
+      if (str(r.status) === 'SUCCESS' && response.trim()) this.final = response;
+      else {
+        const denied = Array.isArray(r.denied_actions) ? (r.denied_actions as unknown[]).map((d) => str(obj(d).action) || str(obj(d).display_name)).filter(Boolean) : [];
+        this.error =
+          str(obj(r.error).message) ||
+          (denied.length
+            ? `it tried to use a tool it is not allowed to use here (${denied.join(', ')}) and gave no answer`
+            : `it stopped without an answer (${str(r.status) || 'no status'})`);
+      }
     }
   }
 

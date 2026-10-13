@@ -5,6 +5,7 @@ import { clear, confirmDialog, errorMessage, formatAuthors, h, icon, iconButton,
 import { mountMarkdown } from '../markdown';
 import { closePaperTabs, navigate, refreshConfig, isActiveView, openSearchTab } from '../app';
 import { fileStemForTitle } from '../../shared/filenames';
+import { createTraceView, type TraceView } from '../aitrace';
 import { confirmTrashPaper } from '../trashpaper';
 import { authorQuery, institutionQuery, tagQuery } from '../authors';
 import { loadDocument, type PDFDocumentProxy } from '../pdfjs';
@@ -23,6 +24,22 @@ api.onEvent((e) => {
   if (e.type !== 'job-steps') return;
   jobSteps.set(e.jobId, e.steps);
   jobEvents.dispatchEvent(new Event('change'));
+});
+
+/** What running AI jobs report as they work (thinking, writing), shown live, by job id. */
+const jobTraces = new Map<string, TraceView>();
+api.onEvent((e) => {
+  if (e.type !== 'ai-trace') return;
+  let view = jobTraces.get(e.jobId);
+  if (!view) {
+    const job = [...inflight.values()].flatMap((m) => [...m.values()]).find((j) => j.jobId === e.jobId);
+    if (!job) return;
+    view = createTraceView(job.label);
+    jobTraces.set(e.jobId, view);
+    // (Shown in place of the job's plain line, once.)
+    jobEvents.dispatchEvent(new Event('change'));
+  }
+  view.push(e.kind, e.text);
 });
 
 function jobsFor(id: string) {
@@ -461,13 +478,15 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
                   ),
                   h('button', { class: 'link-btn', onclick: () => api.cancelAI(j.jobId) }, 'Stop'),
                 )
-              : h(
-                  'div',
-                  { class: 'job' },
-                  h('span', { class: 'spinner' }),
-                  j.label,
-                  h('button', { class: 'link-btn', onclick: () => api.cancelAI(j.jobId) }, 'Stop'),
-                ),
+              : jobTraces.has(j.jobId)
+                ? h('div', { class: 'job job-trace' }, jobTraces.get(j.jobId)!.el, h('button', { class: 'link-btn', onclick: () => api.cancelAI(j.jobId) }, 'Stop'))
+                : h(
+                    'div',
+                    { class: 'job' },
+                    h('span', { class: 'spinner' }),
+                    j.label,
+                    h('button', { class: 'link-btn', onclick: () => api.cancelAI(j.jobId) }, 'Stop'),
+                  ),
           ),
         )
       : null;
@@ -1306,6 +1325,8 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       .finally(() => {
         jobs.delete(key);
         jobSteps.delete(jobId);
+        jobTraces.get(jobId)?.dispose();
+        jobTraces.delete(jobId);
         jobEvents.dispatchEvent(new Event('change'));
       });
     jobs.set(key, { label, jobId, promise });
