@@ -26,6 +26,9 @@ api.onEvent((e) => {
   jobEvents.dispatchEvent(new Event('change'));
 });
 
+/** Papers whose missing PDF was fetched on opening their page (not again automatically). */
+const autoFetched = new Set<string>();
+
 /** What running AI jobs report as they work (thinking, writing), shown live, by job id. */
 const jobTraces = new Map<string, TraceView>();
 api.onEvent((e) => {
@@ -235,17 +238,16 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     );
   };
 
-  /** `quiet`: only the recorded location (opening the page); otherwise also Google Drive, then the reader. */
-  async function getMissingPdf(open: boolean, quiet = false) {
+  /** `open`: the reader once the PDF is here ("Read PDF"); otherwise the PDF only (opening the page). */
+  async function getMissingPdf(open: boolean) {
     if (fetching || !paper || paper.hasPdf) return;
     const jobId = newJobId();
     fetching = jobId;
     readBtn.disabled = true;
     try {
-      if (!quiet) showFetch('Downloading the PDF…');
+      showFetch('Downloading the PDF…');
       const r = await api.fetchMissingPdf(id);
       if (r.status === 'drive') {
-        if (quiet) return;
         showFetch('Downloading the PDF from Google Drive in your browser… it is moved here once in your Downloads folder.', true);
         await api.openExternal(r.url);
         await api.awaitPdfDownload(id, jobId);
@@ -253,10 +255,10 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       if (disposed) return;
       paper = await api.getPaper(id);
       render();
-      if (!quiet || r.status === 'downloaded') toast(r.status === 'drive' ? 'PDF downloaded from Google Drive (checked: same file).' : 'PDF downloaded (checked: same file).');
+      if (r.status !== 'present') toast(r.status === 'drive' ? 'PDF downloaded from Google Drive (checked: same file).' : 'PDF downloaded (checked: same file).');
       if (open) openReader();
     } catch (e) {
-      if (!quiet && !/^Stopped/.test(errorMessage(e))) toast(errorMessage(e), 'error', 12000);
+      if (!/^Stopped/.test(errorMessage(e))) toast(errorMessage(e), 'error', 12000);
     } finally {
       fetching = null;
       showFetch(null);
@@ -1430,8 +1432,13 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       setTagPalette(tags);
       render();
       autoRun();
-      // A missing PDF with a download location: fetched quietly (Google Drive waits for "Read PDF").
-      if (d.sidecar.source?.url && canFetch(d)) getMissingPdf(false, true);
+      // A missing PDF is fetched as soon as the page opens: from its download location, else from
+      // Google Drive through the browser. Once per paper while Omoeba runs (after a failure or a
+      // Cancel, "Read PDF" tries again).
+      if (canFetch(d) && !autoFetched.has(id)) {
+        autoFetched.add(id);
+        getMissingPdf(false);
+      }
       // Seeing a paper's page counts, as opening its PDF does (File › Recently Seen).
       api.markOpened(id).catch(() => undefined);
     })
