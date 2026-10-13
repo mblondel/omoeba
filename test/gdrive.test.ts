@@ -2,7 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { byInode, driveFileUrl, driveIdOf, readDriveFiles } from '../src/main/gdrive';
@@ -52,7 +54,7 @@ test('google drive: ids from the local databases, matched by inode and name', as
   await rm(base, { recursive: true, force: true });
 });
 
-test('google drive: links recorded in the .json files, once', async () => {
+test('pdf facts: checksums and Drive links recorded in the .json files, once', async () => {
   const home = await tmp('omoeba-home-');
   const lib = await tmp('omoeba-gd-lib-');
   const oldHome = process.env.HOME;
@@ -68,31 +70,101 @@ test('google drive: links recorded in the .json files, once', async () => {
     workerScript: '/nonexistent-worker.js',
   };
   const svc = new OmoebaService(platform);
-  (svc as unknown as { config: Config }).config = { ...defaultConfig(), folders: [lib], };
+  (svc as unknown as { config: Config }).config = { ...defaultConfig(), folders: [lib] };
+  const sha = (s: string) => createHash('sha256').update(s).digest('hex');
   try {
     const pdf = path.join(lib, 'paper.pdf');
     await writeFile(pdf, '%PDF-1.4\n');
     await writeFile(path.join(lib, 'paper.json'), '{"omoeba":1,"notes":"my notes"}');
-    await writeFile(path.join(lib, 'other.pdf'), '%PDF-1.4\n');
-    // No Google Drive for desktop on this computer: an automatic pass does nothing, quietly.
-    assert.deepEqual(await svc.recordDriveLinks(true), { found: 0, recorded: 0, notFound: 0 });
-    await assert.rejects(svc.recordDriveLinks(), /does not sync/);
+    await writeFile(path.join(lib, 'other.pdf'), '%PDF-1.4 other\n');
+    // No Google Drive for desktop: the checksums only.
+    assert.deepEqual(await svc.recordPdfFacts(true), { pdfs: 2, recorded: 2, inDrive: null });
+    assert.deepEqual(JSON.parse(await readFile(path.join(lib, 'other.json'), 'utf8')).pdf, { sha256: sha('%PDF-1.4 other\n'), size: 15 });
+    // With Google Drive for desktop: the Drive link too.
     await fakeDriveFs(path.join(home, 'Library', 'Application Support', 'Google', 'DriveFS'), [
       { inode: (await stat(pdf)).ino, name: 'paper.pdf', size: 9, stableId: 1, id: '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456' },
     ]);
-    assert.deepEqual(await svc.recordDriveLinks(true), { found: 1, recorded: 1, notFound: 1 });
+    assert.deepEqual(await svc.recordPdfFacts(true), { pdfs: 2, recorded: 1, inDrive: 1 });
     const sc = JSON.parse(await readFile(path.join(lib, 'paper.json'), 'utf8'));
     assert.deepEqual(sc.googleDrive, { id: '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456' });
+    assert.deepEqual(sc.pdf, { sha256: sha('%PDF-1.4\n'), size: 9 });
     assert.equal(sc.notes, 'my notes');
-    // Again: nothing changed, nothing done; asked for explicitly: looked up, nothing to write.
-    assert.deepEqual(await svc.recordDriveLinks(true), { found: 0, recorded: 0, notFound: 0 });
-    assert.deepEqual(await svc.recordDriveLinks(), { found: 1, recorded: 0, notFound: 1 });
-    // The renderer cannot set it.
-    await svc.updateSidecar(pdf, { googleDrive: { id: 'x' } } as never);
+    // Again: nothing changed, nothing done; asked for explicitly: looked at, nothing to write.
+    assert.deepEqual(await svc.recordPdfFacts(true), { pdfs: 2, recorded: 0, inDrive: null });
+    assert.deepEqual(await svc.recordPdfFacts(), { pdfs: 2, recorded: 0, inDrive: 1 });
+    // The PDF changed (e.g. annotated in Preview): its checksum follows at the next pass.
+    await new Promise((r) => setTimeout(r, 20));
+    await writeFile(pdf, '%PDF-1.4 annotated\n');
+    assert.deepEqual(await svc.recordPdfFacts(), { pdfs: 2, recorded: 1, inDrive: 1 });
+    assert.equal(JSON.parse(await readFile(path.join(lib, 'paper.json'), 'utf8')).pdf.sha256, sha('%PDF-1.4 annotated\n'));
+    // The renderer cannot set them.
+    await svc.updateSidecar(pdf, { googleDrive: { id: 'x' }, pdf: { sha256: 'x', size: 1 } } as never);
     assert.equal(JSON.parse(await readFile(path.join(lib, 'paper.json'), 'utf8')).googleDrive.id, '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456');
   } finally {
     svc.dispose();
     process.env.HOME = oldHome;
     for (const d of [home, lib, process.env.OMOEBA_HOME!]) await rm(d, { recursive: true, force: true });
+  }
+});
+
+test('missing pdf: downloaded from its location or from Drive (via Downloads), only if the checksum matches', async () => {
+  const lib = await tmp('omoeba-fetch-lib-');
+  const downloads = await tmp('omoeba-fetch-dl-');
+  process.env.OMOEBA_HOME = await tmp('omoeba-fetch-app-');
+  const opened: string[] = [];
+  const platform: Platform = {
+    pickFolders: async () => [],
+    pickFolder: async () => null,
+    revealInFolder: async () => undefined,
+    openExternal: async (u) => void opened.push(u),
+    trashItem: async () => undefined,
+    emit: () => undefined,
+    workerScript: '/nonexistent-worker.js',
+    downloadsDir: () => downloads,
+  };
+  const svc = new OmoebaService(platform);
+  (svc as unknown as { config: Config }).config = { ...defaultConfig(), folders: [lib] };
+  const good = '%PDF-1.4 the paper\n';
+  const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/pdf' });
+    res.end(req.url === '/good.pdf' ? good : '%PDF-1.4 another version\n');
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const json = (name: string, sc: object) => writeFile(path.join(lib, name), JSON.stringify({ omoeba: 1, ...sc }));
+  try {
+    // From its location: same checksum, kept.
+    await json('a.json', { source: { url: `${base}/good.pdf` }, pdf: { sha256: sha(good), size: good.length } });
+    assert.deepEqual(await svc.fetchMissingPdf(path.join(lib, 'a.pdf')), { status: 'downloaded', from: 'source' });
+    assert.equal(await readFile(path.join(lib, 'a.pdf'), 'utf8'), good);
+    assert.deepEqual(await svc.fetchMissingPdf(path.join(lib, 'a.pdf')), { status: 'present' });
+    // Another file there (a new version): not kept; no Drive link: an error.
+    await json('b.json', { source: { url: `${base}/other.pdf` }, pdf: { sha256: sha(good), size: good.length } });
+    await assert.rejects(svc.fetchMissingPdf(path.join(lib, 'b.pdf')), /not the same PDF/);
+    assert.ok(!(await stat(path.join(lib, 'b.pdf')).catch(() => null)));
+    // No checksum recorded: nothing can be checked, nothing is downloaded.
+    await json('c.json', { source: { url: `${base}/good.pdf` } });
+    await assert.rejects(svc.fetchMissingPdf(path.join(lib, 'c.pdf')), /No checksum/);
+    // From Google Drive: through the browser, then picked up in Downloads (checked).
+    await json('d.json', { source: { url: `${base}/other.pdf` }, googleDrive: { id: '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456' }, pdf: { sha256: sha(good), size: good.length } });
+    const r = await svc.fetchMissingPdf(path.join(lib, 'd.pdf'));
+    assert.equal(r.status, 'drive');
+    assert.equal((r as { url: string }).url, 'https://drive.google.com/uc?export=download&id=1AbCdEfGhIjKlMnOpQrStUvWxYz0123456');
+    const waiting = svc.awaitPdfDownload(path.join(lib, 'd.pdf'), 'job1', 20_000);
+    // Another PDF of the same size in Downloads is not taken.
+    await writeFile(path.join(downloads, 'decoy.pdf'), '%PDF-1.4 not the paper\n'.slice(0, good.length));
+    await writeFile(path.join(downloads, 'the paper.pdf'), good);
+    await waiting;
+    assert.equal(await readFile(path.join(lib, 'd.pdf'), 'utf8'), good);
+    assert.deepEqual((await readdir(downloads)).sort(), ['decoy.pdf']);
+    // Stopped.
+    const stopped = svc.awaitPdfDownload(path.join(lib, 'b.pdf'), 'job2', 20_000);
+    await svc.cancelAI('job2');
+    await assert.rejects(stopped, /Stopped/);
+  } finally {
+    server.close();
+    svc.dispose();
+    for (const d of [lib, downloads, process.env.OMOEBA_HOME!]) await rm(d, { recursive: true, force: true });
   }
 });

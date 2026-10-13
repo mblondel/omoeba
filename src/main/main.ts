@@ -380,6 +380,7 @@ app.whenReady().then(async () => {
     async trashItem(p: string) {
       await shell.trashItem(p);
     },
+    downloadsDir: () => app.getPath('downloads'),
     // The Gemini API key, encrypted with a key kept in the macOS Keychain.
     secrets: fileSecretStore(path.join(appDir(), 'secrets.json'), {
       available: () => safeStorage.isEncryptionAvailable(),

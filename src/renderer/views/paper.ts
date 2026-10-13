@@ -166,6 +166,8 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
 
   const content = h('div', { class: 'paper-content' });
   const readBtn = h('button', { class: 'btn primary', onclick: () => openReader() }, icon('book'), 'Read PDF');
+  /** What happens while a missing PDF is being downloaded. */
+  const fetchStatus = h('span', { class: 'fetch-status muted small', hidden: true });
   /** The PDF in Drive's web interface (when its Google Drive id was recorded in the .json). */
   const driveBtn = h(
     'button',
@@ -191,6 +193,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       icon('folder'),
       'Show in Finder',
     ),
+    fetchStatus,
     driveBtn,
     readBtn,
     h('button', { class: 'btn btn-delete', title: 'Move to Trash', onclick: () => deletePaper() }, icon('trash'), 'Delete paper'),
@@ -199,7 +202,50 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
 
   const openReader = () => {
     if (paper?.hasPdf) navigate(`#/read/${encodeURIComponent(id)}`);
+    else if (paper && canFetch(paper)) getMissingPdf(true);
   };
+
+  // --- A missing PDF (e.g. a library of .json files synced with git): downloaded from its
+  // recorded location, or from Google Drive through the browser; kept only if its SHA-256 is the
+  // recorded one (checked by the main process).
+  const canFetch = (p: PaperDetail) => !p.hasPdf && !!(p.sidecar.source?.url || p.sidecar.googleDrive?.id);
+  let fetching: string | null = null;
+  const showFetch = (text: string | null, cancel = false) => {
+    fetchStatus.hidden = !text;
+    fetchStatus.replaceChildren(
+      text ?? '',
+      cancel ? h('button', { class: 'btn small', onclick: () => fetching && api.cancelAI(fetching).catch(() => undefined) }, 'Cancel') : '',
+    );
+  };
+
+  /** `quiet`: only the recorded location (opening the page); otherwise also Google Drive, then the reader. */
+  async function getMissingPdf(open: boolean, quiet = false) {
+    if (fetching || !paper || paper.hasPdf) return;
+    const jobId = newJobId();
+    fetching = jobId;
+    readBtn.disabled = true;
+    try {
+      if (!quiet) showFetch('Downloading the PDF…');
+      const r = await api.fetchMissingPdf(id);
+      if (r.status === 'drive') {
+        if (quiet) return;
+        showFetch('Downloading the PDF from Google Drive in your browser… it is moved here once in your Downloads folder.', true);
+        await api.openExternal(r.url);
+        await api.awaitPdfDownload(id, jobId);
+      }
+      if (disposed) return;
+      paper = await api.getPaper(id);
+      render();
+      if (!quiet || r.status === 'downloaded') toast(r.status === 'drive' ? 'PDF downloaded from Google Drive (checked: same file).' : 'PDF downloaded (checked: same file).');
+      if (open) openReader();
+    } catch (e) {
+      if (!quiet && !/^Stopped/.test(errorMessage(e))) toast(errorMessage(e), 'error', 12000);
+    } finally {
+      fetching = null;
+      showFetch(null);
+      if (!disposed) readBtn.disabled = !(paper?.hasPdf || (paper && canFetch(paper)));
+    }
+  }
 
   const enabledAIs = (): AIProvider[] => (cfg?.ais ?? []).filter((a) => a.enabled);
   const aiName = (aiId: string) =>
@@ -384,12 +430,10 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     if (!paper || disposed) return;
     const p = paper;
     const sc = p.sidecar;
-    readBtn.disabled = !p.hasPdf;
-    // Without the PDF here (e.g. a library of .json files synced with git), Drive is the way to read it.
-    const inDrive = !!sc.googleDrive?.id;
-    driveBtn.hidden = !inDrive;
-    readBtn.hidden = !p.hasPdf && inDrive;
-    driveBtn.classList.toggle('primary', !p.hasPdf);
+    // Without the PDF here (e.g. a library of .json files synced with git), "Read PDF" gets it first.
+    readBtn.disabled = !!fetching || !(p.hasPdf || canFetch(p));
+    readBtn.title = p.hasPdf ? '' : canFetch(p) ? 'The PDF is not on this computer: download it (checked to be the same file), then read it' : 'The PDF is missing';
+    driveBtn.hidden = !sc.googleDrive?.id;
     clear(content);
 
     const jobs = jobsFor(id);
@@ -1365,6 +1409,8 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       setTagPalette(tags);
       render();
       autoRun();
+      // A missing PDF with a download location: fetched quietly (Google Drive waits for "Read PDF").
+      if (d.sidecar.source?.url && canFetch(d)) getMissingPdf(false, true);
       // Seeing a paper's page counts, as opening its PDF does (File › Recently Seen).
       api.markOpened(id).catch(() => undefined);
     })

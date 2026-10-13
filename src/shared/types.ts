@@ -124,6 +124,8 @@ export interface Sidecar {
   starred?: boolean;
   /** The PDF in Google Drive (recorded from Google Drive for desktop): open at drive.google.com/file/d/<id>/view. */
   googleDrive?: { id: string };
+  /** The PDF's SHA-256 and size (recorded where the PDF is), to check a copy downloaded elsewhere. */
+  pdf?: { sha256: string; size: number };
   /** User notes (Markdown with LaTeX). */
   notes?: string;
   /** AI id -> summary. */
@@ -470,6 +472,22 @@ export interface ProbableCopy extends DuplicatePaper {
   onlyHere: { passages: string[]; annotations: string[]; more: number };
 }
 
+/** fetchMissingPdf: the PDF is there (already, or downloaded and checked), or must come from Google Drive through the browser. */
+export type FetchPdfResult =
+  | { status: 'present' }
+  | { status: 'downloaded'; from: 'source' }
+  | { status: 'drive'; url: string; reason: string };
+
+/** What recordPdfFacts did. */
+export interface PdfFactsResult {
+  /** PDFs on this computer. */
+  pdfs: number;
+  /** .json files written (new or changed checksums or Drive ids). */
+  recorded: number;
+  /** PDFs that Google Drive for desktop syncs from this computer (null: it is not there). */
+  inDrive: number | null;
+}
+
 /** Papers that are probably the same: nearly the same text, different files. */
 export interface ProbableGroup {
   /** How much of their text is the same (0–1, the least similar pair). */
@@ -629,12 +647,17 @@ export interface OmoebaAPI {
   /** Move a paper's PDF, .json, .skim and audio files to the Trash. */
   trashPaper(id: string): Promise<void>;
   /**
-   * Record in the papers' .json files the Google Drive ids of their PDFs (done after each index
-   * sync when Google Drive for desktop syncs the library). `found`: PDFs whose id was found;
-   * `recorded`: .json files written (new or changed ids); `notFound`: PDFs Drive does not sync
-   * from this computer (or not yet).
+   * Record in the papers' .json files their PDFs' SHA-256 and size, and Google Drive ids (done
+   * after each index sync).
    */
-  recordDriveLinks(): Promise<{ found: number; recorded: number; notFound: number }>;
+  recordPdfFacts(): Promise<PdfFactsResult>;
+  /**
+   * A paper's PDF is missing: download it from its recorded location (kept only if its SHA-256 is
+   * the recorded one), or say that it must come from Google Drive (see FetchPdfResult).
+   */
+  fetchMissingPdf(id: string): Promise<FetchPdfResult>;
+  /** Wait for the paper's PDF in the Downloads folder (from Google Drive), check it, put it next to its .json. Stopped by cancelAI(jobId). */
+  awaitPdfDownload(id: string, jobId?: string): Promise<void>;
 
   loadAnnotations(id: string): Promise<AnnotationSources>;
   saveAnnotations(id: string, annotations: Annotation[]): Promise<void>;

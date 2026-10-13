@@ -315,6 +315,15 @@ a:hover {
   vertical-align: -2px;
   margin-right: 5px;
 }
+.fetch-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 420px;
+}
+.fetch-status[hidden] {
+  display: none;
+}
 /* A delete button that only turns red on hover (a solid red one would draw the eye). */
 .btn.btn-delete:hover:not(:disabled) {
   color: var(--danger);

@@ -3,7 +3,8 @@
  * platform-specific operations are injected through `Platform`, so the same code can be
  * driven by Electron IPC (main.ts) or by the development bridge used in tests.
  */
-import { promises as fs, watch } from 'node:fs';
+import { constants as fsConstants, promises as fs, watch } from 'node:fs';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import type {
@@ -18,6 +19,8 @@ import type {
   DuplicatePaper,
   ProbableCopy,
   ProbableGroup,
+  PdfFactsResult,
+  FetchPdfResult,
   GeminiKeyStatus,
   JobStep,
   Synthesis,
@@ -120,6 +123,8 @@ import {
 
 export interface Platform {
   pickFolders(): Promise<string[]>;
+  /** The user's Downloads folder (where the browser saves files). */
+  downloadsDir?(): string;
   /** Native dialog to choose a file to open (with these extensions, without the dot). */
   pickFile?(title: string, extensions: string[]): Promise<string | null>;
   /** Native dialog to choose one folder, starting at `defaultPath`. */
@@ -178,11 +183,11 @@ export class OmoebaService implements OmoebaAPI {
       (status, changed) => {
         platform.emit({ type: 'index-status', status });
         if (changed) platform.emit({ type: 'library-changed' });
-        // After each sync: the Google Drive links of PDFs that Google Drive for desktop syncs
-        // (nothing at all on a computer without it).
+        // After each sync: the PDFs' checksums, and their Google Drive links when Google Drive
+        // for desktop syncs them (see recordPdfFacts).
         if (!status.running && status.lastSync && status.lastSync !== this.lastDriveSync) {
           this.lastDriveSync = status.lastSync;
-          void this.recordDriveLinks(true).catch((e) => console.error('Google Drive links:', e));
+          void this.recordPdfFacts(true).catch((e) => console.error('PDF checksums and Drive links:', e));
         }
       },
       cfg.legacyIndexPath(),
@@ -1067,56 +1072,158 @@ export class OmoebaService implements OmoebaAPI {
     }
   }
 
-  // --- Google Drive links (Settings › recordDriveLinks) --------------------------------
+  // --- What other computers need to get a PDF back: its checksum, its Google Drive link -----
   private lastDriveSync: string | null = null;
-  private drivePass: Promise<{ found: number; recorded: number; notFound: number }> | null = null;
-
+  private factsPass: Promise<PdfFactsResult> | null = null;
   /** What the last pass saw (Drive's databases, the library): the same again means nothing to do. */
-  private driveSeen = '';
+  private factsSeen = '';
 
-  /** `quiet`: an automatic pass, which does nothing if nothing changed or Drive is not there. */
-  recordDriveLinks(quiet = false): Promise<{ found: number; recorded: number; notFound: number }> {
+  /**
+   * Record in each paper's .json its PDF's SHA-256 and size, and its Google Drive id when Google
+   * Drive for desktop syncs it from this computer (done after each index sync). A computer
+   * without the PDF can then download it again and check it is the same file.
+   * `quiet`: an automatic pass, which does nothing if nothing changed since the last one.
+   */
+  recordPdfFacts(quiet = false): Promise<PdfFactsResult> {
     // (One pass at a time.)
-    this.drivePass ??= this.recordDriveLinksNow(quiet).finally(() => (this.drivePass = null));
-    return this.drivePass;
+    this.factsPass ??= this.recordPdfFactsNow(quiet).finally(() => (this.factsPass = null));
+    return this.factsPass;
   }
 
-  private async recordDriveLinksNow(quiet: boolean): Promise<{ found: number; recorded: number; notFound: number }> {
-    const none = { found: 0, recorded: 0, notFound: 0 };
+  private async recordPdfFactsNow(quiet: boolean): Promise<PdfFactsResult> {
     const state = await driveFsState();
-    if (!state) {
-      if (quiet) return none;
-      throw new Error('Google Drive for desktop does not sync files from this computer.');
-    }
     const papers = (await this.listPapers()).filter((p) => p.hasPdf && !p.cloudOnly);
-    const seen = `${state}\n${papers.map((p) => `${p.id}:${p.pdfMtime}`).join('\n')}`;
-    if (quiet && seen === this.driveSeen) return none;
-    const files = byInode(await readDriveFiles());
-    this.driveSeen = seen;
-    let found = 0;
+    const seen = `${state ?? 'no drive'}\n${papers.map((p) => `${p.id}:${p.pdfMtime}`).join('\n')}`;
+    if (quiet && seen === this.factsSeen) return { pdfs: papers.length, recorded: 0, inDrive: null };
+    const files = state ? byInode(await readDriveFiles()) : null;
+    this.factsSeen = seen;
     let recorded = 0;
+    let inDrive = 0;
     for (const p of papers) {
-      const st = await fs.stat(p.pdfPath).catch(() => null);
-      if (!st) continue;
-      const id = driveIdOf(files, { path: p.pdfPath, inode: st.ino });
-      if (!id) continue;
-      found++;
       try {
         await this.serially(p.pdfPath, async () => {
           await this.checkNotTrashed(p.pdfPath);
+          const st = await fs.stat(p.pdfPath).catch(() => null);
+          if (!st?.isFile()) return;
+          const id = files ? driveIdOf(files, { path: p.pdfPath, inode: st.ino }) : null;
+          if (id) inDrive++;
           const sc = await readSidecarStrict(jsonPathOf(p.pdfPath));
-          if (sc.googleDrive?.id === id) return;
-          await updateSidecar(jsonPathOf(p.pdfPath), { googleDrive: { id } });
+          const patch: Partial<Sidecar> = {};
+          if (id && sc.googleDrive?.id !== id) patch.googleDrive = { id };
+          // The checksum in the .json is trusted while the PDF keeps its size and was not
+          // changed after the .json was written; otherwise the PDF is read (once).
+          const jsonMtime = (await fs.stat(jsonPathOf(p.pdfPath)).catch(() => null))?.mtimeMs ?? 0;
+          if (!sc.pdf?.sha256 || sc.pdf.size !== st.size || st.mtimeMs > jsonMtime) {
+            const hashed = await this.hashes.hash(p.pdfPath);
+            if (hashed && (sc.pdf?.sha256 !== hashed.sha256 || sc.pdf?.size !== hashed.size)) patch.pdf = { sha256: hashed.sha256, size: hashed.size };
+          }
+          if (!Object.keys(patch).length) return;
+          await updateSidecar(jsonPathOf(p.pdfPath), patch);
           recorded++;
           this.index.refresh([p.pdfPath]);
           this.platform.emit({ type: 'paper-updated', id: p.pdfPath });
         });
       } catch (e) {
         // (An unreadable .json is left alone.)
-        console.error(`Google Drive link not recorded for ${p.pdfPath}:`, (e as Error).message);
+        console.error(`Checksum and Drive link not recorded for ${p.pdfPath}:`, (e as Error).message);
       }
     }
-    return { found, recorded, notFound: papers.length - found };
+    return { pdfs: papers.length, recorded, inDrive: files ? inDrive : null };
+  }
+
+  // --- Getting a missing PDF back (a library of .json files, e.g. synced with git) -----------
+
+  /** The checksum a downloaded copy must have (recorded where the PDF was). */
+  private expectedPdf(sc: Sidecar): { sha256: string; size?: number } | null {
+    if (sc.pdf?.sha256) return { sha256: sc.pdf.sha256, size: sc.pdf.size };
+    if (sc.source?.sha256) return { sha256: sc.source.sha256 };
+    return null;
+  }
+
+  /**
+   * A paper's PDF is missing: download it from the location recorded in its .json, and keep it
+   * only if its SHA-256 is the recorded one. If that fails and the PDF is in Google Drive, the
+   * answer says so: the renderer opens its download in the browser (signed in to Google), then
+   * calls awaitPdfDownload.
+   */
+  async fetchMissingPdf(id: string): Promise<FetchPdfResult> {
+    const pdfPath = this.checkId(id);
+    return this.serially(pdfPath, async () => {
+      if (await fs.stat(pdfPath).catch(() => null)) return { status: 'present' };
+      const sc = await readSidecarStrict(jsonPathOf(pdfPath));
+      const want = this.expectedPdf(sc);
+      if (!want) throw new Error('No checksum of this PDF is recorded in its .json, so a downloaded copy could not be checked. Open Omoeba once on the computer that has the PDF (it records it).');
+      let reason = '';
+      if (sc.source?.url) {
+        try {
+          const { data } = await downloadPdf(sc.source.url);
+          if (createHash('sha256').update(data).digest('hex') === want.sha256) {
+            await writeFileAtomic(pdfPath, data);
+            this.newFiles(pdfPath);
+            this.platform.emit({ type: 'paper-updated', id: pdfPath });
+            return { status: 'downloaded', from: 'source' };
+          }
+          reason = `the file at ${sc.source.url} is not the same PDF (its SHA-256 differs)`;
+        } catch (e) {
+          reason = `it could not be downloaded from ${sc.source.url} (${(e as Error)?.message ?? String(e)})`;
+        }
+      } else reason = 'no download location is recorded';
+      if (sc.googleDrive?.id) {
+        return { status: 'drive', url: `https://drive.google.com/uc?export=download&id=${encodeURIComponent(sc.googleDrive.id)}`, reason };
+      }
+      throw new Error(`The PDF could not be downloaded: ${reason}, and no Google Drive link is recorded.`);
+    });
+  }
+
+  /**
+   * Wait (up to `timeoutMs`) for the paper's PDF to arrive in the Downloads folder (downloaded by
+   * the browser from Google Drive), then move it next to the .json, once its SHA-256 is checked.
+   * PDFs already there count too (a download made earlier). Stopped by cancelAI(jobId).
+   */
+  async awaitPdfDownload(id: string, jobId?: string, timeoutMs = 15 * 60_000): Promise<void> {
+    const pdfPath = this.checkId(id);
+    const sc = await readSidecarStrict(jsonPathOf(pdfPath));
+    const want = this.expectedPdf(sc);
+    if (!want) throw new Error('No checksum of this PDF is recorded in its .json.');
+    const downloads = this.platform.downloadsDir?.() ?? path.join(os.homedir(), 'Downloads');
+    const checked = new Map<string, string>();
+    const started = Date.now();
+    try {
+      while (Date.now() - started < timeoutMs) {
+        if (jobId && this.cancelled.has(jobId)) throw new Error('Stopped.');
+        if (await fs.stat(pdfPath).catch(() => null)) return;
+        for (const name of await fs.readdir(downloads).catch(() => [] as string[])) {
+          if (!/\.pdf$/i.test(name)) continue;
+          const file = path.join(downloads, name);
+          const st = await fs.stat(file).catch(() => null);
+          if (!st?.isFile() || (want.size !== undefined && st.size !== want.size)) continue;
+          // (Each file once while it does not change; one still being written changes.)
+          const key = `${st.size}:${st.mtimeMs}`;
+          if (checked.get(file) === key) continue;
+          checked.set(file, key);
+          const hashed = await this.hashes.hash(file);
+          if (hashed?.sha256 !== want.sha256) continue;
+          await this.serially(pdfPath, async () => {
+            if (await fs.stat(pdfPath).catch(() => null)) return;
+            await fs.rename(file, pdfPath).catch(async (e: NodeJS.ErrnoException) => {
+              // (Downloads on another disk than the library.)
+              if (e.code !== 'EXDEV') throw e;
+              await fs.copyFile(file, pdfPath, fsConstants.COPYFILE_EXCL);
+              await fs.rm(file, { force: true });
+            });
+            this.renamedTo.delete(pdfPath);
+            this.trashed.delete(pdfPath);
+            this.newFiles(pdfPath);
+            this.platform.emit({ type: 'paper-updated', id: pdfPath });
+          });
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      throw new Error('The PDF did not arrive in your Downloads folder.');
+    } finally {
+      if (jobId) this.cancelled.delete(jobId);
+    }
   }
 
   /** Operations on one paper's files, one after the other (e.g. saving annotations, then renaming). */
