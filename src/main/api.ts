@@ -106,6 +106,8 @@ import { assistPrompt, parseAssistReply, type AssistResult, type AssistTurn } fr
 import { Conversations } from './conversations';
 import { byInode, driveFsState, driveIdOf, readDriveFiles } from './gdrive';
 import { appendBibEntry, bibField, bibliographyFiles, fetchDblpBibtex, findBibEntry, freeKey, freeKeyAmong, makeCiteKey, parseBibFile, setBibKey, titleSimilarity } from './cite';
+import { WebLibraryData } from './webdata';
+import { DATA_FILE, libraryScript, sameLibraryData } from '../web/paper';
 import { arxivTitle, fileNameForTitle, matchLibrary, parseRelated, pdfCandidates, relatedPrompt, uninformativeFileName } from './related';
 import {
   arxivIdOf,
@@ -127,6 +129,8 @@ export interface Platform {
   downloadsDir?(): string;
   /** Bring Omoeba's window back to the front (e.g. after opening something in the browser). */
   focusWindow?(): void;
+  /** The library in a browser, as built (dist/web/index.html). */
+  webIndexPath?(): string;
   /** Native dialog to choose a file to open (with these extensions, without the dot). */
   pickFile?(title: string, extensions: string[]): Promise<string | null>;
   /** Native dialog to choose one folder, starting at `defaultPath`. */
@@ -190,6 +194,7 @@ export class OmoebaService implements OmoebaAPI {
         if (!status.running && status.lastSync && status.lastSync !== this.lastDriveSync) {
           this.lastDriveSync = status.lastSync;
           void this.recordPdfFacts(true).catch((e) => console.error('PDF checksums and Drive links:', e));
+          void this.writeWebIndex().catch((e) => console.error('index.html:', e));
         }
       },
       cfg.legacyIndexPath(),
@@ -247,6 +252,7 @@ export class OmoebaService implements OmoebaAPI {
   async saveConfig(next: Config): Promise<Config> {
     const foldersChanged = JSON.stringify(next.folders) !== JSON.stringify(this.config.folders);
     this.config = await cfg.saveConfig(next);
+    void this.writeWebIndex().catch((e) => console.error('index.html:', e));
     this.firstRun = false;
     this.index.startPeriodic(this.config.indexIntervalMinutes);
     if (foldersChanged) {
@@ -1080,6 +1086,54 @@ export class OmoebaService implements OmoebaAPI {
       const to = this.renamedTo.get(pdfPath);
       throw new Error(to ? `This paper was renamed to ${path.basename(to)}.` : 'This paper was moved to the Trash.');
     }
+  }
+
+  // --- The library in a browser (Settings › writeWebIndex) -------------------------------
+
+  /**
+   * Keep index.html (the library in a browser, see src/web/app.ts) in each library folder, when
+   * asked in the settings, with the folder's papers beside it (omoeba-library.js, which the page
+   * loads: it cannot read the folder by itself). Each is written only when it differs: the page
+   * for a new version of Omoeba, the papers when one changed (one line per paper). An
+   * index.html that is not Omoeba's is never replaced.
+   */
+  async writeWebIndex(): Promise<string[]> {
+    if (!this.config?.writeWebIndex) return [];
+    // (One pass at a time; another one asked meanwhile runs after it.)
+    const run = (this.webIndexPass ?? Promise.resolve([] as string[])).catch(() => []).then(() => this.writeWebIndexNow());
+    this.webIndexPass = run;
+    return run;
+  }
+  private webIndexPass: Promise<string[]> | null = null;
+  private webData = new WebLibraryData();
+
+  private async writeWebIndexNow(): Promise<string[]> {
+    if (!this.config?.writeWebIndex) return [];
+    const src = this.platform.webIndexPath?.();
+    const page = src ? await fs.readFile(src).catch(() => null) : null;
+    if (!page) return [];
+    const written: string[] = [];
+    const writeAtomic = async (dest: string, data: Buffer | string) => {
+      const tmp = `${dest}.tmp-${process.pid}`;
+      await fs.writeFile(tmp, data);
+      await fs.rename(tmp, dest);
+      written.push(dest);
+    };
+    for (const folder of this.config.folders) {
+      if (!(await fs.stat(folder).catch(() => null))?.isDirectory()) continue;
+      const dest = path.join(folder, 'index.html');
+      const current = await fs.readFile(dest).catch(() => null);
+      if (current && !current.includes('<meta name="generator" content="Omoeba">')) {
+        console.error(`${dest} is not Omoeba's: left as it is.`);
+        continue;
+      }
+      if (!current?.equals(page)) await writeAtomic(dest, page);
+      const dataPath = path.join(folder, DATA_FILE);
+      const data = libraryScript(await this.webData.papers(folder), new Date().toISOString());
+      const old = await fs.readFile(dataPath, 'utf8').catch(() => null);
+      if (old === null || !sameLibraryData(old, data)) await writeAtomic(dataPath, data);
+    }
+    return written;
   }
 
   // --- What other computers need to get a PDF back: its checksum, its Google Drive link -----

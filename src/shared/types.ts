@@ -41,6 +41,12 @@ export interface Config {
    */
   saveSkim: boolean;
   /**
+   * Keep an index.html in each library folder: the library in a browser (search, read, add
+   * PDFs) on computers without Omoeba. Off by default: on only on the computer holding the
+   * whole library.
+   */
+  writeWebIndex: boolean;
+  /**
    * Audio summaries (read by Gemini's voices; see setGeminiKey): the voices of the two hosts
    * (see GEMINI_VOICES), and the language of the conversation.
    */

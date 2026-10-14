@@ -64,6 +64,7 @@ export function defaultConfig(): Config {
     theme: 'system',
     darkPdf: true,
     saveSkim: false,
+    writeWebIndex: false,
   };
 }
 
@@ -86,6 +87,7 @@ function normalize(raw: Partial<Config>): Config {
     theme: raw.theme === 'light' || raw.theme === 'dark' ? raw.theme : 'system',
     darkPdf: raw.darkPdf ?? d.darkPdf,
     saveSkim: typeof raw.saveSkim === 'boolean' ? raw.saveSkim : d.saveSkim,
+    writeWebIndex: typeof raw.writeWebIndex === 'boolean' ? raw.writeWebIndex : d.writeWebIndex,
   };
   if (typeof raw.userName === 'string' && raw.userName.trim()) cfg.userName = raw.userName.trim();
   for (const k of ['geminiVoice', 'geminiVoice2', 'audioLanguage'] as const) {

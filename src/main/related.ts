@@ -237,15 +237,7 @@ export async function arxivTitle(arxivId: string, timeoutMs = 10_000): Promise<s
   return parseArxivFeed(await res.text()).find((e) => e.id === id)?.title ?? null;
 }
 
-/**
- * Whether a downloaded file's name says nothing about the paper ("2605.07105v1.pdf",
- * "document.pdf", "pdf?id=…"): it is then named after the paper's title.
- */
-export function uninformativeFileName(fileName: string): boolean {
-  const stem = fileName.replace(/\.pdf$/i, '').toLowerCase();
-  const generic = new Set(['pdf', 'document', 'download', 'fulltext', 'full', 'file', 'paper', 'arxiv', 'abs', 'view', 'viewcontent', 'content', 'article', 'main', 'preprint']);
-  return !(stem.match(/[a-z]{3,}/g) ?? []).some((w) => !generic.has(w));
-}
+export { uninformativeFileName } from '../shared/filenames';
 
 /** arXiv papers whose title is exactly this one (arXiv API title search). */
 export async function arxivByTitle(title: string, timeoutMs = 15_000): Promise<string[]> {

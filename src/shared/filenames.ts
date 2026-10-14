@@ -36,3 +36,13 @@ export function cleanPdfStem(name: string): string {
   if (new TextEncoder().encode(stem).length > 200) throw new Error('The file name is too long.');
   return stem;
 }
+
+/**
+ * Whether a downloaded file's name says nothing about the paper ("2605.07105v1.pdf",
+ * "document.pdf", "pdf?id=…"): it is then named after the paper's title.
+ */
+export function uninformativeFileName(fileName: string): boolean {
+  const stem = fileName.replace(/\.pdf$/i, '').toLowerCase();
+  const generic = new Set(['pdf', 'document', 'download', 'fulltext', 'full', 'file', 'paper', 'arxiv', 'abs', 'view', 'viewcontent', 'content', 'article', 'main', 'preprint']);
+  return !(stem.match(/[a-z]{3,}/g) ?? []).some((w) => !generic.has(w));
+}
