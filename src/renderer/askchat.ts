@@ -6,7 +6,7 @@
  * question is about.
  */
 import type { Config, PaperDetail } from '../shared/types';
-import { aiChoices, formerChatKey } from '../shared/aichoices';
+import { aiChoiceName, aiChoices, conversationOf, conversationPatch } from '../shared/aichoices';
 import { api, newJobId } from './api';
 import { clear, confirmDialog, errorMessage, h, icon, iconButton, toast } from './dom';
 import { mountMarkdown } from './markdown';
@@ -36,7 +36,7 @@ export interface AskChat {
 
 export function createAskChat(opts: AskChatOptions): AskChat {
   let aiId: string | null = null;
-  let job: { jobId: string; question: string } | null = null;
+  let job: { jobId: string; question: string; ai: string } | null = null;
   let context: string | null = null;
 
   const root = h('div', { class: 'ask-chat' });
@@ -45,7 +45,14 @@ export function createAskChat(opts: AskChatOptions): AskChat {
   const ctxSlot = h('div', { class: 'ctx-slot' });
   const input = h('textarea', { rows: 3 });
   const sendBtn = h('button', { class: 'icon-btn send', title: 'Send (↩ — ⇧↩ for a new line)', onclick: () => send() }, icon('send'));
-  const inputRow = h('div', { class: 'chat-input' }, ctxSlot, input, sendBtn);
+  // The question being written, with (below it) the AI that answers it and the Send button.
+  const aiSlot = h('div', { class: 'composer-ai' });
+  const inputRow = h(
+    'div',
+    { class: 'chat-input' },
+    ctxSlot,
+    h('div', { class: 'composer', onclick: (e: Event) => e.target === e.currentTarget && input.focus() }, input, h('div', { class: 'composer-foot' }, aiSlot, sendBtn)),
+  );
 
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
@@ -60,7 +67,7 @@ export function createAskChat(opts: AskChatOptions): AskChat {
     const question = (q ?? input.value).trim();
     if (!question || job || !aiId) return;
     const jobId = newJobId();
-    job = { jobId, question };
+    job = { jobId, question, ai: enabledAIs().find((a) => a.id === aiId)?.name ?? '' };
     const selection = context ?? undefined;
     context = null;
     if (!q) input.value = '';
@@ -94,23 +101,25 @@ export function createAskChat(opts: AskChatOptions): AskChat {
     const cfg = opts.getConfig();
     if (!aiId || !ais.some((a) => a.id === aiId)) aiId = cfg?.defaultAI && ais.some((a) => a.id === cfg.defaultAI) ? cfg.defaultAI : ais[0].id;
     const chats = opts.getPaper()?.sidecar.chats;
-    const former = formerChatKey(cfg?.ais ?? [], aiId);
-    const history = chats?.[aiId] ?? (former ? chats?.[former] : undefined) ?? [];
+    // One conversation: the AI can be changed for each question.
+    const history = conversationOf(chats);
 
-    // Toolbar: which AI answers, and clearing the conversation.
+    // Toolbar: which AI answers the next question, and clearing the conversation.
     clear(toolbar);
-    const aiSel = h('select', { class: 'ai-select', title: 'Which AI answers your questions' }, ais.map((a) => h('option', { value: a.id, selected: a.id === aiId }, a.name)));
+    const aiSel = h('select', { class: 'ai-select', title: 'Which AI answers your next question (it sees the whole conversation)' }, ais.map((a) => h('option', { value: a.id, selected: a.id === aiId }, a.name)));
     aiSel.addEventListener('change', () => {
       aiId = aiSel.value;
       refresh();
     });
-    toolbar.append(aiSel, h('span', { class: 'spacer' }));
+    clear(aiSlot);
+    aiSlot.append(aiSel);
+    toolbar.hidden = !history.length;
+    toolbar.append(h('span', { class: 'muted small' }, 'Conversation'), h('span', { class: 'spacer' }));
     if (history.length)
       toolbar.append(
         iconButton('trash', 'Clear this conversation', async () => {
-          if (!aiId) return;
           if (await confirmDialog('Clear conversation', 'Delete this conversation?', 'Clear', true)) {
-            opts.setPaper(await api.updateSidecar(opts.id, { chats: { [aiId]: null as unknown as [], ...(former ? { [former]: null as unknown as [] } : {}) } }));
+            opts.setPaper(await api.updateSidecar(opts.id, { chats: conversationPatch(opts.getPaper()?.sidecar.chats, null) }));
             refresh();
           }
         }),
@@ -119,6 +128,8 @@ export function createAskChat(opts: AskChatOptions): AskChat {
     // Messages.
     clear(msgs);
     for (const m of history) {
+      // (Who answered: above each answer.)
+      if (m.role === 'assistant' && m.ai) msgs.append(h('div', { class: 'msg-by muted' }, aiChoiceName(cfg?.ais ?? [], m.ai)));
       const b = h('div', { class: `msg ${m.role}` });
       if (m.role === 'assistant') mountMarkdown(b, m.content, { onPageLink: (n) => opts.onPageLink(n), onExternal: (u) => api.openExternal(u) });
       else b.textContent = m.content;
@@ -128,6 +139,7 @@ export function createAskChat(opts: AskChatOptions): AskChat {
       const j = job;
       msgs.append(
         h('div', { class: 'msg user' }, j.question),
+        h('div', { class: 'msg-by muted' }, j.ai),
         h(
           'div',
           { class: 'msg assistant pending' },
@@ -166,7 +178,7 @@ export function createAskChat(opts: AskChatOptions): AskChat {
         ),
       );
     }
-    input.placeholder = `Ask ${ais.find((a) => a.id === aiId)?.name ?? 'AI'}…  (Enter to send)`;
+    input.placeholder = 'Ask a question about this paper…  (Enter to send)';
     sendBtn.disabled = !!job;
     msgs.scrollTop = msgs.scrollHeight;
   }

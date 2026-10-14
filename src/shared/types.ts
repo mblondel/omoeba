@@ -212,6 +212,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   at: string;
+  /** An answer: the AI that wrote it (its choice id, e.g. "claude:opus"). */
+  ai?: string;
 }
 
 /** Row in the paper list. */

@@ -47,7 +47,7 @@ import type {
   SummaryEntry,
 } from '../shared/types';
 import * as cfg from './config';
-import { findAIChoice, formerChatKey } from '../shared/aichoices';
+import { conversationOf, conversationPatch, findAIChoice } from '../shared/aichoices';
 import { listModels, modelListerFor } from './aimodels';
 import { IndexManager } from './indexer';
 import { ThumbCache } from './thumbcache';
@@ -1687,8 +1687,8 @@ export class OmoebaService implements OmoebaAPI {
     const pdfPath = this.checkId(id);
     const ai = this.aiFor(aiId);
     const detail = await this.getPaper(pdfPath);
-    const former = formerChatKey(this.config.ais, ai.id);
-    const history: ChatMessage[] = detail.sidecar.chats?.[ai.id] ?? (former ? detail.sidecar.chats?.[former] : undefined) ?? [];
+    // (One conversation, whichever AI answers each question.)
+    const history: ChatMessage[] = conversationOf(detail.sidecar.chats);
     const pages = await this.paperPages(pdfPath);
     const out = await runAI(ai, askPrompt(pages, detail.title, history, question, context ?? {}), {
       jobId,
@@ -1698,10 +1698,9 @@ export class OmoebaService implements OmoebaAPI {
     const next: ChatMessage[] = [
       ...history,
       { role: 'user', content: question, at: now },
-      { role: 'assistant', content: stripFences(out), at: new Date().toISOString() },
+      { role: 'assistant', content: stripFences(out), at: new Date().toISOString(), ai: ai.id },
     ];
-    // (A conversation from before models were offered: moved to this model.)
-    return this.updateSidecar(pdfPath, { chats: { [ai.id]: next, ...(former ? { [former]: null as unknown as [] } : {}) } });
+    return this.updateSidecar(pdfPath, { chats: conversationPatch(detail.sidecar.chats, next) });
   }
 
   private cancelled = new Set<string>();

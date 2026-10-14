@@ -5,7 +5,7 @@
  * (its own default model). A choice's id is the AI's id, or "id:model"; summaries
  * are kept under it (so that a summary says which model wrote it).
  */
-import type { AIProvider } from './types';
+import type { AIProvider, ChatMessage } from './types';
 
 /** "sonnet" → "Sonnet" (a model's name in the menus); names such as "gpt-5" are kept as they are. */
 export const modelLabel = (model: string) => (/^[a-z]+$/.test(model) ? model[0].toUpperCase() + model.slice(1) : model);
@@ -57,13 +57,29 @@ export function asAIChoice(ais: AIProvider[], id: string | null | undefined): st
   return first?.id ?? null;
 }
 
+/** Where a paper's "Ask AI" conversation is kept in its sidecar's `chats` (one, whichever AIs answer). */
+export const CONVERSATION = 'conversation';
+
 /**
- * Where a choice's conversations were kept before models were offered: "claude" for the AI's
- * first model ("claude:opus"); else null. (They are shown with that model, and moved on its next answer.)
+ * A paper's conversation: the one kept under CONVERSATION, else (written before the AI could be
+ * changed on each turn) the conversations kept per AI, put together in the order they took place.
  */
-export function formerChatKey(ais: AIProvider[], id: string): string | null {
-  const i = id.indexOf(':');
-  if (i <= 0) return null;
-  const ai = ais.find((a) => a.id === id.slice(0, i));
-  return ai && (ai.models ?? [])[0] === id.slice(i + 1) ? ai.id : null;
+export function conversationOf(chats: Record<string, ChatMessage[]> | undefined): ChatMessage[] {
+  if (!chats) return [];
+  if (Array.isArray(chats[CONVERSATION])) return chats[CONVERSATION];
+  const all: ChatMessage[] = [];
+  for (const [ai, msgs] of Object.entries(chats)) {
+    if (Array.isArray(msgs)) for (const m of msgs) all.push(m.role === 'assistant' && !m.ai ? { ...m, ai } : m);
+  }
+  // (Stable: a question stays before its answer.)
+  return all.map((m, i) => ({ m, i })).sort((a, b) => String(a.m.at ?? '').localeCompare(String(b.m.at ?? '')) || a.i - b.i).map((x) => x.m);
+}
+
+/** The sidecar patch keeping this conversation (and dropping the ones kept per AI before). */
+export function conversationPatch(chats: Record<string, ChatMessage[]> | undefined, next: ChatMessage[] | null): Record<string, ChatMessage[]> {
+  const patch: Record<string, ChatMessage[] | null> = {};
+  for (const k of Object.keys(chats ?? {})) if (k !== CONVERSATION) patch[k] = null;
+  patch[CONVERSATION] = next && next.length ? next : null;
+  // (null removes a key: see updateSidecar.)
+  return patch as Record<string, ChatMessage[]>;
 }
