@@ -1,5 +1,6 @@
 /** Renderer entry: tabs and app-wide actions. */
 import type { Config, SyncTexPosition } from '../shared/types';
+import { openFindBar } from './findbar';
 import { api } from './api';
 import { clear, errorMessage, h, icon, installTooltips, promptDialog, toast } from './dom';
 import { mountDuplicates } from './views/duplicates';
@@ -654,7 +655,12 @@ api.onMenu((action) => {
   // (The file editor, CodeMirror, has its own undo history: it gets the action.)
   else if ((action === 'undo' || action === 'redo') && isTextField(document.activeElement) && !document.activeElement?.closest('.cm-editor'))
     document.execCommand(action);
-  else window.dispatchEvent(new CustomEvent('omoeba-menu', { detail: action }));
+  else {
+    const ev = new CustomEvent('omoeba-menu', { detail: action, cancelable: true });
+    window.dispatchEvent(ev);
+    // View › Find in a tab without a search of its own (the paper page…): find in the page.
+    if (action === 'find' && !ev.defaultPrevented && active) openFindBar(active.panel);
+  }
 });
 
 // Keep tab titles in sync when a paper's title is edited or extracted.

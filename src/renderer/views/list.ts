@@ -785,7 +785,10 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
     }
   });
   const onMenu = (e: Event) => {
-    if ((e as CustomEvent).detail === 'find' && isActiveView(root)) search.focus();
+    if ((e as CustomEvent).detail === 'find' && isActiveView(root)) {
+      e.preventDefault();
+      search.focus();
+    }
   };
   window.addEventListener('omoeba-menu', onMenu);
   const statusTimer = window.setInterval(renderIndexStatus, 30_000);

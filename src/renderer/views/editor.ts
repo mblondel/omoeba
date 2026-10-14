@@ -316,7 +316,10 @@ export function mountEditor(root: HTMLElement, file: string): ViewHandle {
     if (!view || !isActiveView(root)) return;
     if (action === 'undo') undo(view);
     else if (action === 'redo') redo(view);
-    else if (action === 'find') openSearchPanel(view);
+    else if (action === 'find') {
+      e.preventDefault();
+      openSearchPanel(view);
+    }
     else if (action === 'compile' && (language === 'latex' || language === 'bibtex')) compileLatex(file);
     else if (action === 'ask-ai') assist.open();
   };

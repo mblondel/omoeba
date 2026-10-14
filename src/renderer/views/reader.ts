@@ -1163,7 +1163,10 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
   const onMenu = (e: Event) => {
     if (!isActiveView(root)) return;
     const a = (e as CustomEvent).detail as string;
-    if (a === 'find') openFind();
+    if (a === 'find') {
+      e.preventDefault();
+      openFind();
+    }
     else if (a === 'toggle-left') toggleLeft();
     else if (a === 'toggle-right') toggleRight();
     else if (a === 'zoom-in') zoomBy(1.15);

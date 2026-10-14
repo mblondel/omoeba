@@ -3224,3 +3224,54 @@ textarea.assist-input {
 .batch-log li.failed .batch-mark {
   color: var(--danger, #d33a2f);
 }
+
+/* Find in the page (src/renderer/findbar.ts): a bar across the bottom of the tab, the tab's
+   content above it. */
+.tab-panel.finding {
+  bottom: 41px;
+}
+.tab-panel > .page-find {
+  position: absolute;
+  top: auto;
+  left: 0;
+  right: 0;
+  bottom: -41px;
+  width: auto;
+  height: 41px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+.page-find .find-input {
+  width: 260px;
+  height: 26px;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  padding: 0 4px;
+}
+.page-find .find-input:focus {
+  box-shadow: none;
+}
+.page-find .find-count {
+  font-size: 12px;
+  min-width: 52px;
+  margin-right: auto;
+  white-space: nowrap;
+}
+.page-find.not-found .find-count {
+  color: var(--danger, #c0392b);
+}
+::highlight(omoeba-find) {
+  background-color: rgba(255, 213, 0, 0.45);
+  color: inherit;
+}
+::highlight(omoeba-find-current) {
+  background-color: rgba(255, 140, 0, 0.85);
+  color: #000;
+}
