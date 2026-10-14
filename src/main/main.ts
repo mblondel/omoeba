@@ -259,6 +259,7 @@ function buildMenu() {
         { label: 'Starred Papers', accelerator: 'CmdOrCtrl+Shift+S', click: send('starred') },
         { label: 'Syntheses', click: send('syntheses') },
         { label: 'Find Duplicates', click: send('duplicates') },
+        { label: 'Summarize the Library…', click: send('summarize-library') },
         { type: 'separator' },
         ...(isMac ? [] : [{ label: 'Settings…', accelerator: 'Ctrl+,', click: send('settings') }]),
         { id: 'close-tab', label: 'Close Tab', accelerator: 'CmdOrCtrl+W', enabled: canCloseTab, click: send('close-tab') },

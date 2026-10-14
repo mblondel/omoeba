@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import type {
+  AIBacklogItem,
   AIDetectResult,
   AIProvider,
   Annotation,
@@ -1602,6 +1603,30 @@ export class OmoebaService implements OmoebaAPI {
       if (tags.length && !hasTags(await readSidecar(jsonPathOf(pdfPath)))) patch.tags = tags;
     }
     return this.updateSidecar(pdfPath, patch);
+  }
+
+  /**
+   * The papers (with their PDF) whose metadata or summary the AI has not written yet, as the paper
+   * page decides it (see autoRun in src/renderer/views/paper.ts): File › Summarize the Library.
+   */
+  async aiBacklog(): Promise<AIBacklogItem[]> {
+    const papers = (await this.listPapers()).filter((p) => p.hasPdf);
+    const out: AIBacklogItem[] = [];
+    // (A few .json files at a time: thousands of them.)
+    for (let i = 0; i < papers.length; i += 64) {
+      const batch = papers.slice(i, i + 64);
+      const sidecars = await Promise.all(batch.map((p) => (p.hasJson ? readSidecar(p.jsonPath).catch(() => null) : Promise.resolve(null))));
+      batch.forEach((p, j) => {
+        const sc = sidecars[j] ?? ({} as Sidecar);
+        // (Not for metadata edited by hand; and only empty fields would be filled in.)
+        const needsMeta =
+          !sc.metadataSource?.startsWith('ai:') && sc.metadataSource !== 'user' && (!sc.title || !sc.authors?.length || !sc.institutions?.length);
+        const needsSummary = !Object.keys(sc.summaries ?? {}).length;
+        if (needsMeta || needsSummary)
+          out.push({ id: p.id, title: p.title, needsMeta, needsSummary, starred: !!p.starred, openedAt: p.openedAt, addedAt: p.addedAt, cloudOnly: !!p.cloudOnly });
+      });
+    }
+    return out;
   }
 
   async generateSummary(id: string, aiId: string, jobId?: string): Promise<PaperDetail> {

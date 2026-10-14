@@ -3041,3 +3041,76 @@ textarea.assist-input {
 .assist-summary {
   min-width: 0;
 }
+
+/* ---------------------------------------------------------------- summarize the library */
+.batch-body {
+  max-width: 860px;
+  padding: 16px 24px 40px;
+}
+.batch-intro p {
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+.batch-progress {
+  margin: 4px 0 16px;
+}
+.batch-counts {
+  font-size: 13.5px;
+  margin-bottom: 6px;
+}
+.batch-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+.batch-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.batch-current,
+.batch-log {
+  margin-top: 18px;
+}
+.batch-current h2,
+.batch-log h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+.batch-current .batch-title {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.batch-title {
+  color: var(--fg);
+  text-decoration: none;
+}
+.batch-title:hover {
+  text-decoration: underline;
+}
+.batch-log ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.batch-log li {
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13.5px;
+}
+.batch-mark {
+  display: inline-block;
+  width: 18px;
+  font-weight: 700;
+}
+.batch-log li.ok .batch-mark {
+  color: var(--ok, #2e9d55);
+}
+.batch-log li.failed .batch-mark {
+  color: var(--danger, #d33a2f);
+}

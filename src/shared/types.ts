@@ -225,6 +225,19 @@ export interface BibEntrySummary {
   paperId?: string;
 }
 
+/** A paper whose metadata or summary the AI has not written yet (File › Summarize the Library). */
+export interface AIBacklogItem {
+  id: string;
+  title: string;
+  needsMeta: boolean;
+  needsSummary: boolean;
+  starred: boolean;
+  openedAt?: number;
+  addedAt: number;
+  /** The PDF is not downloaded to this computer (reading it downloads it). */
+  cloudOnly: boolean;
+}
+
 export interface PaperSummary {
   /** Stable id = absolute path of the PDF (even if the PDF is missing). */
   id: string;
@@ -670,6 +683,8 @@ export interface OmoebaAPI {
    */
   extractMetadata(id: string, aiId?: string, jobId?: string, onlyMissing?: boolean): Promise<PaperDetail>;
   generateSummary(id: string, aiId: string, jobId?: string): Promise<PaperDetail>;
+  /** The papers (with their PDF) whose metadata or summary the AI has not written yet. */
+  aiBacklog(): Promise<AIBacklogItem[]>;
   askAI(id: string, aiId: string, question: string, context: { page?: number; selection?: string }, jobId?: string): Promise<PaperDetail>;
   cancelAI(jobId: string): Promise<void>;
   /** Store the first-page thumbnail of a PDF (rendered by the UI) in the thumbnail cache. */

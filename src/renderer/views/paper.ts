@@ -643,6 +643,8 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     const buttons = new Map<PaperTab, HTMLButtonElement>();
     const select = (key: PaperTab, focus = false) => {
       activeTab = key;
+      // (After this render: it renders the page again.)
+      if (key === 'related') queueMicrotask(autoRelated);
       for (const t of shown) {
         const b = buttons.get(t.key)!;
         const on = t.key === key;
@@ -1413,13 +1415,19 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     if (disposed || !paper) return;
     // Look for the download location once (not on every open).
     if (!paper.sidecar.source && !paper.sidecar.sourceSearch && !jobsFor(id).has('source')) runFindSource();
-    const summary =
-      !Object.keys(paper.sidecar.summaries ?? {}).length && !jobsFor(id).has('sum:' + def) ? runSummary(def) : null;
-    // Related work after the summary (one AI job at a time per paper is enough).
-    if (!paper.sidecar.related && !jobsFor(id).has('related')) {
-      await summary;
-      if (!disposed && paper && !paper.sidecar.related && !jobsFor(id).has('related')) runRelated(def);
-    }
+    if (!Object.keys(paper.sidecar.summaries ?? {}).length && !jobsFor(id).has('sum:' + def)) runSummary(def);
+    // (Related work: only when its tab is shown, see autoRelated.)
+  }
+
+  /** Whether Related work was started for this page already (once: not again after a failure). */
+  let relatedTried = false;
+  /** Related work, written when its tab is shown (if the paper has none yet). */
+  function autoRelated() {
+    if (relatedTried || disposed || !paper || !cfg?.autoExtract || !paper.hasPdf || paper.sidecar.related || jobsFor(id).has('related')) return;
+    const def = cfg.defaultAI;
+    if (!def || !enabledAIs().some((a) => a.id === def)) return;
+    relatedTried = true;
+    runRelated(def);
   }
 
   // ---------------------------------------------------------------------------

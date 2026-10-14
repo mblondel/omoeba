@@ -3,6 +3,7 @@ import type { Config, SyncTexPosition } from '../shared/types';
 import { api } from './api';
 import { clear, errorMessage, h, icon, installTooltips, promptDialog, toast } from './dom';
 import { mountDuplicates } from './views/duplicates';
+import { mountBatch } from './views/batch';
 import { baseName, mountEditor } from './views/editor';
 import { mountFolder } from './views/folder';
 import { mountPdfView } from './views/pdfview';
@@ -53,6 +54,8 @@ type TabKind =
   | 'settings'
   | 'search'
   | 'duplicates'
+  /** Summarizing the whole library in the background (File › Summarize the Library). */
+  | 'batch'
   | 'recent'
   | 'starred'
   | 'synthesis'
@@ -65,7 +68,7 @@ type TabKind =
   | 'pdf';
 
 /** Tabs of which there is only one. */
-const SINGLE: TabKind[] = ['library', 'settings', 'duplicates', 'recent', 'starred', 'syntheses'];
+const SINGLE: TabKind[] = ['library', 'settings', 'duplicates', 'batch', 'recent', 'starred', 'syntheses'];
 
 interface Tab {
   key: string;
@@ -103,6 +106,7 @@ const TAB_ICON: Record<TabKind, string> = {
   settings: 'settings',
   search: 'search',
   duplicates: 'copy',
+  batch: 'sparkle',
   recent: 'book',
   starred: 'star',
   synthesis: 'sparkle',
@@ -129,6 +133,7 @@ function mountTab(tab: Tab) {
     else if (tab.kind === 'settings') tab.handle = mountSettings(tab.panel, { firstRun: false });
     else if (tab.kind === 'search') tab.handle = mountList(tab.panel, { query: tab.query ?? '' });
     else if (tab.kind === 'duplicates') tab.handle = mountDuplicates(tab.panel);
+    else if (tab.kind === 'batch') tab.handle = mountBatch(tab.panel);
     else if (tab.kind === 'recent') tab.handle = mountList(tab.panel, { recent: true });
     else if (tab.kind === 'starred') tab.handle = mountList(tab.panel, { starred: true });
     else if (tab.kind === 'syntheses') tab.handle = mountSyntheses(tab.panel);
@@ -313,6 +318,7 @@ function tabTitle(kind: TabKind, opts: { query?: string; title?: string; file?: 
     settings: 'Settings',
     library: 'Library',
     duplicates: 'Duplicates',
+    batch: 'Summarize Library',
     recent: 'Recently Seen',
     starred: 'Starred',
     syntheses: 'Syntheses',
@@ -633,6 +639,7 @@ api.onMenu((action) => {
   else if (action === 'library') navigate('#/');
   else if (action === 'add-url') addPaperFromUrl();
   else if (action === 'duplicates') openDuplicatesTab();
+  else if (action === 'summarize-library') openTab('batch');
   else if (action === 'recent') openTab('recent');
   else if (action === 'starred') openTab('starred');
   else if (action === 'syntheses') openTab('syntheses');
