@@ -68,15 +68,13 @@ export function onBatchChange(f: () => void): () => void {
 }
 const changed = () => listeners.forEach((f) => f());
 
-/** The order: starred papers first, then those seen most recently, then the newest. */
+/**
+ * The order: the most recent papers first (by publication year, else the year they were added),
+ * and in a year the ones added last first.
+ */
 function order(items: AIBacklogItem[]): AIBacklogItem[] {
-  return [...items].sort(
-    (a, b) =>
-      Number(b.starred) - Number(a.starred) ||
-      Number(a.cloudOnly) - Number(b.cloudOnly) ||
-      (b.openedAt ?? 0) - (a.openedAt ?? 0) ||
-      b.addedAt - a.addedAt,
-  );
+  const year = (i: AIBacklogItem) => i.year ?? new Date(i.addedAt).getFullYear();
+  return [...items].sort((a, b) => year(b) - year(a) || b.addedAt - a.addedAt);
 }
 
 async function chooseAI(): Promise<Config | null> {

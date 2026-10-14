@@ -74,7 +74,7 @@ export function mountBatch(root: HTMLElement): () => void {
               h(
                 'p',
                 { class: 'muted' },
-                `They are done one at a time with ${s.ai?.name ?? 'the default AI'}, starred and recently seen papers first, as when a paper is opened: its metadata, then its summary. Related work is left for when you open a paper. Each paper takes a few minutes and uses your AI plan; when its usage limit is reached, this waits until it resets, then goes on. You can close this tab: it goes on until Omoeba is closed (it then starts again where it was, from File › Summarize the Library).`,
+                `They are done one at a time with ${s.ai?.name ?? 'the default AI'}, the most recent papers first, as when a paper is opened: its metadata, then its summary. Related work is left for when you open a paper. Each paper takes a few minutes and uses your AI plan; when its usage limit is reached, this waits until it resets, then goes on. You can close this tab: it goes on until Omoeba is closed (it then starts again where it was, from File › Summarize the Library).`,
               ),
             )
           : h('p', null, 'Every paper has its metadata and summary. Nothing to do.'),

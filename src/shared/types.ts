@@ -248,6 +248,8 @@ export interface AIBacklogItem {
   starred: boolean;
   openedAt?: number;
   addedAt: number;
+  /** Publication year, if known. */
+  year?: number;
   /** The PDF is not downloaded to this computer (reading it downloads it). */
   cloudOnly: boolean;
 }

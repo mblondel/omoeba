@@ -1661,7 +1661,7 @@ export class OmoebaService implements OmoebaAPI {
           !sc.metadataSource?.startsWith('ai:') && sc.metadataSource !== 'user' && (!sc.title || !sc.authors?.length || !sc.institutions?.length);
         const needsSummary = !Object.keys(sc.summaries ?? {}).length;
         if (needsMeta || needsSummary)
-          out.push({ id: p.id, title: p.title, needsMeta, needsSummary, starred: !!p.starred, openedAt: p.openedAt, addedAt: p.addedAt, cloudOnly: !!p.cloudOnly });
+          out.push({ id: p.id, title: p.title, needsMeta, needsSummary, starred: !!p.starred, openedAt: p.openedAt, addedAt: p.addedAt, year: Number(p.year) || undefined, cloudOnly: !!p.cloudOnly });
       });
     }
     return out;
