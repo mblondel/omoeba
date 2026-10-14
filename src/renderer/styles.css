@@ -688,10 +688,17 @@ tr.missing td {
   align-items: flex-start;
   gap: 6px;
 }
-.title-row > .paper-title,
+/* The title as long as its text, the star and re-extract buttons just after it. */
+.title-row > .paper-title {
+  flex: 0 1 auto;
+  min-width: 0;
+}
 .title-row > input {
   flex: 1;
   min-width: 0;
+}
+.title-row > .star-btn {
+  margin-left: 4px;
 }
 .title-row > .reextract-btn {
   flex: none;
