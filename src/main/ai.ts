@@ -8,6 +8,8 @@ import { aiWorkDir } from './config';
 import { StreamParser, isUnknownOptionError, streamingInvocation, type StreamFormat, type TraceEvent } from './aistream';
 
 const running = new Map<string, ChildProcess>();
+/** Jobs stopped by the user (cancelAI): their end is "stopped", whatever the exit code. */
+const cancelled = new Set<string>();
 
 export interface RunOptions {
   jobId?: string;
@@ -22,6 +24,9 @@ export interface RunOptions {
 
 /** The CLI did not accept the options that report its progress (e.g. an older version). */
 class UnknownOptionError extends Error {}
+
+/** The CLI was ended by a signal that Omoeba did not send (worth trying again). */
+export class AIEndedError extends Error {}
 
 export async function resolveAI(ai: AIProvider): Promise<string | null> {
   return which(ai.command);
@@ -117,25 +122,36 @@ async function runOnce(ai: AIProvider, rawPrompt: string, opts: RunOptions, form
     child.on('close', (code, signal) => {
       clearTimeout(timer);
       removePromptFile();
+      const stoppedByUser = !!opts.jobId && cancelled.delete(opts.jobId);
       if (opts.jobId) running.delete(opts.jobId);
+      // Ended by a signal: either reported as such, or as the exit code 128 + n of a tool that
+      // catches it and exits (Claude Code: 143 for SIGTERM).
+      const ended = signal ?? (code === 143 ? 'SIGTERM' : code === 137 ? 'SIGKILL' : code === 130 ? 'SIGINT' : code === 129 ? 'SIGHUP' : null);
       const parsed = parser?.end();
       if (format !== 'text' && parsed) {
         // The answer is in the events; an error event without an answer is the failure.
         if (code === 0 && parsed.final?.trim()) return resolve(parsed.final.trim());
-        if (!killedByTimeout && !signal && code !== 0 && isUnknownOptionError(err)) {
+        if (!killedByTimeout && !ended && code !== 0 && isUnknownOptionError(err)) {
           return reject(new UnknownOptionError(err.trim().split('\n').slice(-3).join('\n')));
         }
-        if (!killedByTimeout && !signal && parsed.error) return reject(new Error(`${ai.name}: ${parsed.error}`));
+        if (!killedByTimeout && !ended && parsed.error) return reject(new Error(`${ai.name}: ${parsed.error}`));
       }
       if (code === 0 && out.trim() && format === 'text') resolve(out.trim());
-      else if (code === 0 && !killedByTimeout && !signal) {
+      else if (code === 0 && !killedByTimeout && !ended) {
         // Finished without an answer (e.g. it tried to use a tool it was not allowed to).
         const tail = err.trim().split('\n').slice(-4).join('\n');
         reject(new Error(`${ai.name} gave no answer.${tail ? '\n' + tail : ''}`));
       } else if (killedByTimeout) reject(new Error(`${ai.name} timed out.`));
-      else if (signal) reject(new Error(`${ai.name} was stopped.`));
+      else if (stoppedByUser) reject(new Error(`${ai.name} was stopped.`));
+      else if (ended)
+        reject(
+          new AIEndedError(
+            `${ai.name} was ended from outside Omoeba (${ended}), e.g. by the system or another program: nothing was written.`,
+          ),
+        );
       else {
-        const tail = (err || out).trim().split('\n').slice(-8).join('\n');
+        // (Its progress events are not the error: what it wrote on stderr, or its last words.)
+        const tail = (err || (format === 'text' ? out : parsed?.final ?? '')).trim().split('\n').slice(-8).join('\n');
         reject(new Error(`${ai.name} exited with code ${code}.${tail ? '\n' + tail : ''}`));
       }
     });
@@ -146,7 +162,10 @@ async function runOnce(ai: AIProvider, rawPrompt: string, opts: RunOptions, form
 }
 
 export function cancelAI(jobId: string) {
-  running.get(jobId)?.kill('SIGTERM');
+  const child = running.get(jobId);
+  if (!child) return;
+  cancelled.add(jobId);
+  child.kill('SIGTERM');
 }
 
 // ---------------------------------------------------------------------------

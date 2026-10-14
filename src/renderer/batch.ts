@@ -157,6 +157,8 @@ export function stop() {
 }
 
 let waitTimer: ReturnType<typeof setTimeout> | undefined;
+/** Papers whose AI was ended from outside Omoeba once already (tried again once, at the end). */
+const retried = new Set<string>();
 /** (Read again after each await: the buttons change it meanwhile.) */
 const phase = (): BatchPhase => state.phase;
 let looping = false;
@@ -175,6 +177,7 @@ async function loop() {
         break;
       }
       state.queue.shift();
+      if (outcome === 'retry') state.queue.push(item);
       // (Pause or Stop pressed meanwhile.)
       if (phase() === 'stopping') {
         state.phase = 'paused';
@@ -223,7 +226,7 @@ function resetTime(message: string, now: number): number | null {
 }
 
 /** One paper: its metadata, then its summary (and the summary's figures). */
-async function processPaper(item: AIBacklogItem): Promise<'ok' | 'failed' | 'limit' | 'skipped' | 'stopped'> {
+async function processPaper(item: AIBacklogItem): Promise<'ok' | 'failed' | 'limit' | 'skipped' | 'stopped' | 'retry'> {
   const ai = state.ai!;
   const started = Date.now();
   const written: string[] = [];
@@ -275,6 +278,12 @@ async function processPaper(item: AIBacklogItem): Promise<'ok' | 'failed' | 'lim
     if (state.phase === 'stopping') {
       state.log.unshift({ id: item.id, title: item.title, ok: false, text: written.length ? `Stopped (${written.join(' and ')} written)` : 'Stopped', seconds: Math.round((Date.now() - started) / 1000), at: Date.now() });
       return 'stopped';
+    }
+    // The AI ended from outside Omoeba (not by Stop): once more, after the others.
+    if (/was ended from outside Omoeba/.test(message) && !retried.has(item.id)) {
+      retried.add(item.id);
+      state.current = null;
+      return 'retry';
     }
     const until = limitResetsAt(message);
     if (until !== null) {

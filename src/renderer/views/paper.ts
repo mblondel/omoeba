@@ -758,9 +758,9 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       if (e.key === 'Enter' || e.key === ',') {
         e.preventDefault();
         add();
-      } else if (e.key === 'Backspace' && !input.value && tags.length) {
-        patch({ tags: tags.slice(0, -1) });
       }
+      // (Backspace in the empty field no longer removes the last tag: too easy to do by
+      // accident while erasing what was typed. A tag is removed with its × button.)
     });
     input.addEventListener('change', () => {
       if (input.value && [...datalist.options].some((o) => o.value === input.value)) add();
