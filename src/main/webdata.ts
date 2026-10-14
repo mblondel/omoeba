@@ -1,5 +1,5 @@
 /**
- * The papers of a library folder for its index.html (omoeba-library.js, see src/web/paper.ts):
+ * The papers of a library folder, for Omoeba on the web (omoeba-library.jsonl, see src/web/paper.ts):
  * found as the page itself would (every PDF, with its .json; Omoeba's .json files whose PDF is
  * missing), the .json files read again only when they changed.
  */

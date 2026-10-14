@@ -80,11 +80,6 @@ async function copyAssets() {
   }
 }
 
-/**
- * The library in a browser (src/web/app.ts): one self-contained dist/web/index.html, scripts
- * and styles inline, pdf.js and its worker included (the worker's code as a string: see
- * src/web/pdfjs.ts). Omoeba copies it into the library folders when asked in its settings.
- */
 /** KaTeX's styles with each font in WOFF2 only (src: url(x.woff2) format("woff2")). */
 const katexWoff2Only = {
   name: 'katex-woff2-only',
@@ -97,6 +92,12 @@ const katexWoff2Only = {
   },
 };
 
+/**
+ * Omoeba on the web (src/web/app.ts): one self-contained dist/web/index.html, to host anywhere
+ * (e.g. GitHub Pages): scripts and styles inline, pdf.js and its worker included (the worker's
+ * code as a string: see src/web/pdfjs.ts). It holds no data: it reads the library from the
+ * Google Drive of the person signed in.
+ */
 async function buildWebPage() {
   const workerCode = await readFile(path.join(pdfjsDir, 'legacy/build/pdf.worker.min.mjs'), 'utf8');
   const workerPlugin = {
@@ -136,14 +137,18 @@ async function buildWebPage() {
   ]);
   // Inline: nothing in them may close their element early.
   const inline = (s, tag) => s.replace(new RegExp(`</${tag}`, 'gi'), `<\\/${tag}`).replace(/<!--/g, '<\\!--');
+  // The icon, also for a phone's home screen.
+  const icon = `data:image/png;base64,${(await readFile(path.join(root, 'src/web/icon.png'))).toString('base64')}`;
   const html =
     '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n' +
-    '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
-    '<meta name="generator" content="Omoeba">\n<title>Omoeba library</title>\n' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n' +
+    '<meta name="generator" content="Omoeba">\n<title>Omoeba</title>\n' +
+    '<meta name="apple-mobile-web-app-capable" content="yes">\n<meta name="mobile-web-app-capable" content="yes">\n' +
+    '<meta name="apple-mobile-web-app-title" content="Omoeba">\n' +
+    '<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">\n' +
+    '<meta name="theme-color" content="#1c1c1e" media="(prefers-color-scheme: dark)">\n' +
+    `<link rel="apple-touch-icon" href="${icon}">\n` +
     `<style>${inline(css.outputFiles[0].text, 'style')}</style>\n</head>\n<body>\n<div id="app"></div>\n` +
-    // The papers, written beside the page by Omoeba (a page opened from a file may load a
-    // script beside it, but not read the folder): see src/web/paper.ts.
-    '<script src="omoeba-library.js"></script>\n' +
     `<script type="module">${inline(js.outputFiles[0].text, 'script')}</script>\n</body>\n</html>\n`;
   await mkdir(path.join(dist, 'web'), { recursive: true });
   await writeFile(path.join(dist, 'web', 'index.html'), html);

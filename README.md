@@ -18,7 +18,8 @@
 - Citations.
 - AI: ask questions, summaries, tagging, related work, audio, ...
 - Metadata are stored in a .json file along the .pdf file.
-- Easy to sync via gdrive or git.
+- Easy to sync via Google Drive or git.
+- Web version (see web.md).
 
 ## Getting started
 

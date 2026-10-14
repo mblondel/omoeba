@@ -1,5 +1,5 @@
 /**
- * Searching the library in the browser page (index.html): an inverted index of the papers'
+ * Searching the library in the web page: an inverted index of the papers'
  * words, built when the library is read (thousands of papers: a few hundred milliseconds), then
  * each query is answered in well under a millisecond. Words are normalized as in Omoeba (case,
  * accents), and the last word of a query matches as a prefix (results while typing).
@@ -96,6 +96,22 @@ export class SearchIndex<D extends SearchDoc> {
     return out;
   }
 
+  /** Whether a doc passes the query's filters (tag:, author:, folder:, is:starred). */
+  private passes(i: number, query: Query): boolean {
+    if (query.starred && !this.docs[i].starred) return false;
+    if (query.tags.some((t) => !this.normTags[i].includes(t))) return false;
+    if (query.authors.some((a) => !this.normAuthors[i].some((x) => x.includes(a)))) return false;
+    if (query.folders.some((f) => !this.normFolders[i].includes(f))) return false;
+    return true;
+  }
+
+  /** Of these docs, those passing the query's filters (its free words aside). */
+  filter(docs: D[], q: string): D[] {
+    const query = parseQuery(q);
+    const at = new Map(this.docs.map((d, i) => [d, i]));
+    return docs.filter((d) => at.has(d) && this.passes(at.get(d)!, query));
+  }
+
   /** The matching docs, best first (all docs, by title, for an empty query). */
   search(q: string): D[] {
     const query = parseQuery(q);
@@ -113,13 +129,7 @@ export class SearchIndex<D extends SearchDoc> {
       candidates = next;
     });
     const ids = candidates ? [...(candidates as Map<number, number>).keys()] : this.docs.map((_, i) => i);
-    const kept = ids.filter((i) => {
-      if (query.starred && !this.docs[i].starred) return false;
-      if (query.tags.some((t) => !this.normTags[i].includes(t))) return false;
-      if (query.authors.some((a) => !this.normAuthors[i].some((x) => x.includes(a)))) return false;
-      if (query.folders.some((f) => !this.normFolders[i].includes(f))) return false;
-      return true;
-    });
+    const kept = ids.filter((i) => this.passes(i, query));
     const score = (i: number) => (candidates as Map<number, number> | null)?.get(i) ?? 0;
     return kept
       .sort((a, b) => score(b) - score(a) || this.docs[a].title.localeCompare(this.docs[b].title))

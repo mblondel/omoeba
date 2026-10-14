@@ -381,7 +381,6 @@ app.whenReady().then(async () => {
       await shell.trashItem(p);
     },
     downloadsDir: () => app.getPath('downloads'),
-    webIndexPath: () => path.join(__dirname, 'web', 'index.html'),
     focusWindow() {
       if (!win || win.isDestroyed()) return;
       if (win.isMinimized()) win.restore();

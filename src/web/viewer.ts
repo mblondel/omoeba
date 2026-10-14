@@ -1,7 +1,11 @@
 /**
- * Reading a PDF in the browser page (index.html): its pages, rendered when they come into view,
- * with the PDF's own annotations (drawn by pdf.js) and Omoeba's annotations from the paper's
- * .json (drawn as in the app, read-only).
+ * Reading a PDF in the web page: its pages, rendered when they come into view, with the PDF's
+ * own annotations (drawn by pdf.js) and Omoeba's annotations from the paper's .json (drawn as in
+ * the app, read-only).
+ *
+ * On a phone (`compact`): no bar, only the pages (back with the browser's own Back), and
+ * pinch-zoom: the pages are scaled while the fingers move, then drawn again, sharp, at the new
+ * size. Pages far from view are let go (a phone has little memory for them).
  */
 import type { PDFDocumentProxy, PageViewport } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { Annotation } from '../shared/types';
@@ -14,7 +18,10 @@ export interface ViewerOptions {
   /** 1-based page to show first. */
   page?: number;
   driveUrl?: string;
-  onClose: () => void;
+  /** A Back button (closing the PDF); none when it is in a tab of its own (closed with the tab). */
+  onClose?: () => void;
+  /** A phone: no bar; pinch-zoom. */
+  compact?: boolean;
 }
 
 export interface Viewer {
@@ -40,28 +47,39 @@ function viewportLike(vp: PageViewport) {
   };
 }
 
+/** The most pixels drawn for one page (iPhones refuse canvases much larger than 16 million). */
+const MAX_CANVAS_PIXELS = 12_000_000;
+const MIN_ZOOM = 0.3;
+const MAX_ZOOM = 4;
+
 export async function openViewer(root: HTMLElement, data: Uint8Array, annotations: Annotation[], opts: ViewerOptions): Promise<Viewer> {
   // (Destroyed through its loading task: the document itself has no destroy() in newer pdf.js.)
   const task = openPdf(data);
   const doc: PDFDocumentProxy = await task.promise;
+  const compact = !!opts.compact;
   let zoom = 0; // 0: fit the width
   const pageInfo = h('span', { class: 'viewer-pages' });
   const zoomInfo = h('span', { class: 'viewer-zoom' });
-  const pagesEl = h('div', { class: 'viewer-pages-scroll' });
-  const bar = h(
-    'div',
-    { class: 'viewer-bar' },
-    h('button', { class: 'btn', onclick: () => opts.onClose() }, '← Back'),
-    h('span', { class: 'viewer-title', title: opts.title }, opts.title),
-    pageInfo,
-    h('span', { class: 'spacer' }),
-    h('button', { class: 'btn', title: 'Zoom out', onclick: () => setZoom(currentScale() / 1.2) }, '−'),
-    zoomInfo,
-    h('button', { class: 'btn', title: 'Zoom in', onclick: () => setZoom(currentScale() * 1.2) }, '+'),
-    h('button', { class: 'btn', title: 'Fit the width', onclick: () => setZoom(0) }, 'Fit'),
-    opts.driveUrl ? h('a', { class: 'btn', href: opts.driveUrl, target: '_blank', rel: 'noopener' }, 'Open in Google Drive') : null,
-  );
-  const el = h('div', { class: 'viewer' }, bar, pagesEl);
+  const inner = h('div', { class: 'viewer-pages-inner' });
+  const pagesEl = h('div', { class: 'viewer-pages-scroll' }, inner);
+  const drive = opts.driveUrl ? h('a', { class: 'btn', href: opts.driveUrl, target: '_blank', rel: 'noopener' }, 'Open in Google Drive') : null;
+  const back = opts.onClose ? h('button', { class: 'btn', onclick: () => opts.onClose?.() }, '← Back') : null;
+  const bar = compact
+    ? null
+    : h(
+        'div',
+        { class: 'viewer-bar' },
+        back,
+        h('span', { class: 'viewer-title', title: opts.title }, opts.title),
+        pageInfo,
+        h('span', { class: 'spacer' }),
+        h('button', { class: 'btn', title: 'Zoom out', onclick: () => setZoom(currentScale() / 1.2) }, '−'),
+        zoomInfo,
+        h('button', { class: 'btn', title: 'Zoom in', onclick: () => setZoom(currentScale() * 1.2) }, '+'),
+        h('button', { class: 'btn', title: 'Fit the width', onclick: () => setZoom(0) }, 'Fit'),
+        drive,
+      );
+  const el = h('div', { class: `viewer${compact ? ' compact' : ''}` }, bar, pagesEl);
   root.replaceChildren(el);
 
   // Page sizes at scale 1 (all pages laid out at once; rendered when visible).
@@ -71,11 +89,16 @@ export async function openViewer(root: HTMLElement, data: Uint8Array, annotation
     sizes.push({ w: vp.width, h: vp.height });
   }
   const maxW = Math.max(...sizes.map((s) => s.w));
-  const fitScale = () => Math.max(0.3, Math.min(3, (pagesEl.clientWidth - 40) / maxW));
+  // (The width inside the scroller's padding, which is narrower on a phone.)
+  const fitScale = () => {
+    const cs = getComputedStyle(pagesEl);
+    const width = pagesEl.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    return Math.max(MIN_ZOOM, Math.min(3, (width - 2) / maxW));
+  };
   const currentScale = () => zoom || fitScale();
 
   const pages = sizes.map((_, i) => h('div', { class: 'viewer-page', dataset: { page: String(i + 1) } }));
-  pagesEl.append(...pages);
+  inner.append(...pages);
   const rendered = new Map<number, number>(); // page → scale rendered at
   const rendering = new Set<number>();
 
@@ -86,12 +109,11 @@ export async function openViewer(root: HTMLElement, data: Uint8Array, annotation
     try {
       const page = await doc.getPage(n);
       const viewport: PageViewport = page.getViewport({ scale });
-      const ratio = window.devicePixelRatio || 1;
+      // The screen's pixel density, unless the page would be too big to draw.
+      const ratio = Math.min(window.devicePixelRatio || 1, Math.sqrt(MAX_CANVAS_PIXELS / (viewport.width * viewport.height)));
       const canvas = h('canvas', { width: Math.floor(viewport.width * ratio), height: Math.floor(viewport.height * ratio) });
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
       await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport, transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : undefined }).promise;
-      if (currentScale() !== scale) return;
+      if (currentScale() !== scale || !visible.has(n)) return;
       const div = pages[n - 1];
       div.replaceChildren(h('div', { class: 'canvasWrapper' }, canvas));
       div.style.setProperty('--scale-factor', String(scale));
@@ -111,26 +133,45 @@ export async function openViewer(root: HTMLElement, data: Uint8Array, annotation
     });
   }
 
+  // Pages near the view are drawn; those far from it are let go.
   const visible = new Set<number>();
   const observer = new IntersectionObserver(
     (entries) => {
       for (const e of entries) {
         const n = Number((e.target as HTMLElement).dataset.page);
         if (e.isIntersecting) visible.add(n);
-        else visible.delete(n);
+        else {
+          visible.delete(n);
+          if (rendered.has(n)) {
+            pages[n - 1].replaceChildren();
+            rendered.delete(n);
+          }
+        }
       }
       for (const n of visible) void render(n);
-      const first = Math.min(...visible);
-      if (Number.isFinite(first)) pageInfo.textContent = `Page ${first} of ${doc.numPages}`;
     },
     { root: pagesEl, rootMargin: '600px 0px' },
   );
   pages.forEach((p) => observer.observe(p));
 
+  /** The page being read: the last one whose top is above a third of the view. */
+  function currentPage(): number {
+    const y = pagesEl.scrollTop + pagesEl.clientHeight / 3;
+    let lo = 0;
+    let hi = pages.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (pages[mid].offsetTop <= y) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo + 1;
+  }
+  const showPage = () => (pageInfo.textContent = `Page ${currentPage()} of ${doc.numPages}`);
+
   function setZoom(z: number) {
     // Keep the page being read in view.
-    const top = [...visible].sort((a, b) => a - b)[0] ?? 1;
-    zoom = z ? Math.max(0.3, Math.min(4, z)) : 0;
+    const top = currentPage();
+    zoom = z ? Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z)) : 0;
     layout();
     for (const n of visible) void render(n);
     goTo(top);
@@ -140,6 +181,55 @@ export async function openViewer(root: HTMLElement, data: Uint8Array, annotation
     pages[Math.max(1, Math.min(doc.numPages, n)) - 1]?.scrollIntoView({ block: 'start' });
   }
 
+  pagesEl.addEventListener('scroll', showPage, { passive: true });
+
+  // --- Pinch-zoom (a phone): scaled while the fingers move, drawn again when they lift ------------
+  let pinch: { d0: number; scale0: number; cx: number; cy: number; x: number; y: number; ratio: number } | null = null;
+  const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const onTouchStart = (e: TouchEvent) => {
+    if (e.touches.length !== 2) return;
+    const r = pagesEl.getBoundingClientRect();
+    const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left;
+    const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top;
+    // The point of the pages under the fingers (in the scroller's content).
+    pinch = { d0: dist(e.touches), scale0: currentScale(), cx, cy, x: pagesEl.scrollLeft + cx, y: pagesEl.scrollTop + cy, ratio: 1 };
+    // (In the pages' own box, inside the scroller's padding.)
+    inner.style.transformOrigin = `${pinch.x - inner.offsetLeft}px ${pinch.y - inner.offsetTop}px`;
+  };
+  const onTouchMove = (e: TouchEvent) => {
+    if (!pinch || e.touches.length !== 2) return;
+    e.preventDefault();
+    const s = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, (pinch.scale0 * dist(e.touches)) / pinch.d0));
+    pinch.ratio = s / pinch.scale0;
+    inner.style.transform = `scale(${pinch.ratio})`;
+  };
+  const onTouchEnd = (e: TouchEvent) => {
+    if (!pinch || e.touches.length >= 2) return;
+    const p = pinch;
+    pinch = null;
+    inner.style.transform = '';
+    if (Math.abs(p.ratio - 1) < 0.02) return;
+    const target = p.scale0 * p.ratio;
+    // Down to the width of the screen, or less: fit it.
+    zoom = target <= fitScale() * 1.04 ? 0 : Math.min(MAX_ZOOM, target);
+    const ratio = currentScale() / p.scale0;
+    layout();
+    // The point under the fingers stays there.
+    pagesEl.scrollLeft = p.x * ratio - p.cx;
+    pagesEl.scrollTop = p.y * ratio - p.cy;
+    for (const n of visible) void render(n);
+    showPage();
+  };
+  // (Safari's own page zoom, which would only magnify the pixels drawn: not in the viewer.)
+  const noGesture = (e: Event) => e.preventDefault();
+  if (compact) {
+    pagesEl.addEventListener('touchstart', onTouchStart, { passive: true });
+    pagesEl.addEventListener('touchmove', onTouchMove, { passive: false });
+    pagesEl.addEventListener('touchend', onTouchEnd);
+    pagesEl.addEventListener('touchcancel', onTouchEnd);
+    document.addEventListener('gesturestart', noGesture);
+  }
+
   const onResize = () => {
     if (zoom) return;
     layout();
@@ -147,14 +237,15 @@ export async function openViewer(root: HTMLElement, data: Uint8Array, annotation
   };
   window.addEventListener('resize', onResize);
   layout();
-  pageInfo.textContent = `${doc.numPages} pages`;
   if (opts.page) goTo(opts.page);
+  showPage();
 
   return {
     goTo,
     dispose() {
       observer.disconnect();
       window.removeEventListener('resize', onResize);
+      document.removeEventListener('gesturestart', noGesture);
       void task.destroy().catch(() => undefined);
     },
   };

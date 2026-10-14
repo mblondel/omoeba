@@ -1,57 +1,41 @@
 /**
- * Omoeba in a browser (index.html in a library folder, written by Omoeba when asked in its
- * settings): on a computer without Omoeba, the library can be searched and its papers read (in
- * pdf.js, with Omoeba's annotations, or in Google Drive). Read-only: nothing is ever written.
- * The papers come from omoeba-library.js, written beside the page by Omoeba (a page opened from a
- * file may load a script beside it, but not read its folder). Reading the folder itself (the
- * PDFs, for their figures and annotations) needs the user to choose it once in Chrome; without
- * omoeba-library.js, the papers are read from the folder too.
+ * Omoeba on the web (a page hosted anywhere, e.g. GitHub Pages; built into dist/web/index.html):
+ * on a phone or a computer without Omoeba, the library can be searched and its papers read (in
+ * pdf.js, with Omoeba's annotations), from the user's Google Drive. Read-only.
+ *
+ * The papers come from the omoeba-library.jsonl files Omoeba keeps in each library folder (see
+ * src/web/paper.ts), the PDFs and annotations from Drive; the page itself holds no data, and
+ * reads only the Drive of the person signed in. What was read is kept in the browser, so that
+ * the library shows at once on later visits (see src/web/library.ts).
  */
 import { h, setTagPalette, tagColor } from '../renderer/dom';
 import { mountMarkdown } from '../renderer/markdown';
 import { renderFigureRef } from '../renderer/figures';
 import type { FigureRef, RelatedPaper, SummaryImage } from '../shared/types';
 import { arxivIdOf } from '../shared/arxiv';
-import { SearchIndex } from './search';
-import {
-  cachedTagCounts,
-  hasAccess,
-  pageFolderName,
-  readAnnotations,
-  readLibrary,
-  readPaper,
-  readPdf,
-  saveFolder,
-  savedFolder,
-  tagCounts,
-  type WebPaper,
-} from './library';
-import { DATA_FILE, papersFromScript } from './paper';
+import { parseQuery, SearchIndex } from './search';
+import { cachedLibrary, forgetLibrary, readAnnotations, readLibrary, readPdf, tagCounts, type Library, type WebPaper } from './library';
+import { clientConfigured, finishSignIn, loadGis, searchPdfText, signedIn, signIn, signInByRedirect, SignInNeeded, signOut, signsInByRedirect } from './drive';
+import { DATA_FILE } from './paper';
 import { openViewer, type Viewer } from './viewer';
 import { openPdf } from './pdfjs';
 import iconUrl from './icon.png';
 
 const app = document.getElementById('app')!;
-let root: FileSystemDirectoryHandle | null = null;
-/** The whole library, once read (a paper opened in a new tab does not need it). */
 let papers: WebPaper[] | null = null;
-let libraryRead: Promise<void> | null = null;
-let libraryStatus = '';
-let onLibraryStatus: ((text: string) => void) | null = null;
-/** Papers read on their own (opened in a new tab). */
-const single = new Map<string, WebPaper>();
+let updatedAt: string | undefined;
 let index = new SearchIndex<WebPaper>([]);
 let viewer: Viewer | null = null;
 let query = '';
-/** The papers came from omoeba-library.js, written by Omoeba on that date. */
-let scriptDate: string | undefined;
+/** Also search inside the PDFs (Google Drive's index of their text). */
+let inPdfs = false;
 
 const driveUrl = (id: string) => `https://drive.google.com/file/d/${encodeURIComponent(id)}/view`;
 const plural = (n: number, w: string) => `${n.toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
 const paperHash = (p: WebPaper) => `#paper=${encodeURIComponent(p.path)}`;
 const readHash = (p: WebPaper, page?: number) => `#read=${encodeURIComponent(p.path)}${page ? `&page=${page}` : ''}`;
-/** The PDF itself, beside the page (opened in Chrome's own viewer). */
-const pdfFileUrl = (p: WebPaper, page?: number) => p.path.split('/').map(encodeURIComponent).join('/') + (page ? `#page=${page}` : '');
+/** A phone or tablet: papers open in the same tab. */
+const touch = matchMedia('(pointer: coarse)').matches;
 
 function toast(text: string, error = false) {
   const t = h('div', { class: `toast${error ? ' error' : ''}` }, text);
@@ -59,132 +43,118 @@ function toast(text: string, error = false) {
   setTimeout(() => t.remove(), error ? 9000 : 4000);
 }
 
-// --- Opening the library folder -----------------------------------------------------------
-//
-// A page cannot read the folder it is in by itself: Chrome lets it read a folder the user has
-// chosen once (remembered), and asks again on later visits unless told to allow it on every
-// visit.
-
-async function start() {
-  document.head.append(h('link', { rel: 'icon', href: iconUrl }));
-  const canAsk = !!window.showDirectoryPicker;
-  const saved = canAsk ? await savedFolder() : undefined;
-  const granted = !!saved && (await hasAccess(saved, 'read', false).catch(() => false));
-  // The papers, from omoeba-library.js: shown at once.
-  const data = papersFromScript((window as unknown as { omoebaLibrary?: unknown }).omoebaLibrary);
-  if (data) {
-    scriptDate = data.updatedAt;
-    papers = data.papers;
-    index = new SearchIndex(papers);
-    setTagPalette(tagCounts(papers.map((p) => p.tags)));
-    libraryRead = Promise.resolve();
-    if (granted) root = saved!;
-    return route();
-  }
-  if (!canAsk) {
-    app.replaceChildren(
-      welcome(
-        h('p', null, `This page shows the papers listed in ${DATA_FILE}, which Omoeba writes beside it: it is not there.`),
-        h('p', { class: 'muted' }, 'Without it, the page reads the library folder itself, which only Chrome (or Edge) allows. In Brave: open brave://flags/#file-system-access-api, set it to Enabled, relaunch Brave and open this file again.'),
-      ),
-    );
-    return;
-  }
-  if (granted) return open(saved!);
-  const button = h('button', { class: 'btn primary big' }, `Open “${saved?.name || pageFolderName}”`);
-  button.onclick = () => void connect();
-  app.replaceChildren(
-    welcome(
-      h('p', null, `${DATA_FILE}, the list of papers Omoeba writes beside this page, is not there: the page reads the folder itself.`),
-      button,
-      h(
-        'p',
-        { class: 'muted small' },
-        saved
-          ? 'Chrome asks before this page reads the folder. To skip this next time, choose “Allow on every visit”.'
-          : `Chrome only lets a page read a folder you choose: choose “${pageFolderName}”, the folder this page is in. You only need to do this once.`,
-      ),
-    ),
-  );
-  button.focus();
-}
-
 function welcome(...children: (Node | null)[]) {
   return h('div', { class: 'welcome' }, h('img', { class: 'welcome-icon', src: iconUrl, alt: '' }), h('h1', null, 'Omoeba'), ...children);
 }
 
-/** The folder chosen in Chrome's picker, if it is the one this page is in. */
-async function pickFolder(): Promise<FileSystemDirectoryHandle | null> {
-  let dir: FileSystemDirectoryHandle;
-  try {
-    dir = await window.showDirectoryPicker!({ id: 'omoeba-library', mode: 'read' });
-  } catch (e) {
-    if ((e as Error).name !== 'AbortError') toast(String((e as Error).message ?? e), true);
-    return null;
+// --- Starting: the library kept in the browser at once, then Google Drive ---------------------
+
+async function start() {
+  document.head.append(h('link', { rel: 'icon', href: iconUrl }));
+  if (!clientConfigured()) {
+    app.replaceChildren(welcome(h('p', null, 'This page is not set up yet: put your Google OAuth client ID in src/web/config.ts and build it again.')));
+    return;
   }
-  // The folder this page is in (with this index.html), not another one.
-  const has = (name: string) =>
-    dir.getFileHandle(name).then(
-      () => true,
-      () => false,
-    );
-  if (!(await has('index.html')) && !(await has(DATA_FILE))) {
-    toast(`That is not the folder this page is in: choose “${pageFolderName}”.`, true);
-    return null;
+  // Back from Google's sign-in (a phone): the access kept, the address as it was.
+  const back = finishSignIn();
+  if (back?.error) setTimeout(() => toast(back.error!, true), 300);
+  // (Loaded now: the sign-in popup must open on the click itself.)
+  if (!signsInByRedirect()) void loadGis().catch(() => undefined);
+  const cached = await cachedLibrary().catch(() => null);
+  if (cached) {
+    setLibrary(cached);
+    void route();
+    if (signedIn()) void refresh(false);
+    return;
   }
-  return dir;
+  if (signedIn()) return refresh(true);
+  showSignIn();
+}
+
+function setLibrary(lib: Library) {
+  papers = lib.papers;
+  updatedAt = lib.updatedAt;
+  index = new SearchIndex(papers);
+  setTagPalette(tagCounts(papers.map((p) => p.tags)));
 }
 
 /**
- * Access to the library folder (on a click): the one chosen before if Chrome allows it again,
- * else chosen now. Then shows the page again (with what needs the folder).
+ * Read the library from Drive again (the lists that changed). `blocking`: nothing is shown yet,
+ * so the progress (or what went wrong) is.
  */
-async function connect(): Promise<boolean> {
-  if (!window.showDirectoryPicker) {
-    toast('Reading the folder needs Chrome (in Brave: enable brave://flags/#file-system-access-api).', true);
-    return false;
+async function refresh(blocking: boolean) {
+  const status = h('p', { class: 'muted' }, 'Reading your library…');
+  if (blocking) app.replaceChildren(welcome(status));
+  try {
+    const lib = await readLibrary((t) => (status.textContent = t));
+    if (!lib) {
+      if (blocking || !papers)
+        app.replaceChildren(
+          welcome(
+            h('p', null, `No library found in your Google Drive (no ${DATA_FILE}).`),
+            h(
+              'p',
+              { class: 'muted small' },
+              'Omoeba writes that file into each library folder when it runs: open Omoeba on the computer with your library, and wait for Google Drive to sync it. The folder must be in Google Drive.',
+            ),
+            h('button', { class: 'btn', onclick: () => void refresh(true) }, 'Look again'),
+          ),
+        );
+      return;
+    }
+    const changed = !papers || lib.updatedAt !== updatedAt || lib.papers.length !== papers.length;
+    setLibrary(lib);
+    // (The list again with what changed; not under the user's feet in a paper or the PDF.)
+    if (blocking || (changed && !location.hash)) void route();
+  } catch (e) {
+    if (e instanceof SignInNeeded) {
+      if (blocking || !papers) showSignIn();
+      else rerenderHeader();
+      return;
+    }
+    if (blocking || !papers)
+      app.replaceChildren(welcome(h('p', null, `Your library could not be read: ${(e as Error).message}`), h('button', { class: 'btn', onclick: () => void refresh(true) }, 'Try again')));
+    else toast(`The library could not be updated: ${(e as Error).message}`, true);
   }
-  const saved = await savedFolder();
-  if (saved && (await hasAccess(saved, 'read', true).catch(() => false))) {
-    await open(saved);
-    return true;
+}
+
+/** Sign in (on a click), then do `then` (a phone: Google's page and back, then the same view). */
+async function signInThen(then: () => void | Promise<void>) {
+  if (signsInByRedirect()) return signInByRedirect();
+  try {
+    await loadGis();
+    await signIn();
+  } catch (e) {
+    toast((e as Error).message, true);
+    return;
   }
-  const dir = await pickFolder();
-  if (!dir) return false;
-  await open(dir);
-  return true;
+  await then();
 }
 
-/** The button giving the page access to the folder (when it has only omoeba-library.js). */
-function accessButton(label = 'Allow folder access') {
-  return root || !window.showDirectoryPicker
-    ? null
-    : h('button', { class: 'btn', title: 'To show figures and annotations from the PDFs: Chrome asks you to choose this folder (once)', onclick: () => void connect() }, label);
-}
-
-async function open(dir: FileSystemDirectoryHandle) {
-  root = dir;
-  await saveFolder(dir).catch(() => undefined); // (remembered for the next visit)
-  await route();
-}
-
-/** Read the whole library (once). */
-function readWholeLibrary(): Promise<void> {
-  libraryRead ??= readLibrary(root!, (t) => {
-    libraryStatus = t;
-    onLibraryStatus?.(t);
-  }).then(
-    (ps) => {
-      papers = ps;
-      index = new SearchIndex(ps);
-      setTagPalette(tagCounts(ps.map((p) => p.tags)));
-    },
-    (e) => {
-      libraryRead = null;
-      throw e;
-    },
+function showSignIn() {
+  const button = h('button', { class: 'btn primary big', onclick: () => void signInThen(() => refresh(true)) }, 'Sign in with Google');
+  app.replaceChildren(
+    welcome(
+      h('p', null, 'Your Omoeba library, from your Google Drive.'),
+      button,
+      h(
+        'p',
+        { class: 'muted small' },
+        'The page asks Google for read-only access to your Drive, to read the list of papers Omoeba keeps there, and the PDFs you open. Nothing is sent anywhere else, and nothing in your Drive is changed.',
+      ),
+    ),
   );
-  return libraryRead;
+  if (!touch) button.focus();
+}
+
+/** Sign in again (the access lasts an hour), from a paper or the list. */
+function signInButton(label = 'Sign in') {
+  return signedIn() ? null : h('button', { class: 'btn', title: 'To open PDFs and update the library: sign in with Google again', onclick: () => void signInThen(() => (void refresh(false), route())) }, label);
+}
+
+function rerenderHeader() {
+  const old = document.querySelector('header.topbar');
+  if (old && currentHeader) old.replaceWith(header(...currentHeader));
 }
 
 // --- Where we are (#paper=…, #read=…&page=N): the browser's Back works -----------------------
@@ -196,8 +166,8 @@ type LoadingTask = ReturnType<typeof openPdf>;
 let paperDoc: { path: string; task: LoadingTask } | null = null;
 
 async function route(): Promise<void> {
-  if (!root && !papers) return;
-  const n = ++routing;
+  if (!papers) return;
+  routing++;
   const from = currentHash;
   currentHash = location.hash;
   try {
@@ -213,35 +183,15 @@ async function route(): Promise<void> {
     void paperDoc.task.destroy().catch(() => undefined);
     paperDoc = null;
   }
-  if (!path) return showList(n);
-  let p = papers?.find((x) => x.path === path) ?? single.get(path) ?? null;
-  if (!p && root) {
-    app.replaceChildren(welcome(h('p', { class: 'muted' }, 'Reading the paper…')));
-    p = await readPaper(root, path).catch(() => null);
-    if (n !== routing) return;
-    if (!p) {
-      toast('That paper is not in the library anymore.', true);
-      history.replaceState(null, '', location.pathname);
-      return route();
-    }
-    single.set(path, p);
-    // Tag colors as in the list: from what was read last time.
-    if (!papers) setTagPalette(await cachedTagCounts());
-    if (n !== routing) return;
-  }
+  if (!path) return showList();
+  const p = papers.find((x) => x.path === path);
   if (!p) {
     toast('That paper is not in the library.', true);
     history.replaceState(null, '', location.pathname);
     return route();
   }
   document.title = p.title;
-  // (The PDF in this page needs the folder: without it, the paper.)
-  if (read && !root) {
-    history.replaceState(null, '', paperHash(p));
-    currentHash = location.hash;
-    return showPaper(p);
-  }
-  if (read) return showViewer(p, Number(params.get('page')) || undefined, from === paperHash(p));
+  if (read && p.driveId) return showViewer(p, Number(params.get('page')) || undefined, from === paperHash(p));
   showPaper(p);
 }
 // (Back and Forward, and links to #…: also back to the page's own address, without a #.)
@@ -256,7 +206,10 @@ const go = (hash: string) => {
 
 // --- The list ------------------------------------------------------------------------------
 
+let currentHeader: (Node | null)[] | null = null;
+
 function header(...right: (Node | null)[]) {
+  currentHeader = right;
   return h(
     'header',
     { class: 'topbar' },
@@ -268,33 +221,23 @@ function header(...right: (Node | null)[]) {
     ),
     h('span', { class: 'spacer' }),
     ...right,
-    accessButton(),
+    signInButton(),
   );
 }
 
-async function showList(n: number) {
-  document.title = `Omoeba · ${root?.name ?? ''}`;
-  if (!papers) {
-    const status = h('p', { class: 'muted' }, libraryStatus || 'Reading the library…');
-    onLibraryStatus = (t) => (status.textContent = t);
-    app.replaceChildren(welcome(status));
-    try {
-      await readWholeLibrary();
-    } catch (e) {
-      status.textContent = `The folder could not be read: ${(e as Error).message}`;
-      return;
-    } finally {
-      onLibraryStatus = null;
-    }
-    if (n !== routing) return;
-  }
+function showList() {
+  document.title = 'Omoeba';
   const all = papers!;
-  const search = h('input', { type: 'search', class: 'search', placeholder: 'Search titles, authors, tags, abstracts, summaries…  (tag:x  author:x  folder:x)', value: query, spellcheck: false });
-  const starred = h('button', { class: 'btn', title: 'Starred papers only' }, '★ Starred');
-  const count = h('span', { class: 'muted small', title: scriptDate ? `As listed by Omoeba on ${new Date(scriptDate).toLocaleString()}` : '' });
+  const search = h('input', { type: 'search', class: 'search', placeholder: touch ? 'Search' : 'Search titles, authors, tags, abstracts, summaries…  (tag:x  author:x  folder:x)', value: query, spellcheck: false });
+  const starred = h('button', { class: 'btn', title: 'Starred papers only' }, '★', touch ? null : ' Starred');
+  const inside = h('input', { type: 'checkbox', checked: inPdfs });
+  const insideLabel = h('label', { class: 'inside-pdfs small', title: 'Also find the papers whose PDF contains your words (Google Drive’s search)' }, inside, ' Inside PDFs');
+  const count = h('span', { class: 'muted small count', title: updatedAt ? `As listed by Omoeba on ${new Date(updatedAt).toLocaleString()}` : '' });
   const list = h('div', { class: 'list' });
   const more = h('div', { class: 'list-more' });
   let shown: WebPaper[] = [];
+  /** The papers found only inside their PDF (by Drive). */
+  let fromText = new Set<WebPaper>();
   let rendered = 0;
   const filterTag = (t: string) => {
     search.value = `tag:"${t}"`;
@@ -304,35 +247,92 @@ async function showList(n: number) {
   const renderMore = () => {
     const next = shown.slice(rendered, rendered + 200);
     rendered += next.length;
-    list.append(...next.map((p) => row(p, filterTag)));
+    list.append(...next.map((p) => row(p, filterTag, fromText.has(p))));
     more.hidden = rendered >= shown.length;
   };
-  const update = () => {
-    query = search.value;
-    const starOnly = /\bis:starred\b/.test(query);
-    starred.classList.toggle('on', starOnly);
-    shown = index.search(query);
-    count.textContent = shown.length === all.length ? plural(all.length, 'paper') : `${plural(shown.length, 'paper')} of ${all.length.toLocaleString()}`;
+  const show = (results: WebPaper[], note = '') => {
+    shown = results;
+    count.textContent =
+      (shown.length === all.length ? plural(all.length, 'paper') : `${plural(shown.length, 'paper')} of ${all.length.toLocaleString()}`) + (note ? ` · ${note}` : '');
     list.replaceChildren();
     rendered = 0;
     renderMore();
-    if (!shown.length) list.append(h('p', { class: 'muted empty' }, all.length ? 'No paper matches your search.' : 'No PDFs in this folder.'));
+    if (!shown.length) list.append(h('p', { class: 'muted empty' }, all.length ? 'No paper matches your search.' : 'No papers in the library.'));
+  };
+  // Inside the PDFs: Drive's search, once the typing pauses.
+  let textTimer: ReturnType<typeof setTimeout> | undefined;
+  let textRun = 0;
+  const searchText = (local: WebPaper[]) => {
+    clearTimeout(textTimer);
+    const words = parseQuery(query).words;
+    if (!inPdfs || !words.length) return;
+    if (!signedIn()) return show(local, 'sign in to search inside the PDFs');
+    const run = ++textRun;
+    show(local, 'searching inside the PDFs…');
+    textTimer = setTimeout(async () => {
+      try {
+        const ids = new Set(await searchPdfText(words));
+        if (run !== textRun) return;
+        const already = new Set(local);
+        const extra = index.filter(
+          all.filter((p) => p.driveId && ids.has(p.driveId) && !already.has(p)),
+          query,
+        );
+        fromText = new Set(extra);
+        show([...local, ...extra], extra.length ? `${extra.length} found inside the PDFs` : 'none more inside the PDFs');
+      } catch (e) {
+        if (run !== textRun) return;
+        show(local, e instanceof SignInNeeded ? 'sign in to search inside the PDFs' : 'the search inside the PDFs did not work');
+        if (e instanceof SignInNeeded) rerenderHeader();
+      }
+    }, 500);
+  };
+  const update = () => {
+    query = search.value;
+    starred.classList.toggle('on', /\bis:starred\b/.test(query));
+    fromText = new Set();
+    textRun++;
+    const local = index.search(query);
+    show(local);
+    searchText(local);
   };
   starred.onclick = () => {
     search.value = /\bis:starred\b/.test(search.value) ? search.value.replace(/\s*\bis:starred\b\s*/, ' ').trim() : `is:starred ${search.value}`.trim();
     update();
     search.focus();
   };
+  inside.onchange = () => {
+    inPdfs = inside.checked;
+    update();
+  };
   search.addEventListener('input', update);
   new IntersectionObserver((e) => e[0].isIntersecting && rendered < shown.length && renderMore()).observe(more);
-  app.replaceChildren(
-    header(starred),
-    h('div', { class: 'searchbar' }, search, count),
-    list,
-    more,
-  );
+  app.replaceChildren(header(starred), h('div', { class: 'searchbar' }, search, insideLabel, count), list, more, listFooter());
   update();
-  search.focus();
+  if (!touch) search.focus();
+}
+
+function listFooter() {
+  return h(
+    'footer',
+    { class: 'list-foot muted small' },
+    updatedAt ? `Library as listed by Omoeba on ${new Date(updatedAt).toLocaleDateString()}. ` : '',
+    signedIn()
+      ? h(
+          'button',
+          {
+            class: 'link-btn',
+            onclick: async () => {
+              signOut();
+              await forgetLibrary();
+              papers = null;
+              showSignIn();
+            },
+          },
+          'Sign out',
+        )
+      : null,
+  );
 }
 
 function tagEl(t: string, onClick: (t: string) => void) {
@@ -352,18 +352,19 @@ function tagEl(t: string, onClick: (t: string) => void) {
   );
 }
 
-/** A paper of the list: opened in a new tab. */
-function row(p: WebPaper, onTag: (t: string) => void) {
+/** A paper of the list: opened in a new tab (in the same one on a phone). */
+function row(p: WebPaper, onTag: (t: string) => void, foundInText: boolean) {
   return h(
     'a',
-    { class: 'row', href: paperHash(p), target: '_blank' },
+    { class: 'row', href: paperHash(p), target: touch ? undefined : '_blank' },
     h(
       'div',
       { class: 'row-title' },
       p.starred ? h('span', { class: 'star', title: 'Starred' }, '★') : null,
       h('span', null, p.title),
       p.year ? h('span', { class: 'year muted' }, p.year) : null,
-      p.hasPdf ? null : h('span', { class: 'badge', title: p.driveId ? 'Not on this computer: in Google Drive' : 'The PDF is not on this computer' }, p.driveId ? 'Drive' : 'no PDF'),
+      p.driveId ? null : h('span', { class: 'badge', title: 'The PDF is not in Google Drive' }, 'no PDF'),
+      foundInText ? h('span', { class: 'badge', title: 'Found inside the PDF' }, 'in text') : null,
     ),
     h('div', { class: 'row-meta muted small' }, [p.authors.slice(0, 6).join(', ') + (p.authors.length > 6 ? ', …' : ''), p.folder].filter(Boolean).join(' · ')),
     p.tags.length ? h('div', { class: 'row-tags' }, p.tags.map((t) => tagEl(t, onTag))) : null,
@@ -374,10 +375,10 @@ function row(p: WebPaper, onTag: (t: string) => void) {
 
 /** A figure of the paper (crop of a page), rendered from its PDF: an image URL, or null. */
 async function renderFigure(p: WebPaper, ref: FigureRef, pixelWidth: number): Promise<string | null> {
-  // (Without access to the folder: a link to the figure's page instead.)
-  if (!p.hasPdf || !root) return null;
+  // (Not signed in: a link to the figure's page instead.)
+  if (!p.driveId || !signedIn()) return null;
   if (!paperDoc || paperDoc.path !== p.path) {
-    const data = await readPdf(root, p.path);
+    const data = await readPdf(p);
     if (paperDoc && paperDoc.path !== p.path) void paperDoc.task.destroy().catch(() => undefined);
     paperDoc = { path: p.path, task: openPdf(data) };
   }
@@ -387,11 +388,11 @@ async function renderFigure(p: WebPaper, ref: FigureRef, pixelWidth: number): Pr
   return blob ? URL.createObjectURL(blob) : null;
 }
 
-/** A page of the paper: in this page's viewer, else in Chrome's, else in Google Drive. */
+/** A page of the paper, in the PDF viewer: in a tab of its own on a computer, in this one on a phone. */
 function openPage(p: WebPaper, page: number) {
-  if (p.hasPdf && root) go(readHash(p, page));
-  else if (p.hasPdf) window.open(pdfFileUrl(p, page), '_blank');
-  else if (p.driveId) window.open(driveUrl(p.driveId), '_blank', 'noopener');
+  if (!p.driveId) return;
+  if (touch) go(readHash(p, page));
+  else window.open(location.pathname + readHash(p, page), '_blank');
 }
 
 function markdownEl(md: string, p: WebPaper, images?: Record<string, SummaryImage>) {
@@ -416,15 +417,13 @@ function showPaper(p: WebPaper) {
   const actions = h(
     'div',
     { class: 'paper-actions' },
-    p.hasPdf
-      ? root
-        ? h('a', { class: 'btn primary', href: readHash(p) }, 'Read PDF')
-        : h('a', { class: 'btn primary', href: pdfFileUrl(p), target: '_blank', title: 'In Chrome’s PDF viewer' }, 'Read PDF')
-      : null,
-    p.driveId ? h('a', { class: p.hasPdf ? 'btn' : 'btn primary', href: driveUrl(p.driveId), target: '_blank', rel: 'noopener' }, 'Open in Google Drive') : null,
+    p.driveId
+      ? h('a', { class: 'btn primary', href: readHash(p), target: touch ? undefined : '_blank' }, 'Read PDF')
+      : h('span', { class: 'muted' }, 'The PDF is not in Google Drive.'),
+    p.driveId ? h('a', { class: 'btn', href: driveUrl(p.driveId), target: '_blank', rel: 'noopener' }, 'Open in Google Drive') : null,
     p.sourceUrl ? h('a', { class: 'btn', href: p.sourceUrl, target: '_blank', rel: 'noopener' }, 'Original') : null,
-    !p.hasPdf && !p.driveId ? h('span', { class: 'muted' }, 'The PDF is not on this computer.') : null,
   );
+  const figures = Object.keys(p.summary?.images ?? {}).length > 0;
   app.replaceChildren(
     header(),
     h(
@@ -435,17 +434,8 @@ function showPaper(p: WebPaper) {
       h('p', { class: 'muted small' }, [p.venue, p.year, `${p.folder ? p.folder + '/' : ''}${p.fileName}`].filter(Boolean).join(' · ')),
       p.tags.length ? h('div', { class: 'row-tags' }, p.tags.map((t) => tagEl(t, toList))) : null,
       actions,
-      p.annotationCount
-        ? h(
-            'p',
-            { class: 'muted small' },
-            root || !p.hasPdf ? `${plural(p.annotationCount, 'annotation')} (shown in the PDF, read-only)` : `${plural(p.annotationCount, 'annotation')}: shown in the PDF once this page can read the folder. `,
-            root || !p.hasPdf ? null : accessButton('Allow folder access'),
-          )
-        : null,
-      !root && p.hasPdf && Object.keys(p.summary?.images ?? {}).length && !p.annotationCount
-        ? h('p', { class: 'muted small' }, 'The figures of the summary are shown from the PDF once this page can read the folder. ', accessButton('Allow folder access'))
-        : null,
+      p.annotationCount && p.driveId ? h('p', { class: 'muted small' }, `${plural(p.annotationCount, 'annotation')} (shown in the PDF, read-only)`) : null,
+      figures && p.driveId && !signedIn() ? h('p', { class: 'muted small' }, 'The figures of the summary are shown from the PDF once you sign in again. ', signInButton('Sign in')) : null,
       paperTabs([
         { key: 'abstract', label: 'Abstract', panel: p.abstract ? markdownEl(p.abstract, p) : null },
         {
@@ -475,7 +465,6 @@ let activeTab = 'summary';
 function paperTabs(tabs: { key: string; label: string; panel: HTMLElement | null }[]): HTMLElement | null {
   const shown = tabs.filter((t): t is typeof t & { panel: HTMLElement } => !!t.panel);
   if (!shown.length) return null;
-  // (The summary first when there is one, else the first tab.)
   const initial = shown.some((t) => t.key === activeTab) ? activeTab : shown[0].key;
   const buttons = new Map<string, HTMLButtonElement>();
   const select = (key: string, focus = false) => {
@@ -513,7 +502,7 @@ function paperTabs(tabs: { key: string; label: string; panel: HTMLElement | null
 const normTitle = (t: string) =>
   t
     .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
@@ -564,7 +553,7 @@ function relatedPanel(p: WebPaper): HTMLElement | null {
               'div',
               { class: 'related-relation' },
               r.relation,
-              r.page
+              r.page && p.driveId
                 ? h('a', { class: 'page-ref', href: '#', onclick: (e: Event) => (e.preventDefault(), openPage(p, r.page!)) }, ` (p. ${r.page})`)
                 : null,
             )
@@ -585,6 +574,8 @@ function relatedPanel(p: WebPaper): HTMLElement | null {
   );
 }
 
+// --- The PDF -------------------------------------------------------------------------------
+
 /** Closing the PDF: back to the paper (by Back if it was opened from there in this tab). */
 let closeViewer: (() => void) | null = null;
 
@@ -600,16 +591,34 @@ async function showViewer(p: WebPaper, page: number | undefined, openedFromPaper
     }
   };
   closeViewer = close;
+  const back = () => h('button', { class: 'btn', onclick: close }, '← Back');
+  if (!signedIn()) {
+    holder.replaceChildren(
+      h(
+        'div',
+        { class: 'pad' },
+        h('p', null, 'Sign in with Google to read the PDF from your Drive.'),
+        h('div', { class: 'paper-actions' }, back(), h('button', { class: 'btn primary', onclick: () => void signInThen(() => route()) }, 'Sign in')),
+      ),
+    );
+    return;
+  }
+  const run = routing;
   try {
-    const [data, anns] = await Promise.all([readPdf(root!, p.path), readAnnotations(root!, p.path)]);
+    const [data, anns] = await Promise.all([readPdf(p), readAnnotations(p)]);
+    if (run !== routing) return;
     viewer = await openViewer(holder, data, anns, {
       title: p.title,
       page,
       driveUrl: p.driveId ? driveUrl(p.driveId) : undefined,
-      onClose: close,
+      // (On a computer the PDF is in a tab of its own, closed with the tab: no Back.)
+      onClose: touch || openedFromPaper ? close : undefined,
+      compact: touch,
     });
   } catch (e) {
-    holder.replaceChildren(h('p', { class: 'pad' }, `The PDF could not be opened: ${(e as Error).message}`), h('button', { class: 'btn', onclick: close }, '← Back'));
+    if (run !== routing) return;
+    if (e instanceof SignInNeeded) return void showViewer(p, page, openedFromPaper);
+    holder.replaceChildren(h('div', { class: 'pad' }, h('p', null, `The PDF could not be opened: ${(e as Error).message}`), back()));
   }
 }
 
@@ -623,8 +632,5 @@ document.addEventListener('keydown', (e) => {
     }
   } else if (e.key === 'Escape' && viewer && closeViewer) closeViewer();
 });
-
-// (For tests: open a folder without the picker.)
-(window as unknown as { omoebaOpenFolder: (d: FileSystemDirectoryHandle) => Promise<void> }).omoebaOpenFolder = open;
 
 void start();

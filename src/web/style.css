@@ -86,7 +86,7 @@ a {
   border-color: var(--star);
   color: var(--star);
 }
-/* Opening the folder */
+/* Signing in */
 .welcome {
   max-width: 560px;
   margin: 12vh auto 0;
@@ -302,6 +302,30 @@ a {
 .related-relation { font-size: 13px; line-height: 1.5; color: var(--fg-soft); margin-top: 2px; }
 .related-relation .page-ref { color: var(--accent); text-decoration: none; white-space: nowrap; }
 .in-library-badge { flex: none; margin-top: 2px; }
+/* The list: searching inside the PDFs, signing out */
+.inside-pdfs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--fg-soft);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.count {
+  white-space: nowrap;
+}
+.list-foot {
+  max-width: 980px;
+  padding: 0 20px 40px;
+}
+.link-btn {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
 /* The PDF */
 .viewer {
   position: fixed;
@@ -343,8 +367,27 @@ a {
   background: #fff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
 }
+.viewer-pages-scroll {
+  position: relative;
+}
+.viewer-pages-inner {
+  /* (Scaled while pinching, from the point under the fingers.) */
+  will-change: transform;
+}
+.viewer-page .canvasWrapper,
 .viewer-page canvas {
   display: block;
+  width: 100%;
+  height: 100%;
+}
+/* A phone: only the pages (no bar), zoomed by the viewer (pinch) */
+.viewer.compact .viewer-pages-scroll {
+  padding-top: env(safe-area-inset-top);
+  touch-action: pan-x pan-y;
+}
+/* (The keyboard's focus ring only: not after a click or a tap.) */
+.btn:focus:not(:focus-visible) {
+  outline: none;
 }
 /* Messages */
 .toast {
@@ -474,4 +517,51 @@ a {
 .omo-freetext.selected {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+/* A phone: tighter, the search on its own line, the notch's area left free (home screen) */
+.topbar {
+  padding-top: max(10px, env(safe-area-inset-top));
+}
+@media (max-width: 640px) {
+  .topbar {
+    padding-left: 12px;
+    padding-right: 12px;
+    gap: 8px;
+  }
+  .searchbar {
+    flex-wrap: wrap;
+    padding: 10px 12px 4px;
+    gap: 6px 12px;
+  }
+  .search {
+    flex: 1 0 100%;
+    /* (16px: no zooming in when it gets the focus, on an iPhone) */
+    font-size: 16px;
+  }
+  .list {
+    padding: 0 4px 30px;
+  }
+  .list-foot {
+    padding: 0 12px 30px;
+  }
+  .paper {
+    padding: 14px 14px 40px;
+  }
+  .paper h1 {
+    font-size: 20px;
+  }
+  .viewer-bar {
+    padding: max(6px, env(safe-area-inset-top)) 8px 6px;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .viewer-title {
+    max-width: 50vw;
+  }
+  .viewer-pages-scroll {
+    padding: 8px 0;
+  }
+  .welcome {
+    margin-top: 8vh;
+  }
 }

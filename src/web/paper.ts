@@ -1,13 +1,15 @@
 /**
- * A paper as the library page (index.html) shows it, made from its .json: shared by the page
- * and by Omoeba, which writes the library's papers next to the page (omoeba-library.js, loaded
- * by the page as a script: a page opened from a file may load scripts beside it, but not read
- * files). No DOM and no Node here.
+ * A paper as the web page shows it (src/web/app.ts), made from its .json; and the file listing a
+ * library's papers that Omoeba keeps in each library folder for the page (omoeba-library.jsonl,
+ * read by the page from Google Drive). Shared by the page and by Omoeba: no DOM and no Node here.
  */
 import type { RelatedPaper, Sidecar } from '../shared/types';
 
 export interface WebPaper {
-  /** Path of the PDF in the library folder, "/"-separated (also when the PDF is missing). */
+  /**
+   * Path of the PDF in the library folder, "/"-separated (also when the PDF is missing). In the
+   * page, with several libraries: preceded by the library's name.
+   */
   path: string;
   folder: string;
   fileName: string;
@@ -24,6 +26,7 @@ export interface WebPaper {
   notes?: string;
   /** The most relevant papers it cites (Omoeba's "Related work"), with the AI that chose them. */
   related?: { papers: RelatedPaper[]; ai: string; createdAt?: string };
+  /** The PDF in Google Drive (recorded by Omoeba when Google Drive for desktop syncs it). */
   driveId?: string;
   sourceUrl?: string;
   annotationCount: number;
@@ -34,8 +37,8 @@ export interface WebPaper {
 /** Folders not part of the library (the app's own, and hidden ones, starting with a dot). */
 export const SKIP_FOLDERS = new Set(['node_modules', 'Syntheses']);
 
-/** The file of the library's papers, next to index.html. */
-export const DATA_FILE = 'omoeba-library.js';
+/** The file of a library's papers, in the library folder. */
+export const DATA_FILE = 'omoeba-library.jsonl';
 
 const strList = (v: unknown): string[] => (Array.isArray(v) ? v.map((x) => String(x)).filter((x) => x.trim()) : []);
 
@@ -96,11 +99,11 @@ function withDerived(p: Stored): WebPaper {
 }
 
 /**
- * The library's papers as a script (omoeba-library.js): one paper per line, in the order of their
- * paths, so that a change to a paper changes its line only (small diffs, e.g. in git). The date
- * is on a line of its own (see sameLibraryData).
+ * A library's papers as written in omoeba-library.jsonl: a first line naming the library (its
+ * folder) with the date, then one paper per line, in the order of their paths, so that a change to
+ * a paper changes its line only (small diffs, e.g. in git).
  */
-export function libraryScript(papers: WebPaper[], updatedAt: string): string {
+export function libraryFile(name: string, papers: WebPaper[], updatedAt: string): string {
   const lines = [...papers]
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
     .map((p) => {
@@ -109,26 +112,34 @@ export function libraryScript(papers: WebPaper[], updatedAt: string): string {
       const o = Object.fromEntries(Object.entries(stored).filter(([, v]) => v !== undefined && v !== false && !(Array.isArray(v) && !v.length) && v !== 0));
       return JSON.stringify(o);
     });
-  return (
-    '/* The papers of this library, for index.html: written by Omoeba (one paper per line). */\n' +
-    `window.omoebaLibrary = { version: 1, updatedAt: ${JSON.stringify(updatedAt)}, papers: [\n` +
-    lines.map((l) => l + ',\n').join('') +
-    '] };\n'
-  );
+  return [JSON.stringify({ omoebaLibrary: 1, name, updatedAt }), ...lines].join('\n') + '\n';
 }
 
-/** Whether two library scripts hold the same papers (their dates aside). */
+/** Whether two library files hold the same papers (their dates aside). */
 export function sameLibraryData(a: string, b: string): boolean {
-  const strip = (s: string) => s.replace(/updatedAt: "[^"]*"/, '');
+  const strip = (s: string) => s.replace(/"updatedAt":"[^"]*"/, '');
   return strip(a) === strip(b);
 }
 
-/** The papers of the script loaded by the page (window.omoebaLibrary), or null. */
-export function papersFromScript(data: unknown): { papers: WebPaper[]; updatedAt?: string } | null {
-  const d = data as { version?: unknown; updatedAt?: unknown; papers?: unknown } | null | undefined;
-  if (!d || d.version !== 1 || !Array.isArray(d.papers)) return null;
+/** A library file read back: its name, date and papers (lines that cannot be read are skipped). */
+export function readLibraryFile(text: string): { name: string; updatedAt?: string; papers: WebPaper[] } | null {
+  const lines = text.split('\n');
+  let head: { omoebaLibrary?: unknown; name?: unknown; updatedAt?: unknown };
+  try {
+    head = JSON.parse(lines[0]);
+  } catch {
+    return null;
+  }
+  if (!head || head.omoebaLibrary !== 1) return null;
   const papers: WebPaper[] = [];
-  for (const raw of d.papers as Partial<Stored>[]) {
+  for (const line of lines.slice(1)) {
+    if (!line.trim()) continue;
+    let raw: Partial<Stored>;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      continue;
+    }
     if (!raw || typeof raw.path !== 'string' || typeof raw.title !== 'string') continue;
     papers.push(
       withDerived({
@@ -143,5 +154,11 @@ export function papersFromScript(data: unknown): { papers: WebPaper[]; updatedAt
       }),
     );
   }
-  return { papers: papers.sort((a, b) => a.title.localeCompare(b.title)), updatedAt: typeof d.updatedAt === 'string' ? d.updatedAt : undefined };
+  return { name: typeof head.name === 'string' ? head.name : '', updatedAt: typeof head.updatedAt === 'string' ? head.updatedAt : undefined, papers };
+}
+
+/** The same paper under another path (a library's papers, under its name when there are several). */
+export function withPath(p: WebPaper, path: string): WebPaper {
+  const { folder: _f, fileName: _n, text: _t, ...stored } = p;
+  return withDerived({ ...stored, path });
 }

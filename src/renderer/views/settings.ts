@@ -156,14 +156,6 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
         markDirty();
       },
     });
-    const webIndex = h('input', {
-      type: 'checkbox',
-      checked: c.writeWebIndex,
-      onchange: () => {
-        c.writeWebIndex = webIndex.checked;
-        markDirty();
-      },
-    });
     const saveSkim = h('input', {
       type: 'checkbox',
       checked: c.saveSkim,
@@ -229,12 +221,6 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
           { class: 'check' },
           saveSkim,
           'Also save annotations in a .skim file next to each PDF, to open them in Skim. Annotations are always saved in the paper’s .json file.',
-        ),
-        h(
-          'label',
-          { class: 'check' },
-          webIndex,
-          'Keep an index.html in each library folder (with omoeba-library.js, its papers): open it in Chrome on a computer without Omoeba to search the library, read papers and add PDFs. Turn this on only on the computer that holds the whole library.',
         ),
       ),
     );

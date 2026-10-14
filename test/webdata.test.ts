@@ -1,14 +1,13 @@
-/** The papers written beside index.html (omoeba-library.js), as the page reads them. */
+/** The list of a library's papers (omoeba-library.jsonl), as written by Omoeba and read by the web page. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import vm from 'node:vm';
 import { WebLibraryData } from '../src/main/webdata';
-import { libraryScript, papersFromScript, sameLibraryData } from '../src/web/paper';
+import { libraryFile, readLibraryFile, sameLibraryData, withPath } from '../src/web/paper';
 
-test('omoeba-library.js: the papers of a folder, one per line, read back by the page', async () => {
+test('omoeba-library.jsonl: the papers of a folder, one per line, read back by the page', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'omoeba-webdata-'));
   try {
     await mkdir(path.join(dir, 'optim'));
@@ -39,22 +38,27 @@ test('omoeba-library.js: the papers of a folder, one per line, read back by the 
     const papers = await data.papers(dir);
     assert.deepEqual(papers.map((p) => p.path).sort(), ['bare.pdf', 'duality.pdf', 'optim/trace-norm.pdf']);
 
-    const script = libraryScript(papers, '2026-10-14T00:00:00.000Z');
+    const script = libraryFile('papers', papers, '2026-10-14T00:00:00.000Z');
     // One line per paper, in the order of their paths.
-    const lines = script.split('\n').filter((l) => l.startsWith('{'));
+    const lines = script.split('\n').slice(1).filter((l) => l);  // (after the line naming the library)
     assert.equal(lines.length, 3);
     assert.match(lines[0], /"path":"bare.pdf"/);
     assert.match(lines[2], /"path":"optim\/trace-norm.pdf"/);
     // The same papers at another date: not written again.
-    assert.ok(sameLibraryData(script, libraryScript(papers, '2026-10-15T00:00:00.000Z')));
+    assert.ok(sameLibraryData(script, libraryFile('papers', papers, '2026-10-15T00:00:00.000Z')));
 
-    // As the page loads it.
-    const window: { omoebaLibrary?: unknown } = {};
-    vm.runInNewContext(script, { window });
-    const back = papersFromScript(window.omoebaLibrary)!;
+    // As the page reads it.
+    const back = readLibraryFile(script)!;
+    assert.equal(back.name, 'papers');
     assert.equal(back.updatedAt, '2026-10-14T00:00:00.000Z');
+    assert.equal(readLibraryFile('not a library'), null);
+    // Under the library's name (several libraries in the page).
+    const moved = withPath(back.papers.find((p) => p.path === 'optim/trace-norm.pdf')!, 'papers/optim/trace-norm.pdf');
+    assert.equal(moved.folder, 'papers/optim');
+    assert.equal(moved.fileName, 'trace-norm.pdf');
     const trace = back.papers.find((p) => p.path === 'optim/trace-norm.pdf')!;
-    assert.deepEqual(trace, papers.find((p) => p.path === 'optim/trace-norm.pdf'));
+    const plain = (v: unknown) => JSON.parse(JSON.stringify(v));
+    assert.deepEqual(plain(trace), plain(papers.find((p) => p.path === 'optim/trace-norm.pdf')));
     assert.equal(trace.folder, 'optim');
     assert.equal(trace.annotationCount, 1);
     assert.equal(trace.driveId, 'abc');
@@ -64,7 +68,7 @@ test('omoeba-library.js: the papers of a folder, one per line, read back by the 
 
     // A paper changed: its line only.
     await writeFile(path.join(dir, 'duality.json'), JSON.stringify({ omoeba: 1, title: 'Duality', tags: ['fw'] }));
-    const next = libraryScript(await data.papers(dir), '2026-10-14T00:00:00.000Z');
+    const next = libraryFile('papers', await data.papers(dir), '2026-10-14T00:00:00.000Z');
     assert.ok(!sameLibraryData(script, next));
     const changed = next.split('\n').filter((l, i) => l !== script.split('\n')[i]);
     assert.equal(changed.length, 1);
