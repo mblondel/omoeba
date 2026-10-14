@@ -9,6 +9,7 @@
  * waits until the time the tool gives (else half an hour), then goes on.
  */
 import type { AIBacklogItem, Config } from '../shared/types';
+import { aiChoices } from '../shared/aichoices';
 import { api, newJobId } from './api';
 import { materializeFigures } from './views/paper';
 
@@ -80,7 +81,7 @@ function order(items: AIBacklogItem[]): AIBacklogItem[] {
 
 async function chooseAI(): Promise<Config | null> {
   const cfg = await api.getConfig();
-  const ai = cfg.ais.find((a) => a.id === cfg.defaultAI && a.enabled);
+  const ai = aiChoices(cfg.ais).find((a) => a.id === cfg.defaultAI);
   if (!ai) {
     state.ai = null;
     state.problem = 'Choose a default AI in Settings first (it writes the metadata and summaries).';

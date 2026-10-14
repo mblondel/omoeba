@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AIProvider, Config } from '../shared/types';
+import { aiChoices, asAIChoice } from '../shared/aichoices';
 
 /** Directory holding config.json and the search index (~/omoeba by default). */
 export function appDir(): string {
@@ -30,6 +31,7 @@ export const AI_PRESETS: AIProvider[] = [
     name: 'Claude Code',
     command: 'claude',
     args: ['-p', '--output-format', 'text'],
+    models: ['opus', 'sonnet', 'haiku'],
     enabled: false,
   },
   {
@@ -37,6 +39,8 @@ export const AI_PRESETS: AIProvider[] = [
     name: 'OpenAI Codex',
     command: 'codex',
     args: ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-'],
+    models: [],
+    modelFlag: '--model',
     enabled: false,
   },
   {
@@ -46,6 +50,7 @@ export const AI_PRESETS: AIProvider[] = [
     name: 'Gemini Antigravity',
     command: 'agy',
     args: ['-p', '{prompt}', '--output-format', 'text', '--print-timeout', '15m'],
+    models: [],
     enabled: false,
   },
 ];
@@ -57,7 +62,7 @@ export function defaultConfig(): Config {
   return {
     version: 1,
     folders: [],
-    ais: AI_PRESETS.map((a) => ({ ...a, args: [...a.args] })),
+    ais: AI_PRESETS.map((a) => ({ ...a, args: [...a.args], models: [...(a.models ?? [])] })),
     defaultAI: null,
     autoExtract: true,
     indexIntervalMinutes: 10,
@@ -76,10 +81,18 @@ function normalize(raw: Partial<Config>): Config {
   for (const a of ais) if (a.id === 'antigravity' && a.name === 'Gemini (Antigravity CLI)') a.name = 'Gemini Antigravity';
   // Make sure presets are always listed (so they can be enabled later).
   for (const p of d.ais) if (!ais.some((a) => a.id === p.id)) ais.push(p);
+  // (Settings from before models were offered: the preset's models.)
+  for (const a of ais) if (!Array.isArray(a.models)) a.models = [...(d.ais.find((p) => p.id === a.id)?.models ?? [])];
   const cfg: Config = {
     version: 1,
     folders: Array.isArray(raw.folders) ? [...new Set(raw.folders.filter((f) => typeof f === 'string'))] : [],
-    ais: ais.map(({ resolvedPath: _r, ...a }) => ({ ...a, args: Array.isArray(a.args) ? a.args : [], enabled: !!a.enabled })),
+    ais: ais.map(({ resolvedPath: _r, ...a }) => ({
+      ...a,
+      args: Array.isArray(a.args) ? a.args : [],
+      models: [...new Set((a.models ?? []).filter((m) => typeof m === 'string' && m.trim()).map((m) => m.trim()))],
+      modelsFound: a.modelsFound === true || undefined,
+      enabled: !!a.enabled,
+    })),
     defaultAI: typeof raw.defaultAI === 'string' ? raw.defaultAI : null,
     autoExtract: raw.autoExtract ?? d.autoExtract,
     indexIntervalMinutes: Math.max(1, Number(raw.indexIntervalMinutes) || d.indexIntervalMinutes),
@@ -92,8 +105,8 @@ function normalize(raw: Partial<Config>): Config {
     const v = raw[k];
     if (typeof v === 'string' && v.trim()) cfg[k] = v.trim();
   }
-  const enabled = cfg.ais.filter((a) => a.enabled);
-  if (!cfg.defaultAI || !enabled.some((a) => a.id === cfg.defaultAI)) cfg.defaultAI = enabled[0]?.id ?? null;
+  // (The AI as it is, now offered with its models: its first model.)
+  cfg.defaultAI = asAIChoice(cfg.ais, cfg.defaultAI) ?? aiChoices(cfg.ais)[0]?.id ?? null;
   return cfg;
 }
 

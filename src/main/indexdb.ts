@@ -452,14 +452,17 @@ export class IndexDb {
   /**
    * Paper ids matching a query (same syntax as before: space-separated terms, all of which must
    * match, as prefixes; `field:term` for one field; `"a b"` for several terms; `-term` excludes).
-   * An empty query matches all papers.
+   * An empty query matches all papers. Words without a field are looked for in the PDFs' text
+   * only if `inText`.
    */
-  query(clauses: { field?: string; value: string; negate: boolean }[]): string[] {
+  query(clauses: { field?: string; value: string; negate: boolean }[], inText = true): string[] {
     const toMatch = (c: { field?: string; value: string }): string | null => {
       const col = c.field ? FIELD_COLUMN[c.field] : undefined;
       const toks = queryTokens(c.value);
       if (!toks.length) return null;
-      const prefix = col ? `${col} : ` : '';
+      // A word without a field: in the title, authors, institutions, tags and keywords; also in
+      // the PDF's text when asked (`inText`), else only with text:.
+      const prefix = col ? `${col} : ` : inText ? '' : '{title author institution tag keyword} : ';
       // A tag is matched as a phrase ("to read" → the words in this order); other fields
       // match each word anywhere in the field.
       if (col === 'tag') return `${prefix}"${toks.join(' ')}" *`;

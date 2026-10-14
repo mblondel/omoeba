@@ -6,6 +6,7 @@
  */
 import type { AIProvider, AITraceKind, PaperSummary, Synthesis, SynthesisInfo } from '../../shared/types';
 import { MAX_SYNTHESIS_PAPERS } from '../../shared/synthesis';
+import { aiChoiceName, aiChoices } from '../../shared/aichoices';
 import { api, newJobId } from '../api';
 import { navigate, openSynthesisTab, refreshConfig, state } from '../app';
 import { clear, errorMessage, formatAuthors, h, icon, toast } from '../dom';
@@ -42,7 +43,7 @@ export async function openSummarizeDialog(opts: {
   aiId?: string;
 }): Promise<SynthesisRun | null> {
   const cfg = state.config ?? (await refreshConfig());
-  const ais: AIProvider[] = cfg.ais.filter((a) => a.enabled);
+  const ais: AIProvider[] = aiChoices(cfg.ais);
   if (!ais.length) {
     toast('No AI is authorized. Enable one in Settings › AI.', 'error', 8000);
     return null;
@@ -248,7 +249,7 @@ export function mountSynthesis(
   function run(r: SynthesisRun) {
     const jobId = newJobId();
     const started = Date.now();
-    const ai = state.config?.ais.find((a) => a.id === r.aiId)?.name ?? r.aiId;
+    const ai = aiChoiceName(state.config?.ais ?? [], r.aiId);
     const elapsed = (from = started) => {
       const s = Math.max(0, Math.round((Date.now() - from) / 1000));
       return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;

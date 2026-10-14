@@ -37,6 +37,14 @@ const readHash = (p: WebPaper, page?: number) => `#read=${encodeURIComponent(p.p
 /** A phone or tablet: papers open in the same tab. */
 const touch = matchMedia('(pointer: coarse)').matches;
 
+/** "claude:sonnet" → "Claude Code · Sonnet" (who wrote a summary). */
+const AI_LABELS: Record<string, string> = { claude: 'Claude Code', codex: 'OpenAI Codex', antigravity: 'Gemini Antigravity' };
+function aiLabel(by: string): string {
+  const [ai, model] = [by.split(':')[0], by.split(':').slice(1).join(':')];
+  const name = AI_LABELS[ai] ?? ai;
+  return model ? `${name} · ${/^[a-z]+$/.test(model) ? model[0].toUpperCase() + model.slice(1) : model}` : name;
+}
+
 function toast(text: string, error = false) {
   const t = h('div', { class: `toast${error ? ' error' : ''}` }, text);
   document.body.append(t);
@@ -446,7 +454,7 @@ function showPaper(p: WebPaper) {
                 'div',
                 null,
                 markdownEl(p.summary.markdown, p, p.summary.images as Record<string, SummaryImage>),
-                p.summary.by !== 'mine' ? h('div', { class: 'muted small panel-foot' }, `By ${p.summary.by}`) : null,
+                p.summary.by !== 'mine' ? h('div', { class: 'muted small panel-foot' }, `By ${aiLabel(p.summary.by)}`) : null,
               )
             : null,
         },

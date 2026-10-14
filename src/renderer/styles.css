@@ -410,6 +410,16 @@ textarea {
   background: var(--bg);
   -webkit-app-region: no-drag;
 }
+.search-wrap .inside-pdfs {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 10px;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+  -webkit-app-region: no-drag;
+}
 .list-wrap {
   flex: 1;
   overflow: auto;
@@ -721,18 +731,51 @@ input.paper-institutions {
   color: var(--fg-soft);
   margin-top: 2px;
 }
+/* The metadata, with the PDF's first page on its right. */
+.paper-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+.paper-head-main {
+  flex: 1;
+  min-width: 0;
+}
+.paper-head-thumb {
+  flex: none;
+  margin-top: 6px;
+}
+.paper-page-thumb {
+  display: block;
+  width: 150px;
+  height: auto;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+}
+.paper-page-thumb:hover {
+  border-color: var(--border-strong);
+}
+@media (max-width: 760px) {
+  .paper-head-thumb {
+    display: none;
+  }
+}
+/* The venue and year, and below them the PDF's file. */
 .paper-meta {
   display: flex;
-  gap: 14px;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
   margin: 8px 0 14px;
 }
 /* The PDF's name, renamed by clicking it. */
 .paper-file {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  min-width: 0;
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 .paper-file-name {
   cursor: text;
@@ -1241,6 +1284,19 @@ textarea.abstract-text {
 .ai-table tr.disabled .ai-name,
 .ai-table tr.disabled .mono {
   opacity: 0.65;
+}
+.ai-table .ai-models {
+  margin-top: 5px;
+  font-size: 12px;
+}
+.ai-table td.center {
+  width: 96px;
+}
+.ai-table .ai-model-select {
+  display: block;
+  margin: 6px auto 0;
+  max-width: 92px;
+  font-size: 12px;
 }
 label.check {
   display: flex;

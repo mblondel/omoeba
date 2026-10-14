@@ -47,6 +47,8 @@ import type {
   SummaryEntry,
 } from '../shared/types';
 import * as cfg from './config';
+import { findAIChoice, formerChatKey } from '../shared/aichoices';
+import { listModels, modelListerFor } from './aimodels';
 import { IndexManager } from './indexer';
 import { ThumbCache } from './thumbcache';
 import {
@@ -209,6 +211,7 @@ export class OmoebaService implements OmoebaAPI {
     this.index.startPeriodic(this.config.indexIntervalMinutes);
     this.watchFolders();
     if (this.config.folders.length) this.index.requestSync(500);
+    setTimeout(() => void this.refreshModels(), 5000);
   }
 
   dispose() {
@@ -254,6 +257,7 @@ export class OmoebaService implements OmoebaAPI {
     void this.writeWebData().catch((e) => console.error('omoeba-library.jsonl:', e));
     this.firstRun = false;
     this.index.startPeriodic(this.config.indexIntervalMinutes);
+    void this.refreshModels();
     if (foldersChanged) {
       this.watchFolders();
       this.platform.emit({ type: 'library-changed' });
@@ -374,8 +378,8 @@ export class OmoebaService implements OmoebaAPI {
     await this.thumbs.delete(gone).catch(() => undefined);
   }
 
-  async search(query: string): Promise<string[] | null> {
-    return this.index.search(query);
+  async search(query: string, inText = false): Promise<string[] | null> {
+    return this.index.search(query, !!inText);
   }
 
   async indexStatus(): Promise<IndexStatus> {
@@ -1539,7 +1543,8 @@ export class OmoebaService implements OmoebaAPI {
 
   private aiFor(aiId?: string): AIProvider {
     const id = aiId || this.config.defaultAI;
-    const ai = this.config.ais.find((a) => a.id === id);
+    // (An AI, or an AI with one of its models: "claude:sonnet".)
+    const ai = findAIChoice(this.config.ais, id);
     if (!ai) throw new Error('No AI selected. Authorize an AI CLI in Settings.');
     if (!ai.enabled) throw new Error(`${ai.name} is not authorized. Enable it in Settings.`);
     return ai;
@@ -1609,6 +1614,39 @@ export class OmoebaService implements OmoebaAPI {
    * The papers (with their PDF) whose metadata or summary the AI has not written yet, as the paper
    * page decides it (see autoRun in src/renderer/views/paper.ts): File › Summarize the Library.
    */
+  private findingModels = false;
+  /**
+   * The models of the authorized AIs whose tool can list them (Codex, Antigravity), asked to the
+   * tool itself at startup and when the settings are saved: unless the user wrote their own list.
+   */
+  private async refreshModels(): Promise<void> {
+    if (this.findingModels) return;
+    this.findingModels = true;
+    try {
+      let changed = false;
+      for (const ai of this.config.ais) {
+        if (!ai.enabled || !modelListerFor(ai.id, ai.command) || (ai.models?.length && !ai.modelsFound)) continue;
+        try {
+          const found = await listModels(ai);
+          // (Settings saved meanwhile: that AI as it is now.)
+          const now = this.config.ais.find((a) => a.id === ai.id);
+          if (!now || (now.models?.length && !now.modelsFound) || JSON.stringify(now.models) === JSON.stringify(found)) continue;
+          now.models = found;
+          now.modelsFound = true;
+          changed = true;
+        } catch (e) {
+          console.warn(`Models of ${ai.name} not listed:`, (e as Error).message);
+        }
+      }
+      if (changed) {
+        this.config = await cfg.saveConfig(this.config);
+        this.platform.emit({ type: 'config-changed' });
+      }
+    } finally {
+      this.findingModels = false;
+    }
+  }
+
   async aiBacklog(): Promise<AIBacklogItem[]> {
     const papers = (await this.listPapers()).filter((p) => p.hasPdf);
     const out: AIBacklogItem[] = [];
@@ -1649,7 +1687,8 @@ export class OmoebaService implements OmoebaAPI {
     const pdfPath = this.checkId(id);
     const ai = this.aiFor(aiId);
     const detail = await this.getPaper(pdfPath);
-    const history: ChatMessage[] = detail.sidecar.chats?.[ai.id] ?? [];
+    const former = formerChatKey(this.config.ais, ai.id);
+    const history: ChatMessage[] = detail.sidecar.chats?.[ai.id] ?? (former ? detail.sidecar.chats?.[former] : undefined) ?? [];
     const pages = await this.paperPages(pdfPath);
     const out = await runAI(ai, askPrompt(pages, detail.title, history, question, context ?? {}), {
       jobId,
@@ -1661,7 +1700,8 @@ export class OmoebaService implements OmoebaAPI {
       { role: 'user', content: question, at: now },
       { role: 'assistant', content: stripFences(out), at: new Date().toISOString() },
     ];
-    return this.updateSidecar(pdfPath, { chats: { [ai.id]: next } });
+    // (A conversation from before models were offered: moved to this model.)
+    return this.updateSidecar(pdfPath, { chats: { [ai.id]: next, ...(former ? { [former]: null as unknown as [] } : {}) } });
   }
 
   private cancelled = new Set<string>();

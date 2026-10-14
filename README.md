@@ -15,7 +15,7 @@
 - Manage a local library of PDFs.
 - PDF annotations (compatible with Skim).
 - Markdown & LaTeX editing.
-- Citations.
+- BibTeX citations.
 - AI: ask questions, summaries, tagging, related work, audio, ...
 - Metadata are stored in a .json file along the .pdf file.
 - Easy to sync via Google Drive or git.

@@ -14,6 +14,18 @@ export interface AIProvider {
   args: string[];
   /** Whether the user authorized this AI. Only authorized AIs are ever invoked. */
   enabled: boolean;
+  /**
+   * Models offered for it in the menus besides its own default (e.g. "opus", "sonnet"), each
+   * passed with `modelFlag` (see shared/aichoices.ts).
+   */
+  models?: string[];
+  /** The option naming the model ("--model" if not given). */
+  modelFlag?: string;
+  /**
+   * `models` were listed by the tool itself (Codex, Antigravity: see main/aimodels.ts), and are
+   * kept up to date; not once the user edits them.
+   */
+  modelsFound?: boolean;
   /** Filled at runtime: resolved executable path, or null if not found. */
   resolvedPath?: string | null;
 }
@@ -594,7 +606,8 @@ export interface OmoebaAPI {
   detectAIs(): Promise<AIDetectResult[]>;
 
   listPapers(): Promise<PaperSummary[]>;
-  search(query: string): Promise<string[] | null>;
+  /** Matching paper ids; words without a field are also looked for in the PDFs' text if `inText`. */
+  search(query: string, inText?: boolean): Promise<string[] | null>;
   indexStatus(): Promise<IndexStatus>;
   reindex(): Promise<IndexStatus>;
   allTags(): Promise<{ tag: string; count: number }[]>;

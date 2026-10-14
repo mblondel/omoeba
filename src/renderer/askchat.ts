@@ -6,6 +6,7 @@
  * question is about.
  */
 import type { Config, PaperDetail } from '../shared/types';
+import { aiChoices, formerChatKey } from '../shared/aichoices';
 import { api, newJobId } from './api';
 import { clear, confirmDialog, errorMessage, h, icon, iconButton, toast } from './dom';
 import { mountMarkdown } from './markdown';
@@ -53,7 +54,7 @@ export function createAskChat(opts: AskChatOptions): AskChat {
     }
   });
 
-  const enabledAIs = () => (opts.getConfig()?.ais ?? []).filter((a) => a.enabled);
+  const enabledAIs = () => aiChoices(opts.getConfig()?.ais ?? []);
 
   async function send(q?: string) {
     const question = (q ?? input.value).trim();
@@ -92,7 +93,9 @@ export function createAskChat(opts: AskChatOptions): AskChat {
     }
     const cfg = opts.getConfig();
     if (!aiId || !ais.some((a) => a.id === aiId)) aiId = cfg?.defaultAI && ais.some((a) => a.id === cfg.defaultAI) ? cfg.defaultAI : ais[0].id;
-    const history = opts.getPaper()?.sidecar.chats?.[aiId] ?? [];
+    const chats = opts.getPaper()?.sidecar.chats;
+    const former = formerChatKey(cfg?.ais ?? [], aiId);
+    const history = chats?.[aiId] ?? (former ? chats?.[former] : undefined) ?? [];
 
     // Toolbar: which AI answers, and clearing the conversation.
     clear(toolbar);
@@ -107,7 +110,7 @@ export function createAskChat(opts: AskChatOptions): AskChat {
         iconButton('trash', 'Clear this conversation', async () => {
           if (!aiId) return;
           if (await confirmDialog('Clear conversation', 'Delete this conversation?', 'Clear', true)) {
-            opts.setPaper(await api.updateSidecar(opts.id, { chats: { [aiId]: null as unknown as [] } }));
+            opts.setPaper(await api.updateSidecar(opts.id, { chats: { [aiId]: null as unknown as [], ...(former ? { [former]: null as unknown as [] } : {}) } }));
             refresh();
           }
         }),

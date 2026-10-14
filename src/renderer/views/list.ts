@@ -25,6 +25,21 @@ import { confirmTrashPaper } from '../trashpaper';
 type SortKey = 'title' | 'authors' | 'folder' | 'tags' | 'added' | 'opened';
 
 const prefs = {
+  /** Search inside the PDFs too (not only titles, authors, tags…). */
+  get insidePdfs(): boolean {
+    try {
+      return localStorage.getItem('omoeba.insidePdfs') === '1';
+    } catch {
+      return false;
+    }
+  },
+  set insidePdfs(v: boolean) {
+    try {
+      localStorage.setItem('omoeba.insidePdfs', v ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  },
   get sort(): { key: SortKey; dir: 1 | -1 } {
     try {
       return JSON.parse(localStorage.getItem('omoeba.sort') || '') || { key: 'title', dir: 1 };
@@ -119,10 +134,24 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
     type: 'search',
     class: 'search',
     placeholder: 'Search…  (tag:  author:  inst:  kw:  folder:)',
-    title: 'Search titles, authors, institutions, tags, keywords and text. Prefix with tag:, author:, inst:, kw:, title: or folder: to search one field; -term excludes.',
+    title: 'Search titles, authors, institutions, tags and keywords (and the PDFs’ text with “Inside PDFs”). Prefix with tag:, author:, inst:, kw:, title:, text: or folder: to search one field; -term excludes.',
     value: isSearchTab ? opts.query ?? '' : state.listQuery,
     spellcheck: false,
   });
+  const insidePdfs = h('input', {
+    type: 'checkbox',
+    checked: prefs.insidePdfs,
+    onchange: () => {
+      prefs.insidePdfs = insidePdfs.checked;
+      applyFilter();
+    },
+  });
+  const insideLabel = h(
+    'label',
+    { class: 'inside-pdfs', title: 'Also look for the words in the text of the PDFs (else only in titles, authors, institutions, tags and keywords)' },
+    insidePdfs,
+    'Inside PDFs',
+  );
   const count = h('span', { class: 'muted' });
   const indexInfo = h('span', { class: 'muted index-info' });
   const tbody = h('tbody');
@@ -278,7 +307,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
   const header = h(
     'header',
     { class: 'topbar' },
-    h('div', { class: 'search-wrap' }, icon('search'), search),
+    h('div', { class: 'search-wrap' }, icon('search'), search, insideLabel),
     h(
       'div',
       { class: 'topbar-actions' },
@@ -605,6 +634,29 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
       .every((t) => hay.includes(t.replace(/"/g, '')));
   }
 
+  /** Words, lowercase and without accents ("Rémi" → "remi"). */
+  const words = (s: string) =>
+    s
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter(Boolean);
+
+  /**
+   * Whether the paper's title, authors, institutions, tags or file name have every free word of
+   * the query (as a prefix): these come before the papers matched only by their text.
+   */
+  function matchesMetadata(p: PaperSummary, q: string): boolean {
+    const terms = q
+      .split(/\s+/)
+      .filter((t) => t && !t.startsWith('-') && !/^\w+:/.test(t))
+      .flatMap(words);
+    if (!terms.length) return false;
+    const hay = words([p.title, p.authors.join(' '), p.institutions.join(' '), p.tags.join(' '), p.fileName].join(' '));
+    return terms.every((t) => hay.some((w) => w.startsWith(t)));
+  }
+
   async function applyFilter(keep = false) {
     const seq = ++searchSeq;
     const q = search.value.trim();
@@ -620,7 +672,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
     if (rest) {
       let ids: string[] | null = null;
       try {
-        ids = await api.search(rest);
+        ids = await api.search(rest, insidePdfs.checked);
       } catch {
         ids = null;
       }
@@ -630,7 +682,12 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
         list = list.filter((p) => set.has(p.id));
       } else list = list.filter((p) => fallbackMatch(p, rest)); // no index
     }
-    visible = sortPapers(list);
+    // (Searching: the papers found by their title, authors… first, then those found by their text.)
+    if (rest) {
+      const first = list.filter((p) => matchesMetadata(p, rest));
+      const firstIds = new Set(first.map((p) => p.id));
+      visible = [...sortPapers(first), ...sortPapers(list.filter((p) => !firstIds.has(p.id)))];
+    } else visible = sortPapers(list);
     renderRows(keep);
     updateTagAllBtn();
     updateSummarize();

@@ -2,6 +2,7 @@
 import type { AIProvider, Config, GeminiKeyStatus, Theme } from '../../shared/types';
 import { AUDIO_LANGUAGES, DEFAULT_GEMINI_VOICES, GEMINI_VOICES } from '../../shared/audio';
 import { api } from '../api';
+import { modelLabel } from '../../shared/aichoices';
 import { clear, errorMessage, h, icon, iconButton, relTime, toast } from '../dom';
 import { navigate, refreshConfig, state, applyAppearance } from '../app';
 
@@ -333,6 +334,16 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
     body.append(h('p', { class: 'muted small' }, 'Settings are stored in ~/omoeba/config.json.'));
   }
 
+  /** Whether the default AI is this one (with any of its models). */
+  const isDefault = (c: Config, ai: AIProvider) => c.defaultAI === ai.id || !!c.defaultAI?.startsWith(`${ai.id}:`);
+
+  /** The default AI for this AI: with this model if it is listed, else its first, else the AI as it is. */
+  const choiceOf = (ai: AIProvider, model?: string) => {
+    const models = ai.models ?? [];
+    const m = model && models.includes(model) ? model : models[0];
+    return m ? `${ai.id}:${m}` : ai.id;
+  };
+
   function aiRow(c: Config, ai: AIProvider) {
     const status = ai.resolvedPath
       ? h('span', { class: 'ok small', title: ai.resolvedPath }, '✓ found')
@@ -342,8 +353,11 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
       checked: ai.enabled,
       onchange: () => {
         ai.enabled = enabled.checked;
-        if (ai.enabled && !c.ais.some((a) => a.enabled && a.id === c.defaultAI)) c.defaultAI = ai.id;
-        if (!ai.enabled && c.defaultAI === ai.id) c.defaultAI = c.ais.find((a) => a.enabled)?.id ?? null;
+        if (ai.enabled && !c.ais.some((a) => a.enabled && isDefault(c, a))) c.defaultAI = choiceOf(ai);
+        if (!ai.enabled && isDefault(c, ai)) {
+          const other = c.ais.find((a) => a.enabled);
+          c.defaultAI = other ? choiceOf(other) : null;
+        }
         markDirty();
         render();
       },
@@ -371,24 +385,64 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
         markDirty();
       },
     });
+    // Codex and Antigravity list their models themselves (see refreshModels in main/api.ts).
+    const tool = (ai.command.split('/').pop() ?? '').toLowerCase();
+    const listsModels = tool === 'codex' || tool === 'agy';
+    // The models offered in the menus.
+    const models = h('input', {
+      type: 'text',
+      value: (ai.models ?? []).join(', '),
+      class: 'mono ai-models',
+      placeholder: listsModels ? 'models: found automatically' : 'models, e.g. sonnet, haiku (none: its default)',
+      title: listsModels
+        ? `Models offered in the AI menus, passed with ${ai.modelFlag || '--model'}. Found automatically (and kept up to date) unless you edit them; empty the field to find them again.`
+        : `Models offered in the AI menus, passed with ${ai.modelFlag || '--model'}. With none, the AI is offered with its own default model.`,
+      spellcheck: false,
+      onchange: () => {
+        ai.models = [...new Set(models.value.split(/[,\s]+/).map((m) => m.trim()).filter(Boolean))];
+        // (Edited: the user's list from now on; emptied: the tool's own list again.)
+        ai.modelsFound = false;
+        // (The default model no longer listed: the AI's first model, or the AI as it is.)
+        if (isDefault(c, ai)) c.defaultAI = choiceOf(ai, model());
+        markDirty();
+        render();
+      },
+    });
+    const model = () => (c.defaultAI?.startsWith(`${ai.id}:`) ? c.defaultAI.slice(ai.id.length + 1) : '');
     const def = h('input', {
       type: 'radio',
       name: 'default-ai',
-      checked: c.defaultAI === ai.id,
+      checked: isDefault(c, ai),
       disabled: !ai.enabled,
       onchange: () => {
-        c.defaultAI = ai.id;
+        c.defaultAI = choiceOf(ai, modelSel?.value);
         markDirty();
       },
     });
+    const modelSel = ai.models?.length
+      ? h(
+          'select',
+          {
+            class: 'ai-model-select',
+            title: 'Model used by default',
+            disabled: !ai.enabled,
+            onchange: () => {
+              c.defaultAI = choiceOf(ai, modelSel!.value);
+              def.checked = true;
+              markDirty();
+            },
+          },
+          ai.models.map((m) => h('option', { value: m, selected: model() === m }, modelLabel(m))),
+        )
+      : null;
     const isPreset = ['claude', 'codex', 'antigravity'].includes(ai.id);
     return h(
       'tr',
       { class: ai.enabled ? '' : 'disabled' },
       h('td', null, enabled),
       h('td', null, name, h('div', null, status)),
-      h('td', null, cmd),
-      h('td', { class: 'center' }, def),
+      h('td', null, cmd, models),
+      h('td', { class: 'center' }, def, modelSel),
       h(
         'td',
         null,
@@ -396,7 +450,7 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
           ? null
           : iconButton('trash', 'Remove', () => {
               c.ais = c.ais.filter((a) => a !== ai);
-              if (c.defaultAI === ai.id) c.defaultAI = null;
+              if (isDefault(c, ai)) c.defaultAI = null;
               markDirty();
               render();
             }),
@@ -441,6 +495,17 @@ export function mountSettings(root: HTMLElement, opts: { firstRun: boolean; onDo
       if (!cfg) return;
       cfg.theme = fresh.theme;
       cfg.darkPdf = fresh.darkPdf;
+      // Models found by the AIs' tools (unless edited here meanwhile).
+      for (const f of fresh.ais) {
+        const a = cfg.ais.find((x) => x.id === f.id);
+        if (a && f.modelsFound && (a.modelsFound || !a.models?.length)) {
+          a.models = f.models;
+          a.modelsFound = true;
+        }
+      }
+      // (The default AI as it is, now with models: its first.)
+      const plain = cfg.ais.find((a) => a.id === cfg!.defaultAI && a.models?.length);
+      if (plain) cfg.defaultAI = choiceOf(plain);
       render();
     });
   });

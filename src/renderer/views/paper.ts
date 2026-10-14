@@ -5,10 +5,11 @@ import { clear, confirmDialog, errorMessage, formatAuthors, h, icon, iconButton,
 import { mountMarkdown } from '../markdown';
 import { closePaperTabs, navigate, refreshConfig, isActiveView, openSearchTab } from '../app';
 import { fileStemForTitle } from '../../shared/filenames';
+import { aiChoiceName, aiChoices } from '../../shared/aichoices';
 import { createTraceView, type TraceView } from '../aitrace';
 import { confirmTrashPaper } from '../trashpaper';
 import { authorQuery, institutionQuery, tagQuery } from '../authors';
-import { loadDocument, type PDFDocumentProxy } from '../pdfjs';
+import { loadDocument, renderPageToDataUrl, type PDFDocumentProxy } from '../pdfjs';
 import { locateFigure, renderFigureRef } from '../figures';
 import { createAskChat } from '../askchat';
 
@@ -278,9 +279,9 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     }
   }
 
-  const enabledAIs = (): AIProvider[] => (cfg?.ais ?? []).filter((a) => a.enabled);
+  const enabledAIs = (): AIProvider[] => aiChoices(cfg?.ais ?? []);
   const aiName = (aiId: string) =>
-    aiId === MY_SUMMARY ? 'My summary' : cfg?.ais.find((a) => a.id === aiId)?.name ?? aiId;
+    aiId === MY_SUMMARY ? 'My summary' : aiChoiceName(cfg?.ais ?? [], aiId);
 
   async function patch(p: Partial<Sidecar>) {
     try {
@@ -556,49 +557,58 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     content.append(
       h(
         'div',
-        { class: 'title-row' },
-        editable({
-          tag: 'h1',
-          value: sc.title ?? (p.titleIsFallback ? '' : p.title),
-          placeholder: p.title,
-          cls: 'paper-title',
-          onSave: (v) => patch({ title: v || null, metadataSource: 'user' } as Partial<Sidecar>),
-        }),
-        star,
-        reextract,
-      ),
-      editable({
-        value: p.authors.join(', '),
-        placeholder: 'Add authors',
-        cls: 'paper-authors',
-        title: 'Click a name to see all papers by this author; click elsewhere to edit',
-        renderValue: (el) =>
-          p.authors.forEach((a, i) => {
-            if (i) el.append(', ');
-            el.append(nameLink(a, `Show all papers by ${a}`, () => openSearchTab(authorQuery(a), a)));
+        { class: 'paper-head' },
+        h(
+          'div',
+          { class: 'paper-head-main' },
+          h(
+            'div',
+            { class: 'title-row' },
+            editable({
+              tag: 'h1',
+              value: sc.title ?? (p.titleIsFallback ? '' : p.title),
+              placeholder: p.title,
+              cls: 'paper-title',
+              onSave: (v) => patch({ title: v || null, metadataSource: 'user' } as Partial<Sidecar>),
+            }),
+            star,
+            reextract,
+          ),
+          editable({
+            value: p.authors.join(', '),
+            placeholder: 'Add authors',
+            cls: 'paper-authors',
+            title: 'Click a name to see all papers by this author; click elsewhere to edit',
+            renderValue: (el) =>
+              p.authors.forEach((a, i) => {
+                if (i) el.append(', ');
+                el.append(nameLink(a, `Show all papers by ${a}`, () => openSearchTab(authorQuery(a), a)));
+              }),
+            onSave: (v) => patch({ authors: splitList(v) }),
           }),
-        onSave: (v) => patch({ authors: splitList(v) }),
-      }),
-      editable({
-        value: (sc.institutions ?? []).join('; '),
-        placeholder: 'Add institutions',
-        cls: 'paper-institutions',
-        title: 'Click an institution to see all its papers; click elsewhere to edit',
-        renderValue: (el) =>
-          (sc.institutions ?? []).forEach((inst, i) => {
-            if (i) el.append('; ');
-            el.append(nameLink(inst, `Show all papers from ${inst}`, () => openSearchTab(institutionQuery(inst), inst)));
+          editable({
+            value: (sc.institutions ?? []).join('; '),
+            placeholder: 'Add institutions',
+            cls: 'paper-institutions',
+            title: 'Click an institution to see all its papers; click elsewhere to edit',
+            renderValue: (el) =>
+              (sc.institutions ?? []).forEach((inst, i) => {
+                if (i) el.append('; ');
+                el.append(nameLink(inst, `Show all papers from ${inst}`, () => openSearchTab(institutionQuery(inst), inst)));
+              }),
+            onSave: (v) => patch({ institutions: splitList(v) }),
           }),
-        onSave: (v) => patch({ institutions: splitList(v) }),
-      }),
-      h(
-        'div',
-        { class: 'paper-meta muted' },
-        [sc.venue, sc.year ?? p.year].filter(Boolean).join(' · ') || null,
-        fileNameField(p),
+          h(
+            'div',
+            { class: 'paper-meta muted' },
+            [sc.venue, sc.year ?? p.year].filter(Boolean).join(' · ') || null,
+            fileNameField(p),
+          ),
+          tagEditor(p),
+          sourceRow(p),
+        ),
+        firstPage(p),
       ),
-      tagEditor(p),
-      sourceRow(p),
       jobBar ?? '',
       paperTabs([
         {
@@ -684,6 +694,50 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     }
     select(activeTab);
     return h('div', { class: 'paper-tabbed' }, bar, ...shown.map((t) => t.panel));
+  }
+
+  /** The first page, drawn from the PDF (once per opening of the page, and when the PDF changes). */
+  let firstPageImage: { key: string; url: Promise<string | null> } | null = null;
+
+  /**
+   * The PDF's first page beside the metadata; a click opens it. Not drawn for a PDF that is not on
+   * this computer (reading it would download it): its list thumbnail then, if any.
+   */
+  function firstPage(p: PaperDetail): HTMLElement | null {
+    if (!p.hasPdf) return null;
+    const img = h('img', { class: 'paper-page-thumb', alt: '', 'aria-label': 'First page of the PDF', title: 'Read the PDF', onclick: () => navigate(`#/read/${encodeURIComponent(id)}`) });
+    if (p.cloudOnly) {
+      if (!p.thumbnail) return null;
+      img.src = p.thumbnail;
+    } else {
+      const key = `${p.id}:${p.pdfMtime}`;
+      if (firstPageImage?.key !== key)
+        firstPageImage = {
+          key,
+          url: api
+            .readPdf(id)
+            .then(loadDocument)
+            .then(async (doc) => {
+              try {
+                // (Twice the width shown, for Retina screens.)
+                return await renderPageToDataUrl(doc, 1, 2 * 150);
+              } finally {
+                void doc.destroy();
+              }
+            })
+            .catch((e) => {
+              console.warn('First page not drawn:', e);
+              return null;
+            }),
+        };
+      // (Meanwhile the list's small thumbnail, if there is one.)
+      if (p.thumbnail) img.src = p.thumbnail;
+      void firstPageImage.url.then((url) => {
+        if (url) img.src = url;
+        else if (!p.thumbnail) img.closest('.paper-head-thumb')?.remove();
+      });
+    }
+    return h('div', { class: 'paper-head-thumb' }, img);
   }
 
   function tagEditor(p: PaperDetail): HTMLElement {

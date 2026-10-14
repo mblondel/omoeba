@@ -289,10 +289,10 @@ export class IndexManager {
   }
 
   /** Matching paper ids, or null when the index is not available. */
-  search(q: string): string[] | null {
+  search(q: string, inText = false): string[] | null {
     if (!this.db) return null;
     try {
-      return this.db.query(parseQuery(q));
+      return this.db.query(parseQuery(q), inText);
     } catch (e) {
       console.warn('Search failed:', e);
       return [];

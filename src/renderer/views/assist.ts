@@ -9,6 +9,7 @@ import { isolateHistory, undo } from '@codemirror/commands';
 import type { EditorView } from '@codemirror/view';
 import type { AIProvider, AssistTurn } from '../../shared/types';
 import { locateEdits } from '../../shared/assist';
+import { aiChoices } from '../../shared/aichoices';
 import { api, newJobId } from '../api';
 import { refreshConfig, state } from '../app';
 import { setAIChanges } from '../codeeditor';
@@ -81,7 +82,7 @@ export function createAssist(file: string, getView: () => EditorView | null): As
     const view = getView();
     if (!view || disposed) return;
     const cfg = state.config ?? (await refreshConfig());
-    const ais: AIProvider[] = cfg.ais.filter((a) => a.enabled);
+    const ais: AIProvider[] = aiChoices(cfg.ais);
     if (!ais.length) {
       toast('No AI is authorized. Enable one in Settings › AI.', 'error', 6000);
       return;
