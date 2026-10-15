@@ -563,7 +563,14 @@ table.papers td.c-thumb {
   background: repeating-linear-gradient(135deg, var(--bg-sunken) 0 4px, transparent 4px 8px);
 }
 .c-title {
-  width: 42%;
+  width: 38%;
+}
+.c-year {
+  width: 6%;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 td.c-title {
   font-weight: 500;

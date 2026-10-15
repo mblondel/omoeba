@@ -22,7 +22,12 @@ import { renderThumbnail } from '../thumbnail';
 import { sameAuthor, sameInstitution, tagQuery } from '../authors';
 import { confirmTrashPaper } from '../trashpaper';
 
-type SortKey = 'title' | 'authors' | 'folder' | 'tags' | 'added' | 'opened';
+type SortKey = 'title' | 'year' | 'authors' | 'folder' | 'tags' | 'added' | 'opened';
+
+/** By default: the most recent papers first. */
+const DEFAULT_SORT: { key: SortKey; dir: 1 | -1 } = { key: 'year', dir: -1 };
+/** (v2: the default became the most recent first; an order chosen before is not kept.) */
+const SORT_KEY = 'omoeba.sort.v2';
 
 const prefs = {
   /** Search inside the PDFs too (not only titles, authors, tags…). */
@@ -42,14 +47,14 @@ const prefs = {
   },
   get sort(): { key: SortKey; dir: 1 | -1 } {
     try {
-      return JSON.parse(localStorage.getItem('omoeba.sort') || '') || { key: 'title', dir: 1 };
+      return JSON.parse(localStorage.getItem(SORT_KEY) || '') || DEFAULT_SORT;
     } catch {
-      return { key: 'title', dir: 1 };
+      return DEFAULT_SORT;
     }
   },
   set sort(v) {
     try {
-      localStorage.setItem('omoeba.sort', JSON.stringify(v));
+      localStorage.setItem(SORT_KEY, JSON.stringify(v));
     } catch {
       /* ignore */
     }
@@ -387,6 +392,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
 
   const columns: { key: SortKey; label: string; cls: string }[] = [
     { key: 'title', label: 'Title', cls: 'c-title' },
+    { key: 'year', label: 'Year', cls: 'c-year' },
     { key: 'authors', label: 'Authors', cls: 'c-authors' },
     { key: 'folder', label: 'Folder', cls: 'c-folder' },
     { key: 'tags', label: 'Tags', cls: 'c-tags' },
@@ -406,7 +412,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
               class: `${c.cls} sortable ${sort.key === c.key ? 'sorted' : ''}`,
               onclick: () => {
                 // Dates: most recent first on the first click.
-                sort = { key: c.key, dir: sort.key === c.key ? ((-sort.dir) as 1 | -1) : 1 };
+                sort = { key: c.key, dir: sort.key === c.key ? ((-sort.dir) as 1 | -1) : c.key === 'year' ? -1 : 1 };
                 if (!opts.recent) prefs.sort = sort;
                 renderHead();
                 applyFilter();
@@ -434,7 +440,10 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
               ? p.tags.join(',') || '￿'
               : sort.key === 'opened'
                 ? String(p.openedAt ?? 0).padStart(16, '0')
-                : String(p.addedAt).padStart(16, '0');
+                : sort.key === 'year'
+                  ? // (The publication year, else the year it was added; in a year, by date added.)
+                    `${Number(p.year) || new Date(p.addedAt).getFullYear()}-${String(p.addedAt).padStart(16, '0')}`
+                  : String(p.addedAt).padStart(16, '0');
     return [...list].sort((a, b) => sort.dir * collator.compare(key(a), key(b)));
   }
 
@@ -540,8 +549,8 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
               icon('help', 13),
             )
           : null,
-        p.year ? h('span', { class: 'year' }, String(p.year)) : null,
       ),
+      h('td', { class: 'c-year' }, p.year ? String(p.year) : ''),
       h('td', { class: 'c-authors', title: p.authors.join(', ') }, formatAuthors(p.authors)),
       h('td', { class: 'c-folder', title: p.pdfPath }, p.folder),
       h(

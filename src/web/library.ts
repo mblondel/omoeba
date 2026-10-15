@@ -10,6 +10,7 @@
 import type { Annotation, Sidecar } from '../shared/types';
 import { findFiles, fileInfo, readBytes, readText } from './drive';
 import { DATA_FILE, readLibraryFile, withPath, type WebPaper } from './paper';
+import { cachedAnnotations, cachedPdf, forgetFiles, keepAnnotations, keepPdf } from './filecache';
 
 export type { WebPaper };
 
@@ -68,6 +69,7 @@ async function keepLists(lists: Cached[]): Promise<void> {
 /** Forget what was read (signing out). */
 export async function forgetLibrary(): Promise<void> {
   await keepLists([]);
+  await forgetFiles();
 }
 
 // --- The papers ------------------------------------------------------------------------------
@@ -121,23 +123,35 @@ export async function readLibrary(onProgress: (text: string) => void): Promise<L
 
 // --- A paper's files -----------------------------------------------------------------------
 
+/** The paper's PDF: the copy kept in the browser if it is current, else from Drive (then kept). */
 export async function readPdf(p: WebPaper): Promise<Uint8Array> {
   if (!p.driveId) throw new Error('This PDF is not in Google Drive.');
-  return readBytes(p.driveId);
+  const kept = await cachedPdf(p.driveId, p.pdfVersion);
+  if (kept) return kept;
+  const data = await readBytes(p.driveId);
+  void keepPdf(p.driveId, p.pdfVersion, data);
+  return data;
 }
 
 /** The paper's annotations, from its .json beside the PDF in Drive (none if not found). */
 export async function readAnnotations(p: WebPaper): Promise<Annotation[]> {
   if (!p.driveId || !p.annotationCount) return [];
+  const version = p.annotationsVersion ?? '';
+  if (version) {
+    const kept = await cachedAnnotations(p.driveId, version);
+    if (kept) return kept;
+  }
   try {
     const parent = (await fileInfo(p.driveId)).parents?.[0];
     if (!parent) return [];
     const json = (await findFiles(p.fileName.replace(/\.pdf$/i, '.json'), parent))[0];
     if (!json) return [];
     const sc = JSON.parse(await readText(json.id)) as Sidecar;
-    return (Array.isArray(sc.annotations) ? sc.annotations : [])
+    const annotations = (Array.isArray(sc.annotations) ? sc.annotations : [])
       .filter((a) => a && Array.isArray(a.bounds) && typeof a.page === 'number')
       .map((a, i) => ({ ...a, id: `a${i}`, contents: typeof a.contents === 'string' ? a.contents : '' }) as Annotation);
+    if (version) void keepAnnotations(p.driveId, version, annotations);
+    return annotations;
   } catch (e) {
     console.warn('Annotations not read:', e);
     return [];

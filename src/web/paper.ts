@@ -30,8 +30,19 @@ export interface WebPaper {
   driveId?: string;
   sourceUrl?: string;
   annotationCount: number;
+  /** The PDF's SHA-256 (recorded by Omoeba), to know whether a copy kept in the browser is current. */
+  pdfVersion?: string;
+  /** A fingerprint of the annotations, likewise. */
+  annotationsVersion?: string;
   /** For the search: abstract, summary, notes. */
   text: string;
+}
+
+/** A short fingerprint of a text (FNV-1a, 32 bits, and its length). */
+function fingerprint(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+  return `${(h >>> 0).toString(36)}-${text.length.toString(36)}`;
 }
 
 /** Folders not part of the library (the app's own, and hidden ones, starting with a dot). */
@@ -82,6 +93,8 @@ export function paperFrom(path: string, hasPdf: boolean, sc: Sidecar | null): We
     driveId: typeof s.googleDrive?.id === 'string' ? s.googleDrive.id : undefined,
     sourceUrl: typeof s.source?.url === 'string' ? s.source.url : undefined,
     annotationCount: Array.isArray(s.annotations) ? s.annotations.length : 0,
+    pdfVersion: typeof s.pdf?.sha256 === 'string' ? s.pdf.sha256 : undefined,
+    annotationsVersion: Array.isArray(s.annotations) && s.annotations.length ? fingerprint(JSON.stringify(s.annotations)) : undefined,
   });
 }
 
