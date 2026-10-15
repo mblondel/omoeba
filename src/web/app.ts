@@ -454,7 +454,21 @@ function showPaper(p: WebPaper) {
               ),
             ]
           : null,
-        p.venue || p.year || p.citations ? ' · ' : '',
+        // (Google Scholar: a search for the exact title, its citation count seen there.)
+        [
+          p.venue || p.year || p.citations ? ' · ' : '',
+          h(
+            'a',
+            {
+              class: 'citations-link',
+              href: `https://scholar.google.com/scholar?q=${encodeURIComponent(`"${p.title.replace(/"/g, '')}"`)}`,
+              target: '_blank',
+              rel: 'noopener',
+            },
+            'Google Scholar',
+          ),
+        ],
+        ' · ',
         `${p.folder ? p.folder + '/' : ''}${p.fileName}`,
       ),
       p.tags.length ? h('div', { class: 'row-tags' }, p.tags.map((t) => tagEl(t, toList))) : null,

@@ -740,7 +740,10 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     return h('div', { class: 'paper-head-thumb' }, img);
   }
 
-  /** Venue · year · citations (the count links to the paper on Semantic Scholar). */
+  /** The Google Scholar search for a paper's exact title. */
+  const scholarUrl = (title: string) => `https://scholar.google.com/scholar?q=${encodeURIComponent(`"${title.replace(/"/g, '')}"`)}`;
+
+  /** Venue · year · citations (the count links to the paper on Semantic Scholar) · Google Scholar. */
   function venueLine(p: PaperDetail): HTMLElement | null {
     const sc = p.sidecar;
     const parts: (string | Node)[] = [sc.venue, sc.year ?? p.year].filter(Boolean).map(String);
@@ -763,6 +766,25 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
               label,
             )
           : h('span', { title: `According to Semantic Scholar (${c.updatedAt})` }, label),
+      );
+    }
+    // Google Scholar (no API: its count is seen there, by the user): a search for the exact title.
+    if (!p.titleIsFallback && p.title) {
+      const url = scholarUrl(p.title);
+      parts.push(
+        h(
+          'a',
+          {
+            class: 'citations-link',
+            href: url,
+            title: 'Search for this paper on Google Scholar (its citation count there)',
+            onclick: (e: Event) => {
+              e.preventDefault();
+              api.openExternal(url).catch((err) => toast(errorMessage(err), 'error'));
+            },
+          },
+          'Google Scholar',
+        ),
       );
     }
     if (!parts.length) return null;
