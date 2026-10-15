@@ -49,6 +49,7 @@ export const API_METHODS: (keyof OmoebaAPI)[] = [
   'extractMetadata',
   'generateSummary',
   'aiBacklog',
+  'refreshCitations',
   'askAI',
   'cancelAI',
   'findSource',

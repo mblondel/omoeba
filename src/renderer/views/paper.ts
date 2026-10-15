@@ -601,7 +601,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
           h(
             'div',
             { class: 'paper-meta muted' },
-            [sc.venue, sc.year ?? p.year].filter(Boolean).join(' · ') || null,
+            venueLine(p),
             fileNameField(p),
           ),
           tagEditor(p),
@@ -738,6 +738,37 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       });
     }
     return h('div', { class: 'paper-head-thumb' }, img);
+  }
+
+  /** Venue · year · citations (the count links to the paper on Semantic Scholar). */
+  function venueLine(p: PaperDetail): HTMLElement | null {
+    const sc = p.sidecar;
+    const parts: (string | Node)[] = [sc.venue, sc.year ?? p.year].filter(Boolean).map(String);
+    const c = sc.citations;
+    if (c && typeof c.count === 'number') {
+      const label = `${c.count.toLocaleString()} citation${c.count === 1 ? '' : 's'}`;
+      parts.push(
+        c.url
+          ? h(
+              'a',
+              {
+                class: 'citations-link',
+                href: c.url,
+                title: `According to Semantic Scholar (${c.updatedAt}). Open the paper there.`,
+                onclick: (e: Event) => {
+                  e.preventDefault();
+                  api.openExternal(c.url!).catch((err) => toast(errorMessage(err), 'error'));
+                },
+              },
+              label,
+            )
+          : h('span', { title: `According to Semantic Scholar (${c.updatedAt})` }, label),
+      );
+    }
+    if (!parts.length) return null;
+    const line = h('span', { class: 'venue-line' });
+    parts.forEach((x, i) => line.append(...(i ? [' · '] : []), x));
+    return line;
   }
 
   function tagEditor(p: PaperDetail): HTMLElement {
@@ -1506,6 +1537,16 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       setTagPalette(tags);
       render();
       autoRun();
+      // The citation count (Semantic Scholar), if not read lately.
+      api
+        .refreshCitations(id)
+        .then((next) => {
+          if (next && !disposed && !editingSummary) {
+            paper = next;
+            render();
+          }
+        })
+        .catch((e) => console.warn('Citation count not read:', e));
       // A missing PDF is fetched as soon as the page opens: from its download location, else from
       // Google Drive through the browser. Once per paper while Omoeba runs (after a failure or a
       // Cancel, "Read PDF" tries again).

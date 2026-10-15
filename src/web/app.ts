@@ -439,7 +439,24 @@ function showPaper(p: WebPaper) {
       { class: 'paper' },
       h('h1', null, p.starred ? h('span', { class: 'star' }, '★ ') : null, p.title),
       p.authors.length ? h('p', { class: 'authors' }, p.authors.join(', ')) : null,
-      h('p', { class: 'muted small' }, [p.venue, p.year, `${p.folder ? p.folder + '/' : ''}${p.fileName}`].filter(Boolean).join(' · ')),
+      h(
+        'p',
+        { class: 'muted small' },
+        [p.venue, p.year].filter(Boolean).join(' · '),
+        // (The citation count, from Semantic Scholar: a link to the paper there.)
+        p.citations
+          ? [
+              p.venue || p.year ? ' · ' : '',
+              h(
+                'a',
+                { class: 'citations-link', href: p.citations.url ?? '#', target: '_blank', rel: 'noopener', title: 'According to Semantic Scholar' },
+                `${p.citations.count.toLocaleString()} citation${p.citations.count === 1 ? '' : 's'}`,
+              ),
+            ]
+          : null,
+        p.venue || p.year || p.citations ? ' · ' : '',
+        `${p.folder ? p.folder + '/' : ''}${p.fileName}`,
+      ),
       p.tags.length ? h('div', { class: 'row-tags' }, p.tags.map((t) => tagEl(t, toList))) : null,
       actions,
       p.annotationCount && p.driveId ? h('p', { class: 'muted small' }, `${plural(p.annotationCount, 'annotation')} (shown in the PDF, read-only)`) : null,

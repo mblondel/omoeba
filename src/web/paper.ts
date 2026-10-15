@@ -30,6 +30,8 @@ export interface WebPaper {
   driveId?: string;
   sourceUrl?: string;
   annotationCount: number;
+  /** How many papers cite it (Semantic Scholar), and its page there. */
+  citations?: { count: number; url?: string };
   /** The PDF's SHA-256 (recorded by Omoeba), to know whether a copy kept in the browser is current. */
   pdfVersion?: string;
   /** A fingerprint of the annotations, likewise. */
@@ -93,6 +95,7 @@ export function paperFrom(path: string, hasPdf: boolean, sc: Sidecar | null): We
     driveId: typeof s.googleDrive?.id === 'string' ? s.googleDrive.id : undefined,
     sourceUrl: typeof s.source?.url === 'string' ? s.source.url : undefined,
     annotationCount: Array.isArray(s.annotations) ? s.annotations.length : 0,
+    citations: typeof s.citations?.count === 'number' ? { count: s.citations.count, url: typeof s.citations.url === 'string' ? s.citations.url : undefined } : undefined,
     pdfVersion: typeof s.pdf?.sha256 === 'string' ? s.pdf.sha256 : undefined,
     annotationsVersion: Array.isArray(s.annotations) && s.annotations.length ? fingerprint(JSON.stringify(s.annotations)) : undefined,
   });

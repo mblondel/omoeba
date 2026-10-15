@@ -176,6 +176,11 @@ export interface Sidecar {
   citeKey?: string;
   /** The paper's BibTeX entry (fetched from DBLP when first cited from a .tex file), with the same key. */
   bibtex?: BibtexInfo;
+  /**
+   * How many papers cite it, according to Semantic Scholar (src/main/citations.ts); `updatedAt`:
+   * the day this count was read (it is looked at again monthly, and written only when it changes).
+   */
+  citations?: { count: number; source: 'semanticscholar'; url?: string; updatedAt: string };
   /** Who produced title/authors/institutions ("pdf", "user", "ai:<id>", "reference": from the reference list of a paper citing it). */
   metadataSource?: string;
   /**
@@ -702,6 +707,8 @@ export interface OmoebaAPI {
   generateSummary(id: string, aiId: string, jobId?: string): Promise<PaperDetail>;
   /** The papers (with their PDF) whose metadata or summary the AI has not written yet. */
   aiBacklog(): Promise<AIBacklogItem[]>;
+  /** The paper's citation count from Semantic Scholar, if not read lately: the paper if it changed, else null. */
+  refreshCitations(id: string): Promise<PaperDetail | null>;
   askAI(id: string, aiId: string, question: string, context: { page?: number; selection?: string }, jobId?: string): Promise<PaperDetail>;
   cancelAI(jobId: string): Promise<void>;
   /** Store the first-page thumbnail of a PDF (rendered by the UI) in the thumbnail cache. */

@@ -49,6 +49,7 @@ import type {
 import * as cfg from './config';
 import { conversationOf, conversationPatch, findAIChoice } from '../shared/aichoices';
 import { listModels, modelListerFor } from './aimodels';
+import { citationKeysOf, citationsEntry, paperByTitle, papersByIds, type S2Paper } from './citations';
 import { IndexManager } from './indexer';
 import { ThumbCache } from './thumbcache';
 import {
@@ -66,6 +67,7 @@ import {
   updateSidecar,
   removeSidecar,
   renamePaperFiles,
+  writeJsonAtomic,
 } from './library';
 import { loadAnnotationSources, saveAnnotationsBoth, skimMtimeOf } from './annostore';
 import { SKIM_CHANGED } from '../shared/annotations';
@@ -171,6 +173,7 @@ const WRITABLE_KEYS = new Set([
   'related',
   'bibtex',
   'citeKey',
+  'citations',
 ]);
 
 export class OmoebaService implements OmoebaAPI {
@@ -212,6 +215,9 @@ export class OmoebaService implements OmoebaAPI {
     this.watchFolders();
     if (this.config.folders.length) this.index.requestSync(500);
     setTimeout(() => void this.refreshModels(), 5000);
+    // Citation counts: a minute after startup, then daily.
+    setTimeout(() => void this.citationsPass(), 60_000).unref?.();
+    setInterval(() => void this.citationsPass(), 86_400_000).unref?.();
   }
 
   dispose() {
@@ -1610,10 +1616,6 @@ export class OmoebaService implements OmoebaAPI {
     return this.updateSidecar(pdfPath, patch);
   }
 
-  /**
-   * The papers (with their PDF) whose metadata or summary the AI has not written yet, as the paper
-   * page decides it (see autoRun in src/renderer/views/paper.ts): File › Summarize the Library.
-   */
   private findingModels = false;
   /**
    * The models of the authorized AIs whose tool can list them (Codex, Antigravity), asked to the
@@ -1647,6 +1649,117 @@ export class OmoebaService implements OmoebaAPI {
     }
   }
 
+  // --- Citation counts (Semantic Scholar) ---------------------------------------------------
+
+  /** When each paper's count was last looked for (kept in ~/omoeba/citations.json, not in the .json files). */
+  private citationsChecked: Map<string, number> | null = null;
+  private citationsRunning = false;
+
+  private async checkedCitations(): Promise<Map<string, number>> {
+    if (!this.citationsChecked) {
+      try {
+        const raw = JSON.parse(await fs.readFile(path.join(cfg.appDir(), 'citations.json'), 'utf8')) as Record<string, number>;
+        this.citationsChecked = new Map(Object.entries(raw).filter(([, v]) => typeof v === 'number'));
+      } catch {
+        this.citationsChecked = new Map();
+      }
+    }
+    return this.citationsChecked;
+  }
+
+  private async saveCheckedCitations(): Promise<void> {
+    if (!this.citationsChecked) return;
+    await writeJsonAtomic(path.join(cfg.appDir(), 'citations.json'), Object.fromEntries(this.citationsChecked)).catch((e: unknown) =>
+      console.warn('citations.json not written:', e),
+    );
+  }
+
+  /** Whether the count is to be looked for again: monthly; weekly while not found. */
+  private citationsDue(checked: Map<string, number>, pdfPath: string, sc: Sidecar): boolean {
+    const at = checked.get(pdfPath);
+    return !at || Date.now() - at > (sc.citations ? 30 : 7) * 86_400_000;
+  }
+
+  /** The count found, written in the .json if it changed (the patch, or null). */
+  private citationsPatch(sc: Sidecar, p: S2Paper | null): Partial<Sidecar> | null {
+    if (!p) return null;
+    const entry = citationsEntry(p);
+    if (sc.citations && sc.citations.count === entry.count && sc.citations.url === entry.url) return null;
+    return { citations: entry };
+  }
+
+  async refreshCitations(id: string): Promise<PaperDetail | null> {
+    const pdfPath = this.checkId(id);
+    const checked = await this.checkedCitations();
+    const d = await this.getPaper(pdfPath);
+    if (!this.citationsDue(checked, pdfPath, d.sidecar)) return null;
+    const keys = citationKeysOf(d.sidecar, pdfPath);
+    let found: S2Paper | null = null;
+    if (keys.id) found = (await papersByIds([keys.id]))[0];
+    if (!found && keys.title && !d.titleIsFallback) found = await paperByTitle(keys.title, keys.year);
+    checked.set(pdfPath, Date.now());
+    void this.saveCheckedCitations();
+    const patch = this.citationsPatch(d.sidecar, found);
+    return patch ? this.updateSidecar(pdfPath, patch) : null;
+  }
+
+  /**
+   * The counts of the whole library, in the background (a minute after startup, then daily):
+   * the papers with an arXiv id or DOI many at a time, then the others by title, slowly (Semantic
+   * Scholar's shared access without a key is limited). Stops for the day when it is busy.
+   */
+  private async citationsPass(): Promise<void> {
+    if (this.citationsRunning || !this.config.folders.length) return;
+    this.citationsRunning = true;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    try {
+      const checked = await this.checkedCitations();
+      const byId: { pdfPath: string; jsonPath: string; sc: Sidecar; id: string }[] = [];
+      const byTitle: { pdfPath: string; jsonPath: string; sc: Sidecar; title: string; year?: number }[] = [];
+      for (const p of await this.listPapers()) {
+        if (!p.hasJson) continue;
+        const sc = await readSidecar(p.jsonPath).catch(() => null);
+        if (!sc || !this.citationsDue(checked, p.pdfPath, sc)) continue;
+        const k = citationKeysOf(sc, p.pdfPath);
+        if (k.id) byId.push({ pdfPath: p.pdfPath, jsonPath: p.jsonPath, sc, id: k.id });
+        else if (k.title) byTitle.push({ pdfPath: p.pdfPath, jsonPath: p.jsonPath, sc, title: k.title, year: k.year });
+      }
+      const write = async (x: { jsonPath: string; sc: Sidecar }, found: S2Paper | null) => {
+        const patch = this.citationsPatch(x.sc, found);
+        if (patch) await updateSidecar(x.jsonPath, patch).catch((e) => console.warn('Citations not written:', e));
+      };
+      for (let i = 0; i < byId.length; i += 500) {
+        const chunk = byId.slice(i, i + 500);
+        const found = await papersByIds(chunk.map((x) => x.id));
+        for (let j = 0; j < chunk.length; j++) {
+          // (Not found by its id: by its title, below.)
+          if (!found[j] && chunk[j].sc.title) byTitle.push({ ...chunk[j], title: String(chunk[j].sc.title), year: Number(chunk[j].sc.year) || undefined });
+          else checked.set(chunk[j].pdfPath, Date.now());
+          await write(chunk[j], found[j]);
+        }
+        await this.saveCheckedCitations();
+        await sleep(1500);
+      }
+      for (let i = 0; i < byTitle.length; i++) {
+        const x = byTitle[i];
+        await write(x, await paperByTitle(x.title, x.year));
+        checked.set(x.pdfPath, Date.now());
+        if (i % 20 === 19) await this.saveCheckedCitations();
+        await sleep(2500);
+      }
+    } catch (e) {
+      // (Busy, offline: the rest another day.)
+      console.warn('Citation counts:', (e as Error).message);
+    } finally {
+      await this.saveCheckedCitations();
+      this.citationsRunning = false;
+    }
+  }
+
+  /**
+   * The papers (with their PDF) whose metadata or summary the AI has not written yet, as the paper
+   * page decides it (see autoRun in src/renderer/views/paper.ts): File › Summarize the Library.
+   */
   async aiBacklog(): Promise<AIBacklogItem[]> {
     const papers = (await this.listPapers()).filter((p) => p.hasPdf);
     const out: AIBacklogItem[] = [];
