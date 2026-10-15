@@ -219,7 +219,52 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     readBtn,
     h('button', { class: 'btn btn-delete', title: 'Move to Trash', onclick: () => deletePaper() }, icon('trash'), 'Delete paper'),
   );
-  root.append(h('div', { class: 'view paper-view' }, header, h('div', { class: 'paper-scroll' }, content)));
+  const scroller = h('div', { class: 'paper-scroll' }, content);
+  root.append(h('div', { class: 'view paper-view' }, header, scroller));
+
+  // View › Zoom In / Zoom Out / Actual Size (⌘+, ⌘-, ⌘0): the size of the page's text, the same
+  // for all papers (remembered), keeping the text in view where it was.
+  const ZOOMS = [0.8, 0.9, 1, 1.1, 1.2, 1.35, 1.5, 1.7, 2];
+  const readZoom = () => {
+    try {
+      const z = Number(localStorage.getItem('omoeba.paperZoom'));
+      return ZOOMS.includes(z) ? z : 1;
+    } catch {
+      return 1;
+    }
+  };
+  let zoom = readZoom();
+  const applyZoom = () => {
+    content.style.zoom = zoom === 1 ? '' : String(zoom);
+  };
+  applyZoom();
+  const setZoom = (z: number) => {
+    if (z === zoom) return;
+    const ratio = scroller.scrollTop / Math.max(1, scroller.scrollHeight);
+    zoom = z;
+    applyZoom();
+    scroller.scrollTop = ratio * scroller.scrollHeight;
+    try {
+      localStorage.setItem('omoeba.paperZoom', String(z));
+    } catch {
+      /* (not remembered) */
+    }
+    window.dispatchEvent(new Event('omoeba-paper-zoom'));
+  };
+  const onMenu = (e: Event) => {
+    const a = (e as CustomEvent<string>).detail;
+    if (!isActiveView(root) || !['zoom-in', 'zoom-out', 'zoom-reset'].includes(a)) return;
+    e.preventDefault();
+    const i = ZOOMS.indexOf(zoom);
+    setZoom(a === 'zoom-reset' ? 1 : ZOOMS[Math.max(0, Math.min(ZOOMS.length - 1, i + (a === 'zoom-in' ? 1 : -1)))]);
+  };
+  window.addEventListener('omoeba-menu', onMenu);
+  // (Another paper's page zoomed: this one follows when shown.)
+  const onStorage = () => {
+    zoom = readZoom();
+    applyZoom();
+  };
+  window.addEventListener('omoeba-paper-zoom', onStorage);
 
   const openReader = () => {
     if (paper?.hasPdf) navigate(`#/read/${encodeURIComponent(id)}`);
@@ -1607,5 +1652,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     offEvent();
     jobEvents.removeEventListener('change', onJobs);
     window.removeEventListener('keydown', onKey);
+    window.removeEventListener('omoeba-menu', onMenu);
+    window.removeEventListener('omoeba-paper-zoom', onStorage);
   };
 }

@@ -295,6 +295,8 @@ function buildMenu() {
         { label: 'Toggle Right Pane', accelerator: 'CmdOrCtrl+Alt+2', click: send('toggle-right') },
         { type: 'separator' },
         { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', click: send('zoom-in') },
+        // (⌘+ with Shift, as on keyboards where + is above =: the same, not shown.)
+        { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', click: send('zoom-in'), visible: false, acceleratorWorksWhenHidden: true },
         { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: send('zoom-out') },
         { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: send('zoom-reset') },
         { type: 'separator' },
