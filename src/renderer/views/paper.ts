@@ -1621,7 +1621,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
         autoFetched.add(id);
         getMissingPdf(false);
       }
-      // Seeing a paper's page counts, as opening its PDF does (File › Recently Seen).
+      // Seeing a paper's page counts, as opening its PDF does (the Library's default order).
       api.markOpened(id).catch(() => undefined);
     })
     .catch((e) => {

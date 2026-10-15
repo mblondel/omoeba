@@ -24,10 +24,13 @@ import { confirmTrashPaper } from '../trashpaper';
 
 type SortKey = 'title' | 'year' | 'authors' | 'folder' | 'tags' | 'added' | 'opened';
 
-/** By default: the most recent papers first. */
-const DEFAULT_SORT: { key: SortKey; dir: 1 | -1 } = { key: 'year', dir: -1 };
-/** (v2: the default became the most recent first; an order chosen before is not kept.) */
-const SORT_KEY = 'omoeba.sort.v2';
+/**
+ * By default: the papers seen most recently first, then (never seen) the most recently added
+ * (an order without a column: clicking a column sorts by it instead).
+ */
+const DEFAULT_SORT: { key: SortKey; dir: 1 | -1 } = { key: 'opened', dir: -1 };
+/** (v3: the default became the papers seen most recently first; an order chosen before is not kept.) */
+const SORT_KEY = 'omoeba.sort.v3';
 
 const prefs = {
   /** Search inside the PDFs too (not only titles, authors, tags…). */
@@ -118,19 +121,16 @@ let savedScroll = 0;
 let savedSelected: string | null = null;
 
 /**
- * `query`: a search tab, starting from its own query. `recent`: the Recently Seen tab (papers
- * whose page or PDF was opened, most recent first). `starred`: the Starred Papers tab.
+ * `query`: a search tab, starting from its own query. `starred`: the Starred Papers tab.
  */
-export function mountList(root: HTMLElement, opts: { query?: string; recent?: boolean; starred?: boolean } = {}): () => void {
+export function mountList(root: HTMLElement, opts: { query?: string; starred?: boolean } = {}): () => void {
   /** A search tab: starts from its own query and leaves the Library's query/scroll alone. */
-  const isSearchTab = opts.query !== undefined || !!opts.recent || !!opts.starred;
+  const isSearchTab = opts.query !== undefined || !!opts.starred;
   /** The papers this tab lists (before any search). */
-  const inTab = (p: PaperSummary) => (!opts.recent || !!p.openedAt) && (!opts.starred || !!p.starred);
+  const inTab = (p: PaperSummary) => !opts.starred || !!p.starred;
   let papers: PaperSummary[] = [];
   let visible: PaperSummary[] = [];
-  // The Recently Seen tab lists the most recently seen first (there is no column for it).
-  let sort: { key: SortKey; dir: 1 | -1 } = opts.recent ? { key: 'opened', dir: -1 } : prefs.sort;
-  if (!opts.recent && sort.key === 'opened') sort = { key: 'title', dir: 1 };
+  let sort: { key: SortKey; dir: 1 | -1 } = prefs.sort;
   let selected: string | null = isSearchTab ? null : savedSelected;
   let searchSeq = 0;
   let indexStatus: IndexStatus | null = null;
@@ -411,9 +411,11 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
             {
               class: `${c.cls} sortable ${sort.key === c.key ? 'sorted' : ''}`,
               onclick: () => {
-                // Dates: most recent first on the first click.
-                sort = { key: c.key, dir: sort.key === c.key ? ((-sort.dir) as 1 | -1) : c.key === 'year' ? -1 : 1 };
-                if (!opts.recent) prefs.sort = sort;
+                // Dates: most recent first on the first click. A third click on the same column: back
+                // to the default order (the papers seen most recently first, which has no column).
+                const first: 1 | -1 = c.key === 'year' ? -1 : 1;
+                sort = sort.key !== c.key ? { key: c.key, dir: first } : sort.dir === first ? { key: c.key, dir: (-first) as 1 | -1 } : DEFAULT_SORT;
+                prefs.sort = sort;
                 renderHead();
                 applyFilter();
               },
@@ -439,7 +441,8 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
             : sort.key === 'tags'
               ? p.tags.join(',') || '￿'
               : sort.key === 'opened'
-                ? String(p.openedAt ?? 0).padStart(16, '0')
+                ? // (Seen most recently; then, never seen, added most recently.)
+                  `${String(p.openedAt ?? 0).padStart(16, '0')}-${String(p.addedAt).padStart(16, '0')}`
                 : sort.key === 'year'
                   ? // (The publication year, else the year it was added; in a year, by date added.)
                     `${Number(p.year) || new Date(p.addedAt).getFullYear()}-${String(p.addedAt).padStart(16, '0')}`
@@ -510,8 +513,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; recent?: bo
             h('p', null, 'No PDFs found in your library folders.'),
             h('button', { class: 'btn', onclick: () => navigate('#/settings') }, 'Manage folders'),
           );
-      } else if (opts.recent && !papers.some((p) => p.openedAt)) empty.append(h('p', null, 'No paper seen yet: papers appear here once you open their page or PDF.'));
-      else if (opts.starred && !papers.some((p) => p.starred)) empty.append(h('p', null, 'No starred paper yet: click the ☆ next to a paper’s title on its page to list it here.'));
+      } else if (opts.starred && !papers.some((p) => p.starred)) empty.append(h('p', null, 'No starred paper yet: click the ☆ next to a paper’s title on its page to list it here.'));
       else empty.append(h('p', null, 'No papers match your search.'));
     }
   }

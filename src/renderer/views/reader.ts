@@ -1277,7 +1277,7 @@ export function mountReader(root: HTMLElement, id: string, initialPage?: number)
         return;
       }
       pdfDoc = doc;
-      // History of papers seen (File › Recently Seen).
+      // History of papers seen (the Library's default order).
       api.markOpened(id).catch(() => undefined);
       pageCount.textContent = `/ ${doc.numPages}`;
       const pos = store.get<{ page: number; scale: string } | null>('pos:' + id, null);
