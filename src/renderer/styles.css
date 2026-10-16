@@ -2177,8 +2177,12 @@ li.collapsed > .toc-item .toc-toggle {
   font-weight: 500;
 }
 .mention-earlier {
-  width: 100%;
+  flex-basis: 100%;
   font-size: 11.5px;
+  padding: 0 4px;
+}
+.mention-earlier[hidden] {
+  display: none;
 }
 .msg-papers {
   align-self: flex-end;

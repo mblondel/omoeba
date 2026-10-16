@@ -91,6 +91,8 @@ export function createAskChat(opts: AskChatOptions): AskChat {
   );
   const picker = h('div', { class: 'mention-picker', hidden: true });
   const mirror = h('div', { class: 'composer-mirror', 'aria-hidden': 'true' });
+  /** Below the question: the papers of earlier questions, still read by the AI. */
+  const earlierSlot = h('div', { class: 'mention-earlier muted', hidden: true });
   input.addEventListener('scroll', () => (mirror.scrollTop = input.scrollTop));
   let choices: PaperSummary[] = [];
   let chosen = 0;
@@ -105,6 +107,7 @@ export function createAskChat(opts: AskChatOptions): AskChat {
       h('div', { class: 'composer-field' }, mirror, input),
       h('div', { class: 'composer-foot' }, aiSlot, h('span', { class: 'spacer' }), mentionBtn, sendBtn),
     ),
+    earlierSlot,
   );
 
   /** The "@words" being typed just before the cursor, if any. */
@@ -281,18 +284,12 @@ export function createAskChat(opts: AskChatOptions): AskChat {
     mirror.append('\u200b');
     mirror.scrollTop = input.scrollTop;
     // Papers of earlier questions, still read by the AI.
-    for (const el of ctxSlot.querySelectorAll('.mention-earlier')) el.remove();
     const earlier = conversationOf(opts.getPaper()?.sidecar.chats)
       .flatMap((m) => m.papers ?? [])
       .filter((p, i, all) => all.findIndex((x) => x.id === p.id) === i && !mentions.some((m) => m.id === p.id));
-    if (earlier.length)
-      ctxSlot.append(
-        h(
-          'div',
-          { class: 'mention-earlier muted small', title: earlier.map((p) => p.title).join('\n') },
-          `Also read by the AI: ${earlier.map((p) => shortTitle(p.title)).join(', ')} (mentioned earlier)`,
-        ),
-      );
+    earlierSlot.hidden = !earlier.length;
+    earlierSlot.title = earlier.map((p) => p.title).join('\n');
+    earlierSlot.textContent = earlier.length ? `Also read by the AI: ${earlier.map((p) => shortTitle(p.title)).join(', ')} (mentioned earlier)` : '';
   }
 
   /** Backspace just after a mention erases all of it (and the paper is no longer given). */
