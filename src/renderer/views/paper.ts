@@ -503,7 +503,44 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
 
   // ---------------------------------------------------------------------------
 
+  /**
+   * The page is redrawn when the paper changes, also by background work (a summary written, the
+   * citation count…): a field being typed in (a new tag…) keeps its focus, text and cursor.
+   */
   function render() {
+    const keep = typingIn();
+    renderPage();
+    if (keep) keep();
+  }
+
+  /** The field being typed in on this page, if any: how to give it back its focus after a redraw. */
+  function typingIn(): (() => void) | null {
+    const el = document.activeElement as HTMLElement | null;
+    if (!el || !content.contains(el)) return null;
+    const isField = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+    if (!isField && !el.isContentEditable) return null;
+    // (The same field after the redraw: the same kind of element with the same classes, at the same rank.)
+    const selector = el.tagName.toLowerCase() + [...el.classList].map((c) => `.${CSS.escape(c)}`).join('');
+    const rank = [...content.querySelectorAll(selector)].indexOf(el);
+    const value = isField ? (el as HTMLInputElement).value : null;
+    const start = isField ? (el as HTMLInputElement).selectionStart : null;
+    const end = isField ? (el as HTMLInputElement).selectionEnd : null;
+    return () => {
+      const next = content.querySelectorAll<HTMLElement>(selector)[rank];
+      if (!next || document.activeElement === next) return;
+      if (value !== null && (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement)) {
+        if (!next.value) next.value = value;
+        next.focus({ preventScroll: true });
+        try {
+          next.setSelectionRange(start, end);
+        } catch {
+          /* (no selection in this kind of field) */
+        }
+      } else next.focus({ preventScroll: true });
+    };
+  }
+
+  function renderPage() {
     if (!paper || disposed) return;
     const p = paper;
     const sc = p.sidecar;
