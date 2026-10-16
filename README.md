@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <em>A spiral of knowledge for your PDF library.</em><br>
+  <em>Note taking & PDF library in the age of AI.</em><br>
 </p>
 
 ## Features
