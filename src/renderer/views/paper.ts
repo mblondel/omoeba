@@ -328,10 +328,17 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
   const aiName = (aiId: string) =>
     aiId === MY_SUMMARY ? 'My summary' : aiChoiceName(cfg?.ais ?? [], aiId);
 
+  /** The library's tags (suggested when adding one). */
+  let allTags: { tag: string; count: number }[] = [];
+  const datalistId = `all-tags-${Math.random().toString(36).slice(2, 9)}`;
+
   async function patch(p: Partial<Sidecar>) {
     try {
       paper = await api.updateSidecar(id, p);
-      if (p.tags) setTagPalette(await api.allTags().catch(() => []));
+      if (p.tags) {
+        allTags = await api.allTags().catch(() => allTags);
+        setTagPalette(allTags);
+      }
       render();
     } catch (e) {
       toast(errorMessage(e), 'error');
@@ -877,11 +884,10 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
 
   function tagEditor(p: PaperDetail): HTMLElement {
     const tags = p.tags;
-    const input = h('input', { type: 'text', class: 'tag-input', placeholder: tags.length ? 'Add tag' : 'Add tags…', list: 'all-tags' });
-    const datalist = h('datalist', { id: 'all-tags' });
-    api.allTags().then((all) => {
-      for (const t of all) if (!tags.includes(t.tag)) datalist.append(h('option', { value: t.tag }));
-    });
+    // (The library's tags, read when the page opens and when its tags change, not at each redraw;
+    // a list of this page's own, other paper pages having theirs.)
+    const input = h('input', { type: 'text', class: 'tag-input', placeholder: tags.length ? 'Add tag' : 'Add tags…', list: datalistId });
+    const datalist = h('datalist', { id: datalistId }, allTags.filter((t) => !tags.includes(t.tag)).map((t) => h('option', { value: t.tag })));
     const add = () => {
       const v = input.value.trim().replace(/,$/, '');
       input.value = '';
@@ -1638,6 +1644,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     .then(([d, c, tags]) => {
       paper = d;
       cfg = c;
+      allTags = tags;
       setTagPalette(tags);
       render();
       autoRun();

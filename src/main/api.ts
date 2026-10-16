@@ -397,9 +397,18 @@ export class OmoebaService implements OmoebaAPI {
     return this.index.status;
   }
 
+  /**
+   * Every tag and how many papers have it. From the index's rows directly (asked each time a
+   * paper's page opens or its tags change: making the whole list of papers for it was slow).
+   */
   async allTags(): Promise<{ tag: string; count: number }[]> {
     const counts = new Map<string, number>();
-    for (const p of await this.listPapers()) for (const t of p.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
+    const folders = new Set(this.config.folders.map((f) => path.resolve(f)));
+    const rows = this.index.list();
+    const tagLists: string[][] = rows
+      ? rows.filter((r) => folders.has(r.root)).map((r) => (Array.isArray(r.meta.tags) ? r.meta.tags.map(String) : []))
+      : (await this.listPapers()).map((p) => p.tags);
+    for (const tags of tagLists) for (const t of tags) counts.set(t, (counts.get(t) ?? 0) + 1);
     return [...counts.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b) => a.tag.localeCompare(b.tag));
   }
 
