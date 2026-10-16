@@ -77,6 +77,8 @@ import { extractPdf, plausibleTitle } from './pdftext';
 import { TEXT_MIN, candidatePairs, groupPairs, onlyIn, textSimilarity, type PaperText } from './nearduplicates';
 import {
   askPrompt,
+  paperTextBlock,
+  type MentionedPaper,
   cancelAI as cancelAIJob,
   metadataPrompt,
   parseJsonObject,
@@ -1803,7 +1805,7 @@ export class OmoebaService implements OmoebaAPI {
     id: string,
     aiId: string,
     question: string,
-    context: { page?: number; selection?: string },
+    context: { page?: number; selection?: string; papers?: { id: string; title: string }[] },
     jobId?: string,
   ): Promise<PaperDetail> {
     const pdfPath = this.checkId(id);
@@ -1812,17 +1814,52 @@ export class OmoebaService implements OmoebaAPI {
     // (One conversation, whichever AI answers each question.)
     const history: ChatMessage[] = conversationOf(detail.sidecar.chats);
     const pages = await this.paperPages(pdfPath);
-    const out = await runAI(ai, askPrompt(pages, detail.title, history, question, context ?? {}), {
+    // Other papers mentioned (@…), in this question or earlier ones: given with this one.
+    const mentioned = (Array.isArray(context?.papers) ? context.papers : [])
+      .filter((x) => x && typeof x.id === 'string')
+      .map((x) => ({ id: x.id, title: String(x.title ?? '') }));
+    const others = await this.mentionedPapers([...history.flatMap((m) => m.papers ?? []), ...mentioned], pdfPath);
+    const out = await runAI(ai, askPrompt(pages, detail.title, history, question, context ?? {}, others), {
       jobId,
       onTrace: this.traceOf(jobId),
     });
     const now = new Date().toISOString();
     const next: ChatMessage[] = [
       ...history,
-      { role: 'user', content: question, at: now },
+      { role: 'user', content: question, at: now, ...(mentioned.length ? { papers: mentioned } : {}) },
       { role: 'assistant', content: stripFences(out), at: new Date().toISOString(), ai: ai.id },
     ];
     return this.updateSidecar(pdfPath, { chats: conversationPatch(detail.sidecar.chats, next) });
+  }
+
+  /**
+   * Papers mentioned in an "Ask AI" conversation (not the paper itself), at most MAX_MENTIONED:
+   * their text (shorter, the more there are), or what Omoeba knows of them if their PDF is not here.
+   */
+  private async mentionedPapers(list: { id: string; title: string }[], self: string): Promise<MentionedPaper[]> {
+    const MAX_MENTIONED = 4;
+    const ids = [...new Set(list.map((x) => x.id))].filter((x) => x !== self).slice(-MAX_MENTIONED);
+    const budget = Math.min(120_000, Math.floor(240_000 / Math.max(1, ids.length)));
+    const out: MentionedPaper[] = [];
+    for (const pid of ids) {
+      const title = list.find((x) => x.id === pid)?.title || path.basename(pid, '.pdf');
+      try {
+        const pdf = this.checkId(pid);
+        const d = await this.getPaper(pdf);
+        const known = { title: d.title || title, authors: d.authors, year: d.year ? String(d.year) : undefined };
+        const pages = d.hasPdf && !d.cloudOnly ? await this.paperPages(pdf).catch(() => null) : null;
+        if (pages?.length) out.push({ ...known, text: paperTextBlock(pages, budget) });
+        else {
+          // (No PDF here: its abstract and summary.)
+          const summary = Object.values(d.sidecar.summaries ?? {})[0]?.markdown;
+          const text = [d.sidecar.abstract && `Abstract: ${d.sidecar.abstract}`, summary && `Summary:\n${summary}`].filter(Boolean).join('\n\n');
+          out.push({ ...known, text: text || '(Its text is not available: only its title is known.)' });
+        }
+      } catch {
+        out.push({ title, text: '(This paper is no longer in the library.)' });
+      }
+    }
+    return out;
   }
 
   private cancelled = new Set<string>();

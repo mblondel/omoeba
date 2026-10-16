@@ -219,6 +219,11 @@ export interface ChatMessage {
   at: string;
   /** An answer: the AI that wrote it (its choice id, e.g. "claude:opus"). */
   ai?: string;
+  /**
+   * A question: other papers of the library mentioned in it (@…), given to the AI with this one
+   * (and for the rest of the conversation).
+   */
+  papers?: { id: string; title: string }[];
 }
 
 /** Row in the paper list. */
@@ -709,7 +714,14 @@ export interface OmoebaAPI {
   aiBacklog(): Promise<AIBacklogItem[]>;
   /** The paper's citation count from Semantic Scholar, if not read lately: the paper if it changed, else null. */
   refreshCitations(id: string): Promise<PaperDetail | null>;
-  askAI(id: string, aiId: string, question: string, context: { page?: number; selection?: string }, jobId?: string): Promise<PaperDetail>;
+  /** `context.papers`: other papers of the library mentioned in the question (their ids). */
+  askAI(
+    id: string,
+    aiId: string,
+    question: string,
+    context: { page?: number; selection?: string; papers?: { id: string; title: string }[] },
+    jobId?: string,
+  ): Promise<PaperDetail>;
   cancelAI(jobId: string): Promise<void>;
   /** Store the first-page thumbnail of a PDF (rendered by the UI) in the thumbnail cache. */
   setThumbnail(id: string, png: string, pdfMtime: number): Promise<void>;

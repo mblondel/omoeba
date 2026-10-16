@@ -368,12 +368,21 @@ ${extra}
 ${blocks.join('\n\n')}`;
 }
 
+/** Another paper of the library given to the AI in an "Ask AI" conversation (mentioned with @). */
+export interface MentionedPaper {
+  title: string;
+  authors?: string[];
+  year?: string;
+  text: string;
+}
+
 export function askPrompt(
   pages: string[],
   title: string,
   history: ChatMessage[],
   question: string,
   context: { page?: number; selection?: string },
+  others: MentionedPaper[] = [],
 ): string {
   const hist = history
     .slice(-12)
@@ -385,13 +394,27 @@ export function askPrompt(
   ]
     .filter(Boolean)
     .join('\n');
+  // Other papers the user mentioned (to compare…): after this one, each under its title.
+  const otherBlock = others
+    .map(
+      (o, i) =>
+        `=== OTHER PAPER ${i + 1}: "${o.title}"${o.authors?.length ? ` by ${o.authors.slice(0, 6).join(', ')}${o.authors.length > 6 ? ' et al.' : ''}` : ''}${o.year ? ` (${o.year})` : ''} ===\n${o.text}`,
+    )
+    .join('\n\n');
   return `You are a helpful research assistant answering questions about the paper "${title}".
 Answer in Markdown. Use LaTeX for math ($...$ inline, $$...$$ display). When you refer to a
-specific place in the paper, cite it in parentheses as ([p. N](#page=N)). Be concise unless asked otherwise.
+specific place in the paper, cite it in parentheses as ([p. N](#page=N)). Be concise unless asked otherwise.${
+    others.length
+      ? `
+The user also mentioned other papers of their library (to compare them with this one, for
+instance); their text follows this paper's. Refer to them by their title (or first author and
+year). The ([p. N](#page=N)) links are for this paper only: for another paper, write "(p. N of <short title>)".`
+      : ''
+  }
 
 PAPER TEXT:
-${paperTextBlock(pages)}
-
+${paperTextBlock(pages, others.length ? 150_000 : undefined)}
+${otherBlock ? `\n${otherBlock}\n` : ''}
 ${hist ? `CONVERSATION SO FAR:\n${hist}\n\n` : ''}${ctx ? ctx + '\n\n' : ''}USER QUESTION:
 ${question}`;
 }
