@@ -200,6 +200,30 @@ function createWindow() {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
+  // Right-click: on selected text, Copy and "Search Google for …" (in the default browser); in a
+  // text field, Cut / Copy / Paste. (Views with menus of their own, e.g. the PDF reader's
+  // annotations, prevent this one.)
+  win.webContents.on(
+    'context-menu',
+    (_e: unknown, params: { selectionText: string; isEditable: boolean; editFlags: { canCut: boolean; canCopy: boolean; canPaste: boolean; canSelectAll: boolean } }) => {
+      const sel = params.selectionText.trim().replace(/\s+/g, ' ');
+      const items: Electron.MenuItemConstructorOptions[] = [];
+      if (params.isEditable) items.push({ role: 'cut', enabled: params.editFlags.canCut });
+      if (sel || params.isEditable) items.push({ role: 'copy', enabled: params.editFlags.canCopy || !!sel });
+      if (params.isEditable) items.push({ role: 'paste', enabled: params.editFlags.canPaste }, { role: 'selectAll' });
+      if (sel) {
+        items.push(
+          { type: 'separator' },
+          {
+            // (A few words are shown; a longer selection, not.)
+            label: sel.length <= 25 ? `Search Google for “${sel}”` : 'Search Google',
+            click: () => void shell.openExternal(`https://www.google.com/search?q=${encodeURIComponent(sel.slice(0, 500))}`),
+          },
+        );
+      }
+      if (items.length && win) Menu.buildFromTemplate(items).popup({ window: win });
+    },
+  );
   win.webContents.on('will-navigate', (e: { preventDefault(): void }, url: string) => {
     if (!url.startsWith('app://omoeba/')) {
       e.preventDefault();
