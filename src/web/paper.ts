@@ -4,6 +4,7 @@
  * read by the page from Google Drive). Shared by the page and by Omoeba: no DOM and no Node here.
  */
 import type { RelatedPaper, Sidecar } from '../shared/types';
+import { docTypeOf, type DocType } from '../shared/doctype';
 
 export interface WebPaper {
   /**
@@ -30,6 +31,8 @@ export interface WebPaper {
   driveId?: string;
   sourceUrl?: string;
   annotationCount: number;
+  /** Its type, when not a paper (a book, a blog post…). */
+  type?: DocType;
   /** How many papers cite it (Semantic Scholar), and its page there. */
   citations?: { count: number; url?: string };
   /** The PDF's SHA-256 (recorded by Omoeba), to know whether a copy kept in the browser is current. */
@@ -95,6 +98,7 @@ export function paperFrom(path: string, hasPdf: boolean, sc: Sidecar | null): We
     driveId: typeof s.googleDrive?.id === 'string' ? s.googleDrive.id : undefined,
     sourceUrl: typeof s.source?.url === 'string' ? s.source.url : undefined,
     annotationCount: Array.isArray(s.annotations) ? s.annotations.length : 0,
+    type: docTypeOf(s) !== 'paper' ? docTypeOf(s) : undefined,
     citations: typeof s.citations?.count === 'number' ? { count: s.citations.count, url: typeof s.citations.url === 'string' ? s.citations.url : undefined } : undefined,
     pdfVersion: typeof s.pdf?.sha256 === 'string' ? s.pdf.sha256 : undefined,
     annotationsVersion: Array.isArray(s.annotations) && s.annotations.length ? fingerprint(JSON.stringify(s.annotations)) : undefined,

@@ -6,6 +6,7 @@ import { mountMarkdown } from '../markdown';
 import { closePaperTabs, navigate, refreshConfig, isActiveView, openSearchTab } from '../app';
 import { fileStemForTitle } from '../../shared/filenames';
 import { aiChoiceName, aiChoices } from '../../shared/aichoices';
+import { DOC_TYPES, DOC_TYPE_LABELS, docTypeOf, isCitedType, type DocType } from '../../shared/doctype';
 import { createTraceView, type TraceView } from '../aitrace';
 import { confirmTrashPaper } from '../trashpaper';
 import { authorQuery, institutionQuery, tagQuery } from '../authors';
@@ -647,6 +648,9 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       h(
         'div',
         { class: 'paper-head' },
+        // The first page floats on the right: the lines beside it are narrower, those below it
+        // (the tags, when the details are short) have the whole width.
+        firstPage(p),
         h(
           'div',
           { class: 'paper-head-main' },
@@ -663,7 +667,10 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
             star,
             reextract,
           ),
-          editable({
+          metaRow(
+            'person',
+            'Authors',
+            editable({
             value: p.authors.join(', '),
             placeholder: 'Add authors',
             cls: 'paper-authors',
@@ -675,7 +682,11 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
               }),
             onSave: (v) => patch({ authors: splitList(v) }),
           }),
-          editable({
+          ),
+          metaRow(
+            'institution',
+            'Institutions',
+            editable({
             value: (sc.institutions ?? []).join('; '),
             placeholder: 'Add institutions',
             cls: 'paper-institutions',
@@ -687,16 +698,19 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
               }),
             onSave: (v) => patch({ institutions: splitList(v) }),
           }),
+          ),
           h(
             'div',
             { class: 'paper-meta muted' },
             venueLine(p),
-            fileNameField(p),
+            yearRow(p),
+            citationsRow(p),
+            metaRow('document', 'File', fileNameField(p)),
           ),
-          tagEditor(p),
-          sourceRow(p),
         ),
-        firstPage(p),
+        tagEditor(p),
+        typeRow(p),
+        sourceRow(p),
       ),
       jobBar ?? '',
       paperTabs([
@@ -832,10 +846,17 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
   /** The Google Scholar search for a paper's exact title. */
   const scholarUrl = (title: string) => `https://scholar.google.com/scholar?q=${encodeURIComponent(`"${title.replace(/"/g, '')}"`)}`;
 
-  /** Venue · year · citations (the count links to the paper on Semantic Scholar) · Google Scholar. */
+  /** Venue · citations (the count links to the paper on Semantic Scholar) · Google Scholar. */
+  /** Where it was published (a line of its own; the year and the citations below it). */
   function venueLine(p: PaperDetail): HTMLElement | null {
+    return p.sidecar.venue ? metaRow('venue', 'Venue', h('span', { class: 'venue-line' }, String(p.sidecar.venue))) : null;
+  }
+
+  /** Citations: the count (a link to the paper on Semantic Scholar) · Google Scholar. */
+  function citationsRow(p: PaperDetail): HTMLElement | null {
     const sc = p.sidecar;
-    const parts: (string | Node)[] = [sc.venue, sc.year ?? p.year].filter(Boolean).map(String);
+    if (!isCitedType(docTypeOf(sc))) return null;
+    const parts: (string | Node)[] = [];
     const c = sc.citations;
     if (c && typeof c.count === 'number') {
       const label = `${c.count.toLocaleString()} citation${c.count === 1 ? '' : 's'}`;
@@ -877,9 +898,9 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       );
     }
     if (!parts.length) return null;
-    const line = h('span', { class: 'venue-line' });
+    const line = h('span', { class: 'citations-line' });
     parts.forEach((x, i) => line.append(...(i ? [' · '] : []), x));
-    return line;
+    return metaRow('quote', 'Citations', line);
   }
 
   function tagEditor(p: PaperDetail): HTMLElement {
@@ -909,7 +930,11 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     return h(
       'div',
       { class: 'tag-editor' },
-      icon('tag'),
+      labeledIcon('tag', 'Tags'),
+      // (The tags wrap after the icon, not under it.)
+      h(
+        'div',
+        { class: 'tag-list' },
       tags.map((t) =>
         h(
           'span',
@@ -931,6 +956,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
         ),
       ),
       input,
+      ),
       datalist,
     );
   }
@@ -975,13 +1001,52 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     );
   }
 
+  /** The year it was published, with its icon (none if not known). */
+  function yearRow(p: PaperDetail): HTMLElement | null {
+    const year = p.sidecar.year ?? p.year;
+    return year ? metaRow('calendar', 'Year', h('span', null, String(year))) : null;
+  }
+
+  /** A line of the paper's details with its icon in front (as the tags' line). */
+  function metaRow(iconName: string, label: string, content: HTMLElement): HTMLElement {
+    return h('div', { class: 'meta-row' }, labeledIcon(iconName, label), content);
+  }
+
+  /** An icon telling what a line is, with a tooltip saying it ("Authors"…). */
+  function labeledIcon(name: string, label: string, size?: number): SVGSVGElement {
+    const i = icon(name, size);
+    i.setAttribute('title', label);
+    i.setAttribute('aria-label', label);
+    i.classList.add('labeled-icon');
+    return i;
+  }
+
+  /** What it is (a paper, a book…), below the tags: changed here by the user (then never by Omoeba). */
+  function typeRow(p: PaperDetail): HTMLElement {
+    const sc = p.sidecar;
+    const type = docTypeOf(sc);
+    const typeSel = h(
+      'select',
+      {
+        class: 'doc-type-select',
+        title:
+          sc.typeSource && sc.typeSource !== 'user'
+            ? `Its type (found ${sc.typeSource === 'ai' ? 'by the AI' : sc.typeSource === 'bibtex' ? 'from its BibTeX entry' : sc.typeSource === 'import' ? 'when it was added' : 'from its PDF'}): change it if needed`
+            : 'What kind of document this is',
+        onchange: () => patch({ type: typeSel.value as DocType, typeSource: 'user' }),
+      },
+      DOC_TYPES.map((t) => h('option', { value: t, selected: t === type }, DOC_TYPE_LABELS[t])),
+    );
+    return h('div', { class: 'type-row' }, labeledIcon('layers', 'Type'), typeSel);
+  }
+
   function sourceRow(p: PaperDetail): HTMLElement {
     const url = p.sidecar.source?.url;
     const details = sourceSearchDetails(p);
     const row = h(
       'div',
       { class: 'source-row' },
-      icon('link'),
+      labeledIcon('link', 'Download location'),
       h('span', { class: 'muted' }, 'Downloaded from '),
       url
         ? h('a', { href: url, onclick: (e: Event) => (e.preventDefault(), api.openExternal(url).catch((er) => toast(errorMessage(er), 'error'))) }, url)

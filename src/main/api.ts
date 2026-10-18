@@ -50,6 +50,9 @@ import * as cfg from './config';
 import { conversationOf, conversationPatch, findAIChoice } from '../shared/aichoices';
 import { listModels, modelListerFor } from './aimodels';
 import { citationKeysOf, citationsEntry, paperByTitle, papersByIds, type S2Paper } from './citations';
+import { docTypeOf, isCitedType, isDocType, mayReplaceType } from '../shared/doctype';
+import { docTypeFromBibtex, docTypeFromPdf } from './doctype';
+import { pdfIsLandscape } from './pdftext';
 import { IndexManager } from './indexer';
 import { ThumbCache } from './thumbcache';
 import {
@@ -176,6 +179,8 @@ const WRITABLE_KEYS = new Set([
   'bibtex',
   'citeKey',
   'citations',
+  'type',
+  'typeSource',
 ]);
 
 export class OmoebaService implements OmoebaAPI {
@@ -217,6 +222,9 @@ export class OmoebaService implements OmoebaAPI {
     this.watchFolders();
     if (this.config.folders.length) this.index.requestSync(500);
     setTimeout(() => void this.refreshModels(), 5000);
+    // Document types (books, theses, slides…) found without an AI: shortly after startup, then every 6 hours.
+    setTimeout(() => void this.typesPass(), 90_000).unref?.();
+    setInterval(() => void this.typesPass(), 6 * 3_600_000).unref?.();
     // Citation counts: a minute after startup, then daily.
     setTimeout(() => void this.citationsPass(), 60_000).unref?.();
     setInterval(() => void this.citationsPass(), 86_400_000).unref?.();
@@ -1590,7 +1598,8 @@ export class OmoebaService implements OmoebaAPI {
     const hasTags = (sc: Sidecar) => Array.isArray(sc.tags) && sc.tags.length > 0;
     const wantTags = !hasTags(await readSidecar(jsonPathOf(pdfPath)));
     const existing = wantTags ? (await this.allTags()).sort((a, b) => b.count - a.count).slice(0, 150).map((t) => t.tag) : [];
-    const prompt = metadataPrompt(pages, path.basename(pdfPath), wantTags ? { existing } : undefined);
+    const numPages = this.index.docInfo(pdfPath)?.numPages;
+    const prompt = metadataPrompt(pages, path.basename(pdfPath), wantTags ? { existing } : undefined, numPages);
     const out = await runAI(ai, prompt, {
       jobId,
       onTrace: this.traceOf(jobId),
@@ -1616,6 +1625,14 @@ export class OmoebaService implements OmoebaAPI {
         if (has(cur[k])) delete patch[k];
       }
       if (cur.metadataSource === 'user') delete patch.metadataSource;
+    }
+    // Its type: unless set otherwise (by the user, or surely); a paper is not written (the default).
+    if (isDocType(meta.type)) {
+      const cur = await readSidecar(jsonPathOf(pdfPath));
+      if (mayReplaceType(cur, 'ai') && (meta.type !== 'paper' || isDocType(cur.type)) && cur.type !== meta.type) {
+        patch.type = meta.type;
+        patch.typeSource = 'ai';
+      }
     }
     if (wantTags && strList(meta.tags)) {
       const tags = [...new Set(strList(meta.tags)!.map((t) => t.toLowerCase().replace(/\s+/g, ' ')))]
@@ -1660,6 +1677,57 @@ export class OmoebaService implements OmoebaAPI {
     }
   }
 
+  // --- Document types ------------------------------------------------------------------------
+
+  private typesRunning = false;
+
+  /**
+   * The types found without an AI (shared/doctype.ts, main/doctype.ts): from the BibTeX entry,
+   * else from clues in the PDF. Each PDF is looked at once (again when it changes; the PDFs
+   * looked at are kept in ~/omoeba/types.json). Only a type other than "paper" is written, and
+   * never over one set by the user.
+   */
+  private async typesPass(): Promise<void> {
+    const rows = this.index.docs();
+    if (this.typesRunning || !rows) return;
+    this.typesRunning = true;
+    const file = path.join(cfg.appDir(), 'types.json');
+    let checked: Record<string, number> = {};
+    try {
+      const raw = JSON.parse(await fs.readFile(file, 'utf8'));
+      if (raw && raw.version === 1 && raw.checked && typeof raw.checked === 'object') checked = raw.checked;
+    } catch {
+      /* (first time) */
+    }
+    let n = 0;
+    try {
+      const folders = new Set(this.config.folders.map((f) => path.resolve(f)));
+      for (const r of rows) {
+        if (!folders.has(r.root) || !r.hasPdf || checked[r.id] === r.pdfMtime) continue;
+        const sc = r.hasJson ? await readSidecar(jsonPathOf(r.id)).catch(() => null) : null;
+        let found = docTypeFromBibtex(sc?.bibtex?.entry);
+        let source: 'bibtex' | 'pdf' = 'bibtex';
+        if (!found) {
+          source = 'pdf';
+          const terms = r.pdfTerms ?? '';
+          let landscape = r.info?.landscape ?? null;
+          // (Read before the page's shape was kept: looked at for the likely slides only.)
+          const fewWords = terms.split(' ').length < 400;
+          if (landscape === null && !r.pdfCloud && (r.info?.numPages ?? 0) >= 5 && fewWords) landscape = await pdfIsLandscape(r.id).catch(() => null);
+          found = docTypeFromPdf({ numPages: r.info?.numPages, terms, head: r.info?.head, landscape });
+        }
+        if (found && found !== 'paper' && docTypeOf(sc) !== found && mayReplaceType(sc, source)) {
+          await updateSidecar(jsonPathOf(r.id), { type: found, typeSource: source }).catch((e) => console.warn('Type not written:', e));
+        }
+        checked[r.id] = r.pdfMtime;
+        if (++n % 200 === 0) await writeJsonAtomic(file, { version: 1, checked }).catch(() => undefined);
+      }
+    } finally {
+      await writeJsonAtomic(file, { version: 1, checked }).catch(() => undefined);
+      this.typesRunning = false;
+    }
+  }
+
   // --- Citation counts (Semantic Scholar) ---------------------------------------------------
 
   /** When each paper's count was last looked for (kept in ~/omoeba/citations.json, not in the .json files). */
@@ -1685,8 +1753,9 @@ export class OmoebaService implements OmoebaAPI {
     );
   }
 
-  /** Whether the count is to be looked for again: monthly; weekly while not found. */
+  /** Whether the count is to be looked for again: monthly; weekly while not found. (Not for blog posts, slides…) */
   private citationsDue(checked: Map<string, number>, pdfPath: string, sc: Sidecar): boolean {
+    if (!isCitedType(docTypeOf(sc))) return false;
     const at = checked.get(pdfPath);
     return !at || Date.now() - at > (sc.citations ? 30 : 7) * 86_400_000;
   }

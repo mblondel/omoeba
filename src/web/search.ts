@@ -5,9 +5,10 @@
  * accents), and the last word of a query matches as a prefix (results while typing).
  *
  * Query syntax, as in the app: free words (all must match), tag:x, author:x, folder:x,
- * is:starred; "quoted values" for several words.
+ * type:book (-type:blog to leave a type out), is:starred; "quoted values" for several words.
  */
 import { normalize } from '../main/searchindex';
+import { docTypeFromWord, type DocType } from '../shared/doctype';
 
 export interface SearchDoc {
   title: string;
@@ -15,6 +16,8 @@ export interface SearchDoc {
   tags: string[];
   folder: string;
   starred: boolean;
+  /** Its type, when not a paper. */
+  type?: DocType;
   venue?: string;
   /** Abstract, summary, notes. */
   text: string;
@@ -31,16 +34,20 @@ export interface Query {
   authors: string[];
   folders: string[];
   starred: boolean;
+  /** type:book, -type:blog. */
+  types: { type: DocType; not: boolean }[];
 }
 
 export function parseQuery(q: string): Query {
-  const out: Query = { words: [], tags: [], authors: [], folders: [], starred: false };
+  const out: Query = { words: [], tags: [], authors: [], folders: [], starred: false, types: [] };
   for (const m of q.matchAll(/(-?)(\w+):(?:"([^"]*)"?|(\S+))|"([^"]*)"?|(\S+)/g)) {
-    const [, , key, quoted, bare, phrase, word] = m;
+    const [, neg, key, quoted, bare, phrase, word] = m;
     if (key) {
       const v = normalize((quoted ?? bare ?? '').trim());
       const k = key.toLowerCase();
-      if (k === 'is' && v === 'starred') out.starred = true;
+      const type = k === 'type' ? docTypeFromWord(v) : null;
+      if (type) out.types.push({ type, not: neg === '-' });
+      else if (k === 'is' && v === 'starred') out.starred = true;
       else if ((k === 'tag' || k === 't') && v) out.tags.push(v);
       else if ((k === 'author' || k === 'a') && v) out.authors.push(v);
       else if ((k === 'folder' || k === 'f') && v) out.folders.push(v);
@@ -96,9 +103,10 @@ export class SearchIndex<D extends SearchDoc> {
     return out;
   }
 
-  /** Whether a doc passes the query's filters (tag:, author:, folder:, is:starred). */
+  /** Whether a doc passes the query's filters (tag:, author:, folder:, type:, is:starred). */
   private passes(i: number, query: Query): boolean {
     if (query.starred && !this.docs[i].starred) return false;
+    if (query.types.some((t) => ((this.docs[i].type ?? 'paper') === t.type) === t.not)) return false;
     if (query.tags.some((t) => !this.normTags[i].includes(t))) return false;
     if (query.authors.some((a) => !this.normAuthors[i].some((x) => x.includes(a)))) return false;
     if (query.folders.some((f) => !this.normFolders[i].includes(f))) return false;

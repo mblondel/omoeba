@@ -15,6 +15,7 @@
  * citation in a note finds its one paper by it. If two sidecars have the same key (e.g. a copied
  * .json file), the paper indexed first keeps it; the other is indexed without a key.
  */
+import type { DocType } from '../shared/doctype';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { normalize } from './searchindex';
 
@@ -22,6 +23,8 @@ const SCHEMA_VERSION = 3;
 
 /** What the paper list and matching need from the sidecar. */
 export interface DocMeta {
+  /** Its type (shared/doctype.ts), when not a paper. */
+  type?: DocType;
   title?: string;
   authors?: string[];
   institutions?: string[];
@@ -42,6 +45,8 @@ export interface DocInfo {
   year?: string;
   arxivId?: string;
   numPages?: number;
+  /** Whether its first page is wider than tall (slides). */
+  landscape?: boolean;
   /** Start of the first page's text, where the title is printed (to recognize cited papers). */
   head?: string;
 }

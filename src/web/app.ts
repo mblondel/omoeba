@@ -14,6 +14,7 @@ import { renderFigureRef } from '../renderer/figures';
 import type { FigureRef, RelatedPaper, SummaryImage } from '../shared/types';
 import { arxivIdOf } from '../shared/arxiv';
 import { parseQuery, SearchIndex } from './search';
+import { DOC_TYPE_LABELS, isCitedType } from '../shared/doctype';
 import { cachedLibrary, forgetLibrary, readAnnotations, readLibrary, readPdf, tagCounts, type Library, type WebPaper } from './library';
 import { clientConfigured, finishSignIn, loadGis, searchPdfText, signedIn, signIn, signInByRedirect, SignInNeeded, signOut, signsInByRedirect } from './drive';
 import { DATA_FILE } from './paper';
@@ -236,7 +237,7 @@ function header(...right: (Node | null)[]) {
 function showList() {
   document.title = 'Omoeba';
   const all = papers!;
-  const search = h('input', { type: 'search', class: 'search', placeholder: touch ? 'Search' : 'Search titles, authors, tags, abstracts, summaries…  (tag:x  author:x  folder:x)', value: query, spellcheck: false });
+  const search = h('input', { type: 'search', class: 'search', placeholder: touch ? 'Search' : 'Search titles, authors, tags, abstracts, summaries…  (tag:x  author:x  folder:x  type:book)', value: query, spellcheck: false });
   const starred = h('button', { class: 'btn', title: 'Starred papers only' }, '★', touch ? null : ' Starred');
   const inside = h('input', { type: 'checkbox', checked: inPdfs });
   const insideLabel = h('label', { class: 'inside-pdfs small', title: 'Also find the papers whose PDF contains your words (Google Drive’s search)' }, inside, ' Inside PDFs');
@@ -370,6 +371,7 @@ function row(p: WebPaper, onTag: (t: string) => void, foundInText: boolean) {
       { class: 'row-title' },
       p.starred ? h('span', { class: 'star', title: 'Starred' }, '★') : null,
       h('span', null, p.title),
+      p.type ? h('span', { class: 'doc-type-badge after' }, DOC_TYPE_LABELS[p.type]) : null,
       p.year ? h('span', { class: 'year muted' }, p.year) : null,
       p.driveId ? null : h('span', { class: 'badge', title: 'The PDF is not in Google Drive' }, 'no PDF'),
       foundInText ? h('span', { class: 'badge', title: 'Found inside the PDF' }, 'in text') : null,
@@ -438,13 +440,14 @@ function showPaper(p: WebPaper) {
       'article',
       { class: 'paper' },
       h('h1', null, p.starred ? h('span', { class: 'star' }, '★ ') : null, p.title),
+      p.type ? h('div', null, h('span', { class: 'doc-type-badge' }, DOC_TYPE_LABELS[p.type])) : null,
       p.authors.length ? h('p', { class: 'authors' }, p.authors.join(', ')) : null,
       h(
         'p',
         { class: 'muted small' },
         [p.venue, p.year].filter(Boolean).join(' · '),
         // (The citation count, from Semantic Scholar: a link to the paper there.)
-        p.citations
+        p.citations && (!p.type || isCitedType(p.type))
           ? [
               p.venue || p.year ? ' · ' : '',
               h(
@@ -454,8 +457,10 @@ function showPaper(p: WebPaper) {
               ),
             ]
           : null,
-        // (Google Scholar: a search for the exact title, its citation count seen there.)
-        [
+        // (Google Scholar: a search for the exact title, its citation count seen there. Not for
+        // lecture notes, slides, blog posts…)
+        !p.type || isCitedType(p.type)
+          ? [
           p.venue || p.year || p.citations ? ' · ' : '',
           h(
             'a',
@@ -467,8 +472,9 @@ function showPaper(p: WebPaper) {
             },
             'Google Scholar',
           ),
-        ],
-        ' · ',
+        ]
+          : null,
+        p.venue || p.year || !p.type || isCitedType(p.type) ? ' · ' : '',
         `${p.folder ? p.folder + '/' : ''}${p.fileName}`,
       ),
       p.tags.length ? h('div', { class: 'row-tags' }, p.tags.map((t) => tagEl(t, toList))) : null,

@@ -12,6 +12,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { Sidecar } from '../shared/types';
+import { docTypeOf } from '../shared/doctype';
 import { IndexDb, type DocInfo, type DocMeta, type DocRow, type FileState, type FtsFields } from './indexdb';
 import { isScanned, readSidecar, scanFoldersDetailed, statPaper, type ScannedFile } from './library';
 import { extractPdf, plausibleTitle, splitAuthors } from './pdftext';
@@ -28,6 +29,8 @@ const PDF_BATCH = 20;
 export function metaFromSidecar(sc: Sidecar): DocMeta {
   const list = (v: unknown) => (Array.isArray(v) ? v.map((x) => String(x)).filter((x) => x.trim()) : undefined);
   const meta: DocMeta = {};
+  const type = docTypeOf(sc);
+  if (type !== 'paper') meta.type = type;
   if (typeof sc.title === 'string' && sc.title.trim()) meta.title = sc.title;
   if (list(sc.authors)?.length) meta.authors = list(sc.authors);
   if (list(sc.institutions)?.length) meta.institutions = list(sc.institutions);
@@ -68,6 +71,7 @@ export async function readPdfForIndex(file: string): Promise<{ info: DocInfo; te
     arxivId: ex.info.arxivId,
     numPages: ex.info.numPages,
     head: (ex.pages[0] ?? '').slice(0, HEAD_CHARS),
+    ...(ex.info.landscape !== undefined ? { landscape: ex.info.landscape } : {}),
   };
   return { info, terms: uniq(tokenize(ex.pages.join('\n'))).join(' ') };
 }

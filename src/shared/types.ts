@@ -1,3 +1,4 @@
+import type { DocType, DocTypeSource } from './doctype';
 // Types shared between the main process and the renderer.
 
 export interface AIProvider {
@@ -124,6 +125,10 @@ export interface RelatedPaper {
 /** Content of the .json sidecar stored next to a PDF. */
 export interface Sidecar {
   omoeba: 1;
+  /** What kind of document it is (a paper if not given): see shared/doctype.ts. */
+  type?: DocType;
+  /** Who set `type`: the user's choice is never changed by Omoeba. */
+  typeSource?: DocTypeSource;
   title?: string;
   authors?: string[];
   institutions?: string[];
@@ -267,6 +272,8 @@ export interface AIBacklogItem {
 export interface PaperSummary {
   /** Stable id = absolute path of the PDF (even if the PDF is missing). */
   id: string;
+  /** Its type, when not a paper. */
+  type?: DocType;
   pdfPath: string;
   jsonPath: string;
   skimPath: string;

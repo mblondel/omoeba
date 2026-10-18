@@ -21,6 +21,7 @@ import { openSummarizeDialog } from './synthesis';
 import { renderThumbnail } from '../thumbnail';
 import { sameAuthor, sameInstitution, tagQuery } from '../authors';
 import { confirmTrashPaper } from '../trashpaper';
+import { DOC_TYPE_LABELS, docTypeFromWord, type DocType } from '../../shared/doctype';
 
 type SortKey = 'title' | 'year' | 'authors' | 'folder' | 'tags' | 'added' | 'opened';
 
@@ -139,7 +140,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; starred?: b
     type: 'search',
     class: 'search',
     placeholder: 'Search…  (tag:  author:  inst:  kw:  folder:)',
-    title: 'Search titles, authors, institutions, tags and keywords (and the PDFs’ text with “Inside PDFs”). Prefix with tag:, author:, inst:, kw:, title:, text: or folder: to search one field; -term excludes.',
+    title: 'Search titles, authors, institutions, tags and keywords (and the PDFs’ text with “Inside PDFs”). Prefix with tag:, author:, inst:, kw:, title:, text: or folder: to search one field; type:book (paper, thesis, notes, slides, report, blog) for one kind of document; -term excludes.',
     value: isSearchTab ? opts.query ?? '' : state.listQuery,
     spellcheck: false,
   });
@@ -544,6 +545,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; starred?: b
         !p.hasPdf ? h('span', { class: 'warn', title: 'PDF missing' }, icon('warn', 14)) : null,
         p.starred ? h('span', { class: 'star-mark', title: 'Starred' }, icon('star', 13)) : null,
         h('span', null, p.title),
+        p.type ? h('span', { class: 'doc-type-badge', title: `${DOC_TYPE_LABELS[p.type]} (not a paper)` }, DOC_TYPE_LABELS[p.type]) : null,
         p.titleIsFallback
           ? h(
               'span',
@@ -610,12 +612,27 @@ export function mountList(root: HTMLElement, opts: { query?: string; starred?: b
    * (author:"First Last", inst:"Name", as set by clicking them in a paper), and exact tags
    * (tag:"to read") — the index would match the words separately.
    */
-  function splitQuery(q: string): { rest: string; folders: string[]; authors: string[]; insts: string[]; tags: string[] } {
+  function splitQuery(q: string): {
+    rest: string;
+    folders: string[];
+    authors: string[];
+    insts: string[];
+    tags: string[];
+    types: { type: DocType; not: boolean }[];
+  } {
+    const types: { type: DocType; not: boolean }[] = [];
     const folders: string[] = [];
     const authors: string[] = [];
     const insts: string[] = [];
     const tags: string[] = [];
     const rest = q
+      // type:book, -type:blog (a paper when no type is recorded).
+      .replace(/(?:^|\s)(-)?type:(?:"([^"]*)"|(\S+))/gi, (all, neg, a, b) => {
+        const t = docTypeFromWord(a ?? b);
+        if (!t) return all;
+        types.push({ type: t, not: !!neg });
+        return ' ';
+      })
       .replace(/(?:^|\s)folder:(?:"([^"]*)"|(\S+))/gi, (_, a, b) => {
         folders.push((a ?? b).toLowerCase());
         return ' ';
@@ -632,7 +649,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; starred?: b
         if (a.trim()) tags.push(a.trim().toLowerCase());
         return ' ';
       });
-    return { rest: rest.trim(), folders, authors, insts, tags };
+    return { rest: rest.trim(), folders, authors, insts, tags, types };
   }
 
   function fallbackMatch(p: PaperSummary, q: string): boolean {
@@ -674,8 +691,9 @@ export function mountList(root: HTMLElement, opts: { query?: string; starred?: b
     if (!isSearchTab) state.listQuery = q;
     updateRenameBtn();
     renderTagBar();
-    const { rest, folders, authors, insts, tags } = splitQuery(q);
+    const { rest, folders, authors, insts, tags, types } = splitQuery(q);
     let list = papers.filter(inTab);
+    if (types.length) list = list.filter((p) => types.every((t) => ((p.type ?? 'paper') === t.type) !== t.not));
     if (folders.length) list = list.filter((p) => folders.every((f) => p.folder.toLowerCase().includes(f)));
     if (authors.length) list = list.filter((p) => authors.every((a) => p.authors.some((b) => sameAuthor(a, b))));
     if (insts.length) list = list.filter((p) => insts.every((a) => p.institutions.some((b) => sameInstitution(a, b))));

@@ -23,6 +23,8 @@ export interface PdfInfo {
   arxivId?: string;
   doi?: string;
   numPages: number;
+  /** Whether the first page is wider than tall (slides). */
+  landscape?: boolean;
 }
 
 export interface PdfExtract {
@@ -49,6 +51,18 @@ const clean = (v: unknown): string | undefined => {
   const t = v.replace(/\s+/g, ' ').trim();
   return t || undefined;
 };
+
+/** Whether the PDF's first page is wider than tall (slides). */
+export async function pdfIsLandscape(filePath: string): Promise<boolean> {
+  const pdfjs = await loadPdfJs();
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(await fs.readFile(filePath)), disableFontFace: true, useSystemFonts: false, verbosity: 0 }).promise;
+  try {
+    const vp = (await doc.getPage(1)).getViewport({ scale: 1 });
+    return vp.width > vp.height * 1.1;
+  } finally {
+    await doc.destroy();
+  }
+}
 
 export async function extractPdf(filePath: string, maxPages = Infinity, maxChars = Infinity, opts: { annotations?: boolean } = {}): Promise<PdfExtract> {
   const pdfjs = await loadPdfJs();
@@ -80,6 +94,12 @@ export async function extractPdf(filePath: string, maxPages = Infinity, maxChars
       },
       pages: [],
     };
+    try {
+      const vp = (await doc.getPage(1)).getViewport({ scale: 1 });
+      out.info.landscape = vp.width > vp.height * 1.1;
+    } catch {
+      /* (not known) */
+    }
     let chars = 0;
     const n = Math.min(doc.numPages, maxPages);
     for (let i = 1; i <= n && chars < maxChars; i++) {

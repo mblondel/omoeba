@@ -586,6 +586,24 @@ td.c-title {
 .c-tags {
   width: 18%;
 }
+td.c-title .doc-type-badge,
+.doc-type-badge {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--fg-soft);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+/* (In the list: after the title.) */
+td.c-title .doc-type-badge {
+  margin: 0 0 0 7px;
+}
 td.c-title .unknown-title {
   display: inline-flex;
   vertical-align: -2px;
@@ -746,18 +764,17 @@ input.paper-institutions {
   margin-top: 2px;
 }
 /* The metadata, with the PDF's first page on its right. */
+/* The first page floats on the right of the details, tags…: what is beside it is narrower,
+   what is below it has the whole width (no empty space below short details). */
 .paper-head {
-  display: flex;
-  align-items: flex-start;
-  gap: 24px;
+  display: flow-root;
 }
 .paper-head-main {
-  flex: 1;
   min-width: 0;
 }
 .paper-head-thumb {
-  flex: none;
-  margin-top: 6px;
+  float: right;
+  margin: 6px 0 12px 24px;
 }
 .paper-page-thumb {
   display: block;
@@ -784,6 +801,28 @@ input.paper-institutions {
   align-items: flex-start;
   gap: 7px;
   margin: 8px 0 14px;
+}
+/* The document's type, at the start of the venue line: a menu that reads as text. */
+select.doc-type-select {
+  height: auto;
+  padding: 0 14px 0 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: right 5px top 55%, right 1px top 55%;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+}
+select.doc-type-select:hover {
+  color: var(--accent);
+}
+select.doc-type-select:focus {
+  box-shadow: none;
 }
 .citations-link {
   color: inherit;
@@ -830,6 +869,20 @@ input.paper-file-input {
 }
 .tag-editor > .icon {
   margin-right: 8px;
+  flex: none;
+  align-self: flex-start;
+  margin-top: 4px;
+}
+.tag-editor {
+  flex-wrap: nowrap;
+}
+.tag-list {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 0;
 }
 .tag-input {
   border: 1px dashed var(--border-strong) !important;
@@ -837,6 +890,44 @@ input.paper-file-input {
   width: 120px;
   font-size: 12px;
   border-radius: 11px !important;
+}
+/* A line of the paper's details with its icon in front (authors, institutions, file…). */
+.meta-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.meta-row > .icon {
+  flex: none;
+  margin-top: 3px;
+  color: var(--muted);
+}
+.meta-row > :not(.icon) {
+  flex: 1;
+  min-width: 0;
+}
+/* (Icons with a tooltip: shown on hover, with the pointer to say so.) */
+svg.labeled-icon {
+  pointer-events: auto;
+  cursor: help;
+}
+.citations-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.type-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  margin: 6px 0;
+}
+.type-row select.doc-type-select {
+  color: var(--fg-soft);
+  /* (As wide as the type shown.) */
+  field-sizing: content;
 }
 .source-row {
   display: flex;

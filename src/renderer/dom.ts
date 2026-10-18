@@ -86,6 +86,13 @@ const ICONS: Record<string, string> = {
   cursor: '<path d="M4 2.5 12 8l-3.5.8L10.5 13l-1.6.8-2-4.2L4 12z"/>',
   star: '<path d="M8 2.2 9.8 5.9l4 .6-2.9 2.8.7 4L8 11.4l-3.6 1.9.7-4-2.9-2.8 4-.6z"/>',
   tag: '<path d="M2.5 2.5h5l6 6-5 5-6-6z"/><circle cx="5.5" cy="5.5" r=".8"/>',
+  person: '<circle cx="8" cy="5.3" r="2.6"/><path d="M2.8 13.8c.6-2.7 2.7-4.3 5.2-4.3s4.6 1.6 5.2 4.3"/>',
+  institution: '<path d="M2 6 8 2.5 14 6M3.5 6v6M6.5 6v6M9.5 6v6M12.5 6v6M2 13.5h12"/>',
+  quote: '<path d="M7 4.5C5 5 3.5 6.5 3.5 9.2V12h3.2V9H4.6M12.8 4.5c-2 .5-3.5 2-3.5 4.7V12h3.2V9h-2.1"/>',
+  document: '<path d="M4 1.8h5.2L12.5 5v9.2H4z"/><path d="M9 1.8V5h3.5"/>',
+  venue: '<rect x="2.5" y="2.5" width="11" height="7.5" rx="1"/><path d="M8 10v3.5M5.5 13.5h5M5 5.5h6M5 7.5h4"/>',
+  calendar: '<rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/>',
+  layers: '<path d="M8 2.3 14 5.3 8 8.3 2 5.3z"/><path d="M2 8.3l6 3 6-3M2 11l6 3 6-3"/>',
 };
 
 export function icon(name: keyof typeof ICONS | string, size = 16): SVGSVGElement {

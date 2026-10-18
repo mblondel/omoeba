@@ -2,6 +2,7 @@
 import { promises as fs, Dirent } from 'node:fs';
 import path from 'node:path';
 import type { PaperSummary, Sidecar } from '../shared/types';
+import { docTypeOf } from '../shared/doctype';
 import { canonicalJson } from '../shared/canonicaljson';
 
 export interface ScannedFile {
@@ -373,8 +374,10 @@ export function buildSummary(f: ScannedFile, sc: Sidecar, pdfInfo?: PdfInfoLite,
   const pdfPath = pdfPathOf(f.base);
   const fileName = path.basename(pdfPath);
   const title = (sc.title && String(sc.title)) || pdfInfo?.title;
+  const type = docTypeOf(sc);
   return {
     id: pdfPath,
+    ...(type !== 'paper' ? { type } : {}),
     pdfPath,
     jsonPath: f.base + '.json',
     skimPath: f.base + '.skim',
