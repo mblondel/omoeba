@@ -321,7 +321,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; starred?: b
       summarizeBtn,
       tagAllBtn,
       renameBtn,
-      iconButton('plus', 'Add paper from URL…', () => addPaperFromUrl()),
+      iconButton('plus', 'Add from URL (a paper, or a web page such as a blog post)…', () => addPaperFromUrl()),
       iconButton('settings', 'Settings', () => navigate('#/settings')),
     ),
   );

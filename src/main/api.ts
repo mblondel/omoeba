@@ -109,7 +109,8 @@ import {
   renamePaperInSyntheses,
 } from './syntheses';
 import { cleanPdfStem } from '../shared/filenames';
-import { downloadPdf, uniquePath, writeFileAtomic } from './download';
+import { downloadPdf, NotPdfError, uniquePath, writeFileAtomic } from './download';
+import { yearOf, type WebClip } from './webclip';
 import { RecentStore, createTextFile, insideRoots, isEditable, linkTarget, listFolder, readTextFile, writeTextFile } from './textfiles';
 import * as latex from './latex';
 import { assistPrompt, parseAssistReply, type AssistResult, type AssistTurn } from '../shared/assist';
@@ -149,6 +150,8 @@ export interface Platform {
   openPath?(p: string): Promise<void>;
   /** The text of a web page, read like a browser (passing a site's bot check); plain requests are used if absent. */
   webGet?(url: string): Promise<string>;
+  /** A web page (blog post, article…) as a PDF of its article, with its details (see webcapture.ts). */
+  captureWebPage?(url: string): Promise<{ clip: WebClip; pdf: Buffer }>;
   /** Move a file to the Trash (never deletes it outright; fails if there is no Trash). */
   trashItem(p: string): Promise<void>;
   /** Where secrets (the Gemini API key) are kept; in memory only if absent. */
@@ -588,13 +591,48 @@ export class OmoebaService implements OmoebaAPI {
     const dir = path.resolve(folder || this.config.folders[0] || '');
     if (!this.inLibrary(dir)) throw new Error('Choose a folder inside your library to download into.');
     if (!(await fs.stat(dir).catch(() => null))?.isDirectory()) throw new Error('That folder does not exist anymore.');
-    const { data, fileName, finalUrl } = await downloadPdf(url);
+    let got: Awaited<ReturnType<typeof downloadPdf>>;
+    try {
+      got = await downloadPdf(url);
+    } catch (e) {
+      // A web page (a blog post, an article…): saved as a PDF of its article.
+      if (e instanceof NotPdfError && /html|xml/i.test(e.contentType) && this.platform.captureWebPage) return this.addWebPage(url, dir);
+      throw e;
+    }
+    const { data, fileName, finalUrl } = got;
     const named = await this.downloadName(url, finalUrl, fileName, data);
     const pdfPath = await uniquePath(dir, named.fileName);
     await writeFileAtomic(pdfPath, data);
     await updateSidecar(jsonPathOf(pdfPath), {
       source: { url, downloadedAt: new Date().toISOString() },
       ...(named.title ? { title: named.title } : {}),
+    });
+    this.newFiles(pdfPath);
+    return this.getPaper(pdfPath);
+  }
+
+  /**
+   * A web page added to the library: its article printed to a PDF (reader view: no menus or
+   * sidebars), named after its title, its .json with its details (a blog post, its author, date,
+   * site, description) and its address.
+   */
+  private async addWebPage(url: string, dir: string): Promise<PaperDetail> {
+    const { clip, pdf } = await this.platform.captureWebPage!(url);
+    const title = clip.title.replace(/\s+/g, ' ').trim() || new URL(url).hostname;
+    const pdfPath = await uniquePath(dir, fileNameForTitle(title));
+    await writeFileAtomic(pdfPath, pdf);
+    const year = yearOf(clip.published);
+    await updateSidecar(jsonPathOf(pdfPath), {
+      type: 'blog',
+      typeSource: 'import',
+      title,
+      ...(clip.authors.length ? { authors: clip.authors } : {}),
+      ...(year ? { year } : {}),
+      ...(clip.siteName ? { venue: clip.siteName } : {}),
+      ...(clip.description ? { abstract: clip.description } : {}),
+      // (Its details come from the page itself: the AI need not extract them.)
+      metadataSource: 'web',
+      source: { url, downloadedAt: new Date().toISOString() },
     });
     this.newFiles(pdfPath);
     return this.getPaper(pdfPath);

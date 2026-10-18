@@ -29,6 +29,16 @@ export function arxivAbsUrl(arxivId: string): string {
   return `https://arxiv.org/abs/${id}`;
 }
 
+/** The address gives a web page, not a PDF (a blog post…: saved as a PDF instead, see webcapture.ts). */
+export class NotPdfError extends Error {
+  constructor(
+    message: string,
+    readonly contentType: string,
+  ) {
+    super(message);
+  }
+}
+
 export async function downloadPdf(url: string): Promise<{ data: Buffer; fileName: string; finalUrl: string }> {
   const pdfUrl = toPdfUrl(url);
   const res = await fetch(pdfUrl, {
@@ -38,7 +48,8 @@ export async function downloadPdf(url: string): Promise<{ data: Buffer; fileName
   if (!res.ok) throw new Error(`Download failed: HTTP ${res.status} ${res.statusText} (${pdfUrl})`);
   const data = Buffer.from(await res.arrayBuffer());
   if (data.subarray(0, 1024).indexOf('%PDF') < 0) {
-    throw new Error(`The URL did not return a PDF (${res.headers.get('content-type') ?? 'unknown type'}).`);
+    const type = res.headers.get('content-type') ?? '';
+    throw new NotPdfError(`The URL did not return a PDF (${type || 'unknown type'}).`, type);
   }
   let fileName = '';
   const cd = res.headers.get('content-disposition') ?? '';

@@ -3,6 +3,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, pr
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { OmoebaService } from './api';
+import { captureWebPage } from './webcapture';
 import { appDir } from './config';
 import { fileSecretStore } from './secrets';
 import { API_METHODS } from '../shared/api-methods';
@@ -278,7 +279,7 @@ function buildMenu() {
         { label: 'Compile LaTeX', accelerator: 'CmdOrCtrl+B', click: send('compile') },
         { type: 'separator' },
         { label: 'Library', accelerator: 'CmdOrCtrl+L', click: send('library') },
-        { label: 'Add Paper from URL…', accelerator: 'CmdOrCtrl+N', click: send('add-url') },
+        { label: 'Add from URL (Paper or Web Page)…', accelerator: 'CmdOrCtrl+N', click: send('add-url') },
         { label: 'Starred Papers', accelerator: 'CmdOrCtrl+Shift+S', click: send('starred') },
         { label: 'Syntheses', click: send('syntheses') },
         { label: 'Find Duplicates', click: send('duplicates') },
@@ -399,6 +400,7 @@ app.whenReady().then(async () => {
       await shell.openExternal(url);
     },
     webGet,
+    captureWebPage: (url: string) => captureWebPage(url, webSession()),
     async openPath(p: string) {
       const err = await shell.openPath(p);
       if (err) throw new Error(err);

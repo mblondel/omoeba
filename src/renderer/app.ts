@@ -578,10 +578,10 @@ export async function addPaperFromUrl() {
   }
   const folderPicker = saveFolderPicker(cfg.folders);
   const url = await promptDialog({
-    title: 'Add paper from URL',
-    label: 'PDF or arXiv/OpenReview URL',
-    placeholder: 'https://arxiv.org/abs/…',
-    okLabel: 'Download',
+    title: 'Add from URL',
+    label: 'A PDF, an arXiv/OpenReview page, or a web page (a blog post, an article: saved as a PDF)',
+    placeholder: 'https://arxiv.org/abs/…  or  https://…/blog/…',
+    okLabel: 'Add',
     extra: folderPicker.el,
   });
   if (!url) return;
@@ -591,7 +591,7 @@ export async function addPaperFromUrl() {
   } catch {
     /* ignore */
   }
-  toast('Downloading…');
+  toast('Adding… (a web page takes a few seconds: its article is saved as a PDF)', 'info', 15000);
   try {
     const p = await api.addFromUrl(url, folder);
     toast(`Added ${p.fileName} to ${p.folder}`);
