@@ -1128,6 +1128,7 @@ export class OmoebaService implements OmoebaAPI {
   // --- History of papers seen (~/omoeba/history.json) ------------------------
 
   private history = new ReadingHistory(cfg.historyPath());
+  private seenWebTimer: ReturnType<typeof setTimeout> | undefined;
 
   async markOpened(id: string): Promise<void> {
     const pdfPath = this.checkId(id);
@@ -1135,6 +1136,10 @@ export class OmoebaService implements OmoebaAPI {
     if (!st?.isFile()) return;
     this.history.opened({ path: pdfPath, size: st.size, mtime: st.mtimeMs });
     this.platform.emit({ type: 'paper-updated', id: pdfPath });
+    // (The web page lists the papers seen last first: its list, written a little later.)
+    clearTimeout(this.seenWebTimer);
+    this.seenWebTimer = setTimeout(() => void this.writeWebData().catch((e) => console.error('omoeba-library.jsonl:', e)), 60_000);
+    this.seenWebTimer.unref?.();
   }
 
   // --- Duplicates -----------------------------------------------------------
@@ -1178,7 +1183,13 @@ export class OmoebaService implements OmoebaAPI {
     for (const folder of this.config.folders) {
       if (!(await fs.stat(folder).catch(() => null))?.isDirectory()) continue;
       const dest = path.join(folder, DATA_FILE);
-      const data = libraryFile(path.basename(folder), await this.webData.papers(folder), new Date().toISOString());
+      // (When each paper was seen, added: the page's order, as in Omoeba.)
+      const rows = new Map((this.index.list() ?? []).map((r) => [r.id, r]));
+      const dates = (pdfPath: string) => {
+        const r = rows.get(pdfPath);
+        return { seenAt: this.history.openedAt(pdfPath), addedAt: r ? r.pdfBirth || r.jsonMtime : undefined };
+      };
+      const data = libraryFile(path.basename(folder), await this.webData.papers(folder, dates), new Date().toISOString());
       const old = await fs.readFile(dest, 'utf8').catch(() => null);
       if (old !== null && sameLibraryData(old, data)) continue;
       const tmp = `${dest}.tmp-${process.pid}`;

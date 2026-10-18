@@ -18,8 +18,11 @@ export class WebLibraryData {
   /** By .json path. */
   private cache = new Map<string, Cached>();
 
-  /** The papers of a library folder (paths relative to it). */
-  async papers(folder: string): Promise<WebPaper[]> {
+  /**
+   * The papers of a library folder (paths relative to it). `dates`: when a PDF (absolute path)
+   * was last seen in Omoeba and added (the web page's order).
+   */
+  async papers(folder: string, dates?: (pdfPath: string) => { seenAt?: number; addedAt?: number }): Promise<WebPaper[]> {
     const found = new Map<string, { pdf: boolean; json: string | null }>();
     const walk = async (dir: string, prefix: string) => {
       const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
@@ -47,7 +50,11 @@ export class WebLibraryData {
       const sc = f.json ? await this.sidecar(f.json) : null;
       if (f.json) seen.add(f.json);
       if (!f.pdf && !isOmoebaSidecar(sc)) continue;
-      papers.push(paperFrom(`${base}.pdf`, f.pdf, sc));
+      const p = paperFrom(`${base}.pdf`, f.pdf, sc);
+      const d = dates?.(path.join(path.resolve(folder), ...`${base}.pdf`.split("/")));
+      if (d?.seenAt) p.seenAt = Math.round(d.seenAt);
+      if (d?.addedAt) p.addedAt = Math.round(d.addedAt);
+      papers.push(p);
     }
     // (Forget the files that are gone, of this folder.)
     for (const k of this.cache.keys()) if (k.startsWith(folder + path.sep) && !seen.has(k)) this.cache.delete(k);

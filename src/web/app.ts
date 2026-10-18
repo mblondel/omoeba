@@ -166,6 +166,35 @@ function rerenderHeader() {
   if (old && currentHeader) old.replaceWith(header(...currentHeader));
 }
 
+// --- The order of the list: seen most recently first (in Omoeba or on this device), then added ---
+
+const SEEN_KEY = 'omoeba-web-seen';
+let seenHere: Record<string, number> = {};
+try {
+  seenHere = JSON.parse(localStorage.getItem(SEEN_KEY) || '{}') || {};
+} catch {
+  seenHere = {};
+}
+
+/** A paper seen on this device (its page or its PDF). */
+function markSeen(p: WebPaper) {
+  seenHere[p.path] = Date.now();
+  // (The last 500 only.)
+  const keys = Object.keys(seenHere);
+  if (keys.length > 500) for (const k of keys.sort((a, b) => seenHere[a] - seenHere[b]).slice(0, keys.length - 500)) delete seenHere[k];
+  try {
+    localStorage.setItem(SEEN_KEY, JSON.stringify(seenHere));
+  } catch {
+    /* (not remembered) */
+  }
+}
+
+/** Seen most recently first (in Omoeba, or here); never seen: added most recently first. */
+function byRecency(list: WebPaper[]): WebPaper[] {
+  const seen = (p: WebPaper) => Math.max(p.seenAt ?? 0, seenHere[p.path] ?? 0);
+  return [...list].sort((a, b) => seen(b) - seen(a) || (b.addedAt ?? 0) - (a.addedAt ?? 0) || a.title.localeCompare(b.title));
+}
+
 // --- Where we are (#paper=…, #read=…&page=N): the browser's Back works -----------------------
 
 let routing = 0;
@@ -301,7 +330,8 @@ function showList() {
     starred.classList.toggle('on', /\bis:starred\b/.test(query));
     fromText = new Set();
     textRun++;
-    const local = index.search(query);
+    // (Without words to search for: the papers seen most recently first, as in Omoeba.)
+    const local = parseQuery(query).words.length ? index.search(query) : byRecency(index.search(query));
     show(local);
     searchText(local);
   };
@@ -420,6 +450,7 @@ function markdownEl(md: string, p: WebPaper, images?: Record<string, SummaryImag
 }
 
 function showPaper(p: WebPaper) {
+  markSeen(p);
   const toList = (t: string) => {
     query = `tag:"${t}"`;
     go('');
@@ -625,6 +656,7 @@ function relatedPanel(p: WebPaper): HTMLElement | null {
 let closeViewer: (() => void) | null = null;
 
 async function showViewer(p: WebPaper, page: number | undefined, openedFromPaper: boolean) {
+  markSeen(p);
   const holder = h('div', { class: 'viewer-holder' }, h('p', { class: 'muted pad' }, 'Opening the PDF…'));
   app.replaceChildren(holder);
   const close = () => {

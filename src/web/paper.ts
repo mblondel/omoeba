@@ -33,6 +33,9 @@ export interface WebPaper {
   annotationCount: number;
   /** Its type, when not a paper (a book, a blog post…). */
   type?: DocType;
+  /** When it was last seen in Omoeba (ms), and when its PDF was added: the list's order. */
+  seenAt?: number;
+  addedAt?: number;
   /** How many papers cite it (Semantic Scholar), and its page there. */
   citations?: { count: number; url?: string };
   /** The PDF's SHA-256 (recorded by Omoeba), to know whether a copy kept in the browser is current. */
