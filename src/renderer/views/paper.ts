@@ -5,7 +5,7 @@ import { clear, confirmDialog, errorMessage, formatAuthors, h, icon, iconButton,
 import { mountMarkdown } from '../markdown';
 import { closePaperTabs, navigate, refreshConfig, isActiveView, openSearchTab } from '../app';
 import { fileStemForTitle } from '../../shared/filenames';
-import { aiChoiceName, aiChoices } from '../../shared/aichoices';
+import { aiChoiceName, aiChoices, conversationOf } from '../../shared/aichoices';
 import { DOC_TYPES, DOC_TYPE_LABELS, docTypeOf, isCitedType, type DocType } from '../../shared/doctype';
 import { createTraceView, type TraceView } from '../aitrace';
 import { confirmTrashPaper } from '../trashpaper';
@@ -732,7 +732,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
         { key: 'summary', label: 'Summary', panel: summarySection(p), busy: [...jobs.keys()].some((k) => k.startsWith('sum:')) },
         { key: 'related', label: 'Related work', panel: relatedSection(p), busy: jobs.has('related') },
         { key: 'audio', label: 'Audio summary', panel: audioSection(p), busy: jobs.has('audio') },
-        { key: 'ask', label: 'Ask AI', panel: askSection() },
+        { key: 'ask', label: 'Ask AI', panel: askSection(), busy: askBusy, badge: askCount(p) },
         { key: 'bibtex', label: 'BibTeX', panel: bibtexSection(p) },
       ]),
     );
@@ -750,7 +750,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
    * The abstract, summaries, related work, audio summary and Ask AI, as tabs. Every panel is built
    * and the inactive ones are hidden, so that switching tabs keeps audio playing and drafts typed.
    */
-  function paperTabs(tabs: { key: PaperTab; label: string; panel: HTMLElement | string; busy?: boolean }[]): HTMLElement {
+  function paperTabs(tabs: { key: PaperTab; label: string; panel: HTMLElement | string; busy?: boolean; badge?: number }[]): HTMLElement {
     const shown = tabs.filter((t): t is typeof t & { panel: HTMLElement } => typeof t.panel !== 'string');
     if (!shown.some((t) => t.key === activeTab)) activeTab = shown[0].key;
     const buttons = new Map<PaperTab, HTMLButtonElement>();
@@ -772,9 +772,18 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     for (const t of shown) {
       const b = h(
         'button',
-        { class: 'paper-tab', role: 'tab', id: `paper-tab-${t.key}`, 'aria-controls': `paper-panel-${t.key}`, onclick: () => select(t.key) },
+        {
+          class: `paper-tab${t.badge ? ' has-badge' : ''}`,
+          role: 'tab',
+          id: `paper-tab-${t.key}`,
+          'aria-controls': `paper-panel-${t.key}`,
+          'aria-label': t.badge ? `${t.label} (${t.badge})` : undefined,
+          onclick: () => select(t.key),
+        },
         t.label,
         t.busy ? h('span', { class: 'spinner', title: 'Working…' }) : null,
+        // (A count in a small circle, at the tab's top right: the questions asked…)
+        t.badge ? h('span', { class: 'tab-badge', 'aria-hidden': 'true' }, t.badge > 99 ? '99+' : String(t.badge)) : null,
       );
       b.addEventListener('keydown', (e) => {
         const i = shown.findIndex((x) => x.key === t.key);
@@ -1102,7 +1111,15 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     getConfig: () => cfg,
     onPageLink: (n) => navigate(`#/read/${encodeURIComponent(id)}?page=${n}`),
     intro: 'Ask a question about this paper. Its full text is sent to the AI.',
+    // (The tab shows a spinner while the AI answers, and the number of questions asked.)
+    onBusyChange: (busy) => {
+      askBusy = busy;
+      render();
+    },
   });
+  let askBusy = false;
+  /** The questions asked in the paper's conversation (shown on the Ask AI tab). */
+  const askCount = (p: PaperDetail) => conversationOf(p.sidecar.chats).filter((m) => m.role === 'user').length;
 
   function askSection(): HTMLElement | string {
     if (!enabledAIs().length) return '';

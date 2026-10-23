@@ -1200,6 +1200,27 @@ a.related-title:hover {
 .paper-tab:hover {
   color: var(--fg);
 }
+/* A count in a small circle at the tab's top right (questions asked in Ask AI). */
+.paper-tab.has-badge {
+  position: relative;
+  padding-right: 19px;
+}
+.tab-badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
+}
 .paper-tab.active {
   color: var(--fg);
   font-weight: 600;
