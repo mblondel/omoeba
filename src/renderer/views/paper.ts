@@ -517,7 +517,10 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
    */
   function render() {
     const keep = typingIn();
+    // (The page stays where it was scrolled to, its content being drawn again.)
+    const top = scroller.scrollTop;
     renderPage();
+    if (scroller.scrollTop !== top) scroller.scrollTop = top;
     if (keep) keep();
   }
 

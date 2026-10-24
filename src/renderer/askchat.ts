@@ -59,6 +59,8 @@ const shortTitle = (t: string) => {
 
 export function createAskChat(opts: AskChatOptions): AskChat {
   let aiId: string | null = null;
+  /** After the next redraw, show: the answer being written, or the answer that arrived. */
+  let scrollTo: 'pending' | 'answer' | null = null;
   let job: { jobId: string; question: string; ai: string; papers: { id: string; title: string }[] } | null = null;
   let context: string | null = null;
   /** Other papers of the library mentioned (@…) in the question being written. */
@@ -323,10 +325,12 @@ export function createAskChat(opts: AskChatOptions): AskChat {
     context = null;
     mentions = [];
     if (!q) input.value = '';
+    scrollTo = 'pending';
     opts.onBusyChange?.(true);
     refresh();
     try {
       opts.setPaper(await api.askAI(opts.id, aiId, question, { page: opts.page?.(), selection, papers }, jobId));
+      scrollTo = 'answer';
     } catch (e) {
       if (!/was stopped/.test(errorMessage(e))) toast(errorMessage(e), 'error', 10000);
       if (!q && !input.value) {
@@ -440,7 +444,26 @@ export function createAskChat(opts: AskChatOptions): AskChat {
     renderMentions();
     input.placeholder = 'Ask a question about this paper… (@ to mention another paper; Enter to send)';
     sendBtn.disabled = !!job;
-    msgs.scrollTop = msgs.scrollHeight;
+    // Where to look: the answer being written (just sent), or the beginning of the answer (just
+    // arrived), once laid out (the paper page shows the chat again after this).
+    const target = scrollTo;
+    scrollTo = null;
+    // (Otherwise, as before: the end of the conversation, in the PDF reader's pane.)
+    if (!target) msgs.scrollTop = msgs.scrollHeight;
+    else
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (!root.isConnected) return;
+          if (target === 'pending') msgs.querySelector('.msg.pending')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          else {
+            const answers = msgs.querySelectorAll<HTMLElement>('.msg.assistant');
+            const last = answers[answers.length - 1];
+            // (From its "Claude Code · Opus" line, just above it.)
+            const by = last?.previousElementSibling?.classList.contains('msg-by') ? (last.previousElementSibling as HTMLElement) : last;
+            by?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+          }
+        }),
+      );
   }
 
   /** A paper's page, in a tab of its own. */
