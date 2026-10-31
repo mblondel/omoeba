@@ -135,6 +135,5 @@ export function citationsEntry(p: S2Paper): NonNullable<Sidecar['citations']> {
     count: p.citationCount,
     source: 'semanticscholar',
     url: p.url || `https://www.semanticscholar.org/paper/${p.paperId}`,
-    updatedAt: new Date().toISOString().slice(0, 10),
   };
 }

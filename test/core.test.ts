@@ -477,16 +477,24 @@ test('sidecars: written only when the content changes; empty ones are not kept',
   assert.ok(text1.startsWith('{\n  "omoeba": 1,\n'));
   const mtime1 = (await stat(json)).mtimeMs;
 
-  // Same content (in any key order): not rewritten, updatedAt kept.
+  // No modification date in the file (two computers would conflict on it).
+  assert.equal(sc1.updatedAt, undefined);
+  assert.ok(!text1.includes('updatedAt'));
+
+  // Same content (in any key order): not rewritten.
   await new Promise((r) => setTimeout(r, 20));
-  const sc2 = await updateSidecar(json, { title: 'T', tags: ['b', 'a'] });
-  assert.equal(sc2.updatedAt, sc1.updatedAt);
+  await updateSidecar(json, { title: 'T', tags: ['b', 'a'] });
   assert.equal((await stat(json)).mtimeMs, mtime1);
   assert.equal(await readFile(json, 'utf8'), text1);
 
   // A real change is written, canonically.
   const sc3 = await updateSidecar(json, { notes: 'hello' });
   assert.equal(await readFile(json, 'utf8'), formatSidecar(sc3));
+
+  // A date written by an earlier version: dropped when the file is next written.
+  await writeFile(json, formatSidecar({ ...sc3, updatedAt: '2026-01-01T00:00:00.000Z' }));
+  await updateSidecar(json, { notes: 'hello again' });
+  assert.ok(!(await readFile(json, 'utf8')).includes('updatedAt'));
 
   // Removing the last content removes the file.
   await updateSidecar(json, { tags: null, title: null, notes: null } as never);

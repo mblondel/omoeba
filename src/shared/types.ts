@@ -182,10 +182,12 @@ export interface Sidecar {
   /** The paper's BibTeX entry (fetched from DBLP when first cited from a .tex file), with the same key. */
   bibtex?: BibtexInfo;
   /**
-   * How many papers cite it, according to Semantic Scholar (src/main/citations.ts); `updatedAt`:
-   * the day this count was read (it is looked at again monthly, and written only when it changes).
+   * How many papers cite it, according to Semantic Scholar (src/main/citations.ts); looked at
+   * again monthly, written only when it changes. Without the date it was read (kept on each
+   * computer, in ~/omoeba/citations.json): two computers reading the same count write the same
+   * lines, which git merges. (`updatedAt`: in files of earlier versions.)
    */
-  citations?: { count: number; source: 'semanticscholar'; url?: string; updatedAt: string };
+  citations?: { count: number; source: 'semanticscholar'; url?: string; updatedAt?: string };
   /** Who produced title/authors/institutions ("pdf", "user", "ai:<id>", "reference": from the reference list of a paper citing it). */
   metadataSource?: string;
   /**
@@ -213,6 +215,7 @@ export interface Sidecar {
   };
   /** Ask-AI chat history per AI. */
   chats?: Record<string, ChatMessage[]>;
+  /** Written by earlier versions on each save (never read; dropped when the file is next written). */
   updatedAt?: string;
   /** Unknown fields are preserved. */
   [key: string]: unknown;

@@ -241,8 +241,9 @@ export function sameSidecarContent(a: Sidecar, b: Sidecar): boolean {
  * a key set to null is removed.
  *
  * To keep synced libraries (git, Google Drive) quiet, the file is only written when its
- * content changes (`updatedAt` is bumped only then), and a sidecar left with no content is
- * removed rather than written.
+ * content changes, and a sidecar left with no content is removed rather than written. No
+ * modification date is written in it (an `updatedAt` of earlier versions is dropped when the
+ * file is next written): two computers changing the same paper would always conflict on it.
  */
 export async function updateSidecar(jsonPath: string, patch: Partial<Sidecar>): Promise<Sidecar> {
   return withLock(jsonPath, async () => {
@@ -274,7 +275,7 @@ export async function updateSidecar(jsonPath: string, patch: Partial<Sidecar>): 
       return { omoeba: 1 };
     }
     if (state === 'ok' && sameSidecarContent(cur, next)) return cur;
-    next.updatedAt = new Date().toISOString();
+    delete next.updatedAt;
     await writeTextAtomic(jsonPath, formatSidecar(next));
     return next;
   });

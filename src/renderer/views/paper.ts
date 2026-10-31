@@ -879,7 +879,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
               {
                 class: 'citations-link',
                 href: c.url,
-                title: `According to Semantic Scholar (${c.updatedAt}). Open the paper there.`,
+                title: `According to Semantic Scholar${c.updatedAt ? ` (${c.updatedAt})` : ''}. Open the paper there.`,
                 onclick: (e: Event) => {
                   e.preventDefault();
                   api.openExternal(c.url!).catch((err) => toast(errorMessage(err), 'error'));
@@ -887,7 +887,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
               },
               label,
             )
-          : h('span', { title: `According to Semantic Scholar (${c.updatedAt})` }, label),
+          : h('span', { title: `According to Semantic Scholar${c.updatedAt ? ` (${c.updatedAt})` : ''}` }, label),
       );
     }
     // Google Scholar (no API: its count is seen there, by the user): a search for the exact title.
