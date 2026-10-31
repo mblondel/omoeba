@@ -3,7 +3,7 @@ import type { AIProvider, Config, FigureRef, JobStep, PaperDetail, RelatedPaper,
 import { api, newJobId } from '../api';
 import { clear, confirmDialog, errorMessage, formatAuthors, h, icon, iconButton, toast, tagColor, setTagPalette } from '../dom';
 import { mountMarkdown } from '../markdown';
-import { closePaperTabs, navigate, refreshConfig, isActiveView, openSearchTab } from '../app';
+import { closePaperTabs, navigate, openPaperIds, refreshConfig, isActiveView, openSearchTab } from '../app';
 import { fileStemForTitle } from '../../shared/filenames';
 import { aiChoiceName, aiChoices, conversationOf } from '../../shared/aichoices';
 import { DOC_TYPES, DOC_TYPE_LABELS, docTypeOf, isCitedType, type DocType } from '../../shared/doctype';
@@ -403,7 +403,67 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     const ext = /\.pdf$/i.exec(p.fileName)?.[0] ?? '.pdf';
     const stem = p.fileName.slice(0, p.fileName.length - ext.length);
     const wrap = h('span', { class: 'paper-file mono small', title: p.pdfPath });
-    const folder = () => h('span', { class: 'paper-file-folder' }, p.folder + '/');
+    // The folder: its last part can be renamed (not a library folder itself: "papers/").
+    const folder = () => {
+      const cut = p.folder.lastIndexOf('/');
+      if (cut < 0) return h('span', { class: 'paper-file-folder' }, p.folder + '/');
+      const name = p.folder.slice(cut + 1);
+      return h(
+        'span',
+        { class: 'paper-file-folder' },
+        p.folder.slice(0, cut + 1),
+        h(
+          'span',
+          {
+            class: 'paper-folder-name',
+            tabIndex: 0,
+            title: `Click to rename the folder “${name}” (the papers in it move with it)`,
+            onclick: () => editFolder(cut, name),
+            onkeydown: (e: KeyboardEvent) => e.key === 'Enter' && editFolder(cut, name),
+          },
+          name,
+        ),
+        '/',
+      );
+    };
+    /** The folder's name in a field (as the file name): Enter renames it, Escape or leaving cancels. */
+    function editFolder(cut: number, name: string) {
+      const input = h('input', {
+        type: 'text',
+        class: 'paper-file-input mono',
+        spellcheck: false,
+        title: 'Enter: rename the folder (the papers in it, and in its subfolders, move with it) · Escape: cancel',
+      });
+      input.value = name;
+      input.size = Math.max(12, Math.min(50, name.length + 2));
+      let busy = false;
+      const commit = async () => {
+        const v = input.value.trim();
+        if (!v || v === name) return show();
+        busy = true;
+        input.disabled = true;
+        try {
+          await renameFolder(v);
+        } catch (e) {
+          toast(errorMessage(e), 'error', 8000);
+          busy = false;
+          input.disabled = false;
+          input.focus();
+        }
+      };
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          void commit();
+        } else if (e.key === 'Escape') show();
+      });
+      input.addEventListener('input', () => (input.size = Math.max(12, Math.min(50, input.value.length + 2))));
+      input.addEventListener('blur', () => !busy && show());
+      wrap.replaceChildren(h('span', { class: 'paper-file-folder' }, p.folder.slice(0, cut + 1)), input, '/', h('span', { class: 'paper-file-name-static' }, stem), ext);
+      // (The cursor at the end of the name, nothing selected.)
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
     const show = () =>
       wrap.replaceChildren(
         folder(),
@@ -466,8 +526,9 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
           )
         : null;
       wrap.replaceChildren(folder(), input, ext, fromTitle ?? '');
+      // (The cursor at the end of the name, nothing selected.)
       input.focus();
-      input.select();
+      input.setSelectionRange(input.value.length, input.value.length);
     }
     show();
     return wrap;
@@ -484,6 +545,23 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     toast(`Renamed to ${newId.split(/[\\/]/).pop()}`);
     navigate(`#/paper/${encodeURIComponent(newId)}`);
     closePaperTabs(id);
+  }
+
+  /** Rename the folder holding this paper; the papers in it move with it (their tabs follow). */
+  async function renameFolder(name: string) {
+    // Readers open on these papers close first (they save their annotations under the current names).
+    const prefix = id.slice(0, id.length - (paper?.fileName.length ?? 0));
+    for (const t of openPaperIds()) if (t.startsWith(prefix)) closePaperTabs(t, 'read');
+    const r = await api.renamePaperFolder(id, name);
+    const moved = new Map(r.moved.map((m) => [m.from, m.to]));
+    toast(`Folder renamed to ${name} (${r.moved.length} paper${r.moved.length === 1 ? '' : 's'} moved)`);
+    // This page, under the paper's new path; other pages of moved papers, closed.
+    const next = moved.get(id);
+    for (const t of openPaperIds()) if (moved.has(t) && t !== id) closePaperTabs(t);
+    if (next) {
+      navigate(`#/paper/${encodeURIComponent(next)}`);
+      closePaperTabs(id);
+    } else render();
   }
 
   /** A clickable name (author, institution) inside an editable field. */
@@ -912,6 +990,33 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     if (!parts.length) return null;
     const line = h('span', { class: 'citations-line' });
     parts.forEach((x, i) => line.append(...(i ? [' · '] : []), x));
+    // The exact count now (the one shown is updated only when it changed substantially).
+    const refresh = h(
+      'button',
+      {
+        class: 'icon-btn citations-refresh',
+        title: 'Get the exact count from Semantic Scholar now (otherwise it is checked monthly, and updated only when it changed substantially)',
+        onclick: async () => {
+          refresh.disabled = true;
+          refresh.classList.add('busy');
+          try {
+            const next = await api.refreshCitations(id, true);
+            if (next && !disposed) {
+              paper = next;
+              const n = next.sidecar.citations?.count;
+              toast(typeof n === 'number' ? `${n.toLocaleString()} citation${n === 1 ? '' : 's'} (Semantic Scholar, now)` : 'Citation count checked.');
+              render();
+            }
+          } catch (e) {
+            toast(errorMessage(e), 'error', 8000);
+            refresh.disabled = false;
+            refresh.classList.remove('busy');
+          }
+        },
+      },
+      icon('refresh', 12),
+    );
+    line.append(refresh);
     return metaRow('quote', 'Citations', line);
   }
 

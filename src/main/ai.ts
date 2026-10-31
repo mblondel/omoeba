@@ -25,6 +25,17 @@ export interface RunOptions {
 /** The CLI did not accept the options that report its progress (e.g. an older version). */
 class UnknownOptionError extends Error {}
 
+/** The command-line tool is no longer signed in to its account (it says so in many ways). */
+export const SIGNED_OUT = /failed to authenticate|oauth|not (?:logged|signed) in|please (?:log|sign) ?in|invalid api key|authentication (?:failed|required|error)|unauthori[sz]ed|\b401\b|login required/i;
+
+/** What to do when the tool is signed out (it cannot be done from Omoeba: in a terminal). */
+function signInHint(ai: AIProvider, message: string): string {
+  if (!SIGNED_OUT.test(message)) return '';
+  const tool = path.basename(ai.command || ai.id).replace(/\.(exe|cmd)$/i, '');
+  const how = tool === 'claude' ? 'run “claude” and type /login' : tool === 'codex' ? 'run “codex login”' : tool === 'agy' ? 'run “agy” and sign in' : `run “${tool}” and sign in`;
+  return `\nIt is no longer signed in to its account: in Terminal, ${how}, then try again.`;
+}
+
 /** The CLI was ended by a signal that Omoeba did not send (worth trying again). */
 export class AIEndedError extends Error {}
 
@@ -134,7 +145,7 @@ async function runOnce(ai: AIProvider, rawPrompt: string, opts: RunOptions, form
         if (!killedByTimeout && !ended && code !== 0 && isUnknownOptionError(err)) {
           return reject(new UnknownOptionError(err.trim().split('\n').slice(-3).join('\n')));
         }
-        if (!killedByTimeout && !ended && parsed.error) return reject(new Error(`${ai.name}: ${parsed.error}`));
+        if (!killedByTimeout && !ended && parsed.error) return reject(new Error(`${ai.name}: ${parsed.error}${signInHint(ai, parsed.error)}`));
       }
       if (code === 0 && out.trim() && format === 'text') resolve(out.trim());
       else if (code === 0 && !killedByTimeout && !ended) {
@@ -152,7 +163,7 @@ async function runOnce(ai: AIProvider, rawPrompt: string, opts: RunOptions, form
       else {
         // (Its progress events are not the error: what it wrote on stderr, or its last words.)
         const tail = (err || (format === 'text' ? out : parsed?.final ?? '')).trim().split('\n').slice(-8).join('\n');
-        reject(new Error(`${ai.name} exited with code ${code}.${tail ? '\n' + tail : ''}`));
+        reject(new Error(`${ai.name} exited with code ${code}.${tail ? '\n' + tail : ''}${signInHint(ai, tail)}`));
       }
     });
     child.stdin.on('error', () => undefined);

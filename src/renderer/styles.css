@@ -839,11 +839,14 @@ select.doc-type-select:focus {
   max-width: 100%;
   overflow-wrap: anywhere;
 }
+.paper-folder-name,
 .paper-file-name {
   cursor: text;
   border-radius: 4px;
   padding: 1px 2px;
 }
+.paper-folder-name:hover,
+.paper-folder-name:focus-visible,
 .paper-file-name:hover,
 .paper-file-name:focus-visible {
   background: var(--hover, color-mix(in srgb, var(--fg) 7%, transparent));
@@ -911,6 +914,16 @@ input.paper-file-input {
 svg.labeled-icon {
   pointer-events: auto;
   cursor: help;
+}
+.citations-refresh {
+  width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  vertical-align: -3px;
+  color: var(--muted);
+}
+.citations-refresh.busy .icon {
+  animation: spin 0.9s linear infinite;
 }
 .citations-label {
   display: inline-flex;

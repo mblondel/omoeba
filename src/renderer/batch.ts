@@ -285,6 +285,13 @@ async function processPaper(item: AIBacklogItem): Promise<'ok' | 'failed' | 'lim
       state.current = null;
       return 'retry';
     }
+    // The AI's tool signed out: every paper would fail the same way. Stopped, with what to do.
+    if (/no longer signed in to its account/.test(message)) {
+      state.phase = 'paused';
+      state.current = null;
+      state.problem = message.split('\n').slice(-1)[0].replace(/^It is/, `${state.ai?.name ?? 'The AI'} is`) + ' Then press Resume.';
+      return 'stopped';
+    }
     const until = limitResetsAt(message);
     if (until !== null) {
       // The usage limit: this paper again, later.

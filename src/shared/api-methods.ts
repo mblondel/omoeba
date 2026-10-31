@@ -26,6 +26,7 @@ export const API_METHODS: (keyof OmoebaAPI)[] = [
   'trashDuplicate',
   'findProbableDuplicates',
   'renamePaper',
+  'renamePaperFolder',
   'trashPaper',
   'recordPdfFacts',
   'fetchMissingPdf',

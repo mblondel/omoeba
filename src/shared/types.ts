@@ -694,6 +694,11 @@ export interface OmoebaAPI {
   trashDuplicate(id: string): Promise<void>;
   /** Rename a paper's PDF (in its folder) with its .json, .skim and audio files; returns its new id. */
   renamePaper(id: string, newName: string): Promise<string>;
+  /**
+   * Rename the folder holding this paper (within its parent folder; not a library folder itself).
+   * The papers in it (and its subfolders) move with it: returns their old and new ids.
+   */
+  renamePaperFolder(id: string, newName: string): Promise<{ folder: string; moved: { from: string; to: string }[] }>;
   /** Move a paper's PDF, .json, .skim and audio files to the Trash. */
   trashPaper(id: string): Promise<void>;
   /**
@@ -722,8 +727,11 @@ export interface OmoebaAPI {
   generateSummary(id: string, aiId: string, jobId?: string): Promise<PaperDetail>;
   /** The papers (with their PDF) whose metadata or summary the AI has not written yet. */
   aiBacklog(): Promise<AIBacklogItem[]>;
-  /** The paper's citation count from Semantic Scholar, if not read lately: the paper if it changed, else null. */
-  refreshCitations(id: string): Promise<PaperDetail | null>;
+  /**
+   * The paper's citation count from Semantic Scholar, if not read lately (written only when it
+   * changed substantially): the paper if it changed, else null. `force`: now, and the exact count.
+   */
+  refreshCitations(id: string, force?: boolean): Promise<PaperDetail | null>;
   /** `context.papers`: other papers of the library mentioned in the question (their ids). */
   askAI(
     id: string,

@@ -107,6 +107,7 @@ import {
   synthesisFileName,
   writeNewFile,
   renamePaperInSyntheses,
+  renamePapersInSyntheses,
 } from './syntheses';
 import { cleanPdfStem } from '../shared/filenames';
 import { downloadPdf, NotPdfError, uniquePath, writeFileAtomic } from './download';
@@ -1393,6 +1394,76 @@ export class OmoebaService implements OmoebaAPI {
   }
 
   /**
+   * Rename the folder holding a paper (in place: same parent folder). Everything in it moves
+   * with it, so the papers' .json files need no change (they name no folder). What names the
+   * papers by their path follows: the reading history, the syntheses listing them, papers
+   * mentioned in Ask AI conversations (in any paper's .json), and views still open on them.
+   */
+  async renamePaperFolder(id: string, newName: string): Promise<{ folder: string; moved: { from: string; to: string }[] }> {
+    const pdfPath = this.checkId(id);
+    const dir = path.dirname(pdfPath);
+    const name = String(newName ?? '').trim();
+    if (!name || name === '.' || name === '..' || /[/\\:]/.test(name) || name.startsWith('.'))
+      throw new Error('Choose a folder name without "/", ":" or a leading dot.');
+    if (this.config.folders.some((r) => path.resolve(r) === path.resolve(dir))) throw new Error('This is a library folder itself: it can be renamed in Finder (then chosen again in Settings).');
+    if (!this.inLibrary(dir)) throw new Error('This folder is not in your library.');
+    const target = path.join(path.dirname(dir), name);
+    if (target === dir) return { folder: dir, moved: [] };
+    // (Only a change of case: the same folder on macOS, renamed in place.)
+    const sameFolder = target.toLowerCase() === dir.toLowerCase();
+    if (!sameFolder && (await fs.stat(target).catch(() => null))) throw new Error(`A folder named “${name}” is already there.`);
+
+    // The papers inside (and in its subfolders), from the index or by scanning.
+    const inside = (p: string) => p.startsWith(dir + path.sep);
+    const rows = this.index.list();
+    const papers = rows ? rows.filter((r) => inside(r.id)).map((r) => r.id) : (await scanFolders([dir])).map((f) => pdfPathOf(f.base));
+    // (Work still being saved on them: done first.)
+    await Promise.all(papers.map((p) => this.paperOps.get(p)?.catch(() => undefined)));
+
+    await fs.rename(dir, target);
+    const moves = new Map(papers.map((p) => [p, path.join(target, path.relative(dir, p))]));
+    for (const [from, to] of moves) {
+      this.renamedTo.set(from, to);
+      this.renamedTo.delete(to);
+      this.trashed.delete(to);
+      const seen = this.skimSeen.get(from);
+      this.skimSeen.delete(from);
+      if (seen !== undefined) this.skimSeen.set(to, seen);
+      this.history.renamed(from, to);
+    }
+    await renamePapersInSyntheses(this.config.folders, moves).catch((e) => console.error('Syntheses not updated after a folder rename:', e));
+    await this.renameMentions(moves).catch((e) => console.error('Ask AI mentions not updated after a folder rename:', e));
+    if (this.index.available) this.index.requestSync(0);
+    else this.platform.emit({ type: 'library-changed' });
+    return { folder: target, moved: [...moves].map(([from, to]) => ({ from, to })) };
+  }
+
+  /** Papers mentioned in Ask AI conversations (by their path), in any paper's .json: their new paths. */
+  private async renameMentions(moves: Map<string, string>): Promise<void> {
+    if (!moves.size) return;
+    const rows = this.index.list() ?? [];
+    for (const r of rows) {
+      if (!r.hasJson) continue;
+      const jsonPath = jsonPathOf(r.id);
+      // (Moved papers' own .json files are under their new name now.)
+      const at = moves.has(r.id) ? jsonPathOf(moves.get(r.id)!) : jsonPath;
+      const sc = await readSidecar(at).catch(() => null);
+      if (!sc?.chats) continue;
+      let changed = false;
+      const chats: Record<string, ChatMessage[]> = {};
+      for (const [k, msgs] of Object.entries(sc.chats)) {
+        if (!Array.isArray(msgs)) continue;
+        chats[k] = msgs.map((m) => {
+          if (!m.papers?.some((p) => moves.has(p.id))) return m;
+          changed = true;
+          return { ...m, papers: m.papers.map((p) => (moves.has(p.id) ? { ...p, id: moves.get(p.id)! } : p)) };
+        });
+      }
+      if (changed) await updateSidecar(at, { chats });
+    }
+  }
+
+  /**
    * The library's PDFs that are on this computer, with their size (from the index when there is
    * one). PDFs not downloaded from the cloud are left out: reading them would download them.
    */
@@ -1810,26 +1881,37 @@ export class OmoebaService implements OmoebaAPI {
   }
 
   /** The count found, written in the .json if it changed (the patch, or null). */
-  private citationsPatch(sc: Sidecar, p: S2Paper | null): Partial<Sidecar> | null {
+  /**
+   * The count found, as a patch of the .json, or null if it is not worth writing: to keep git
+   * quiet, a count already there is replaced only when it changed substantially (by 10% and at
+   * least 5), unless `exact` (a refresh asked for by the user).
+   */
+  private citationsPatch(sc: Sidecar, p: S2Paper | null, exact = false): Partial<Sidecar> | null {
     if (!p) return null;
     const entry = citationsEntry(p);
-    if (sc.citations && sc.citations.count === entry.count && sc.citations.url === entry.url) return null;
+    const old = sc.citations;
+    if (old && typeof old.count === 'number' && old.url === entry.url) {
+      const delta = Math.abs(entry.count - old.count);
+      if (delta === 0 || (!exact && (delta < 5 || delta < 0.1 * old.count))) return null;
+    }
     return { citations: entry };
   }
 
-  async refreshCitations(id: string): Promise<PaperDetail | null> {
+  async refreshCitations(id: string, force = false): Promise<PaperDetail | null> {
     const pdfPath = this.checkId(id);
     const checked = await this.checkedCitations();
     const d = await this.getPaper(pdfPath);
-    if (!this.citationsDue(checked, pdfPath, d.sidecar)) return null;
+    if (!force && !this.citationsDue(checked, pdfPath, d.sidecar)) return null;
     const keys = citationKeysOf(d.sidecar, pdfPath);
     let found: S2Paper | null = null;
     if (keys.id) found = (await papersByIds([keys.id]))[0];
     if (!found && keys.title && !d.titleIsFallback) found = await paperByTitle(keys.title, keys.year);
     checked.set(pdfPath, Date.now());
     void this.saveCheckedCitations();
-    const patch = this.citationsPatch(d.sidecar, found);
-    return patch ? this.updateSidecar(pdfPath, patch) : null;
+    // (Asked for: the exact count, and an error if it cannot be found.)
+    if (force && !found) throw new Error('Semantic Scholar does not know this paper (by its arXiv id, DOI or title).');
+    const patch = this.citationsPatch(d.sidecar, found, force);
+    return patch ? this.updateSidecar(pdfPath, patch) : force ? d : null;
   }
 
   /**

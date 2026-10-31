@@ -104,6 +104,11 @@ export async function listSynthesisFiles(libraryFolders: string[]): Promise<Synt
  * changes; the text is left as it is). Returns how many were updated.
  */
 export async function renamePaperInSyntheses(libraryFolders: string[], from: string, to: string): Promise<number> {
+  return renamePapersInSyntheses(libraryFolders, new Map([[from, to]]));
+}
+
+/** The same for several papers at once (a folder renamed): old path → new path. */
+export async function renamePapersInSyntheses(libraryFolders: string[], moves: Map<string, string>): Promise<number> {
   let n = 0;
   for (const root of libraryFolders) {
     const dir = synthesesDir(root);
@@ -117,7 +122,8 @@ export async function renamePaperInSyntheses(libraryFolders: string[], from: str
       let changed = false;
       for (const p of parsed.meta.papers) {
         const abs = path.isAbsolute(p.path) ? p.path : path.resolve(root, ...p.path.split('/'));
-        if (abs !== from) continue;
+        const to = moves.get(abs);
+        if (!to) continue;
         p.path = path.isAbsolute(p.path) ? to : path.relative(path.resolve(root), to).split(path.sep).join('/');
         changed = true;
       }

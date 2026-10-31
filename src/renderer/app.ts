@@ -488,6 +488,11 @@ export function openDuplicatesTab() {
   openTab('duplicates');
 }
 
+/** The papers that tabs are open on (their pages, their PDFs). */
+export function openPaperIds(): string[] {
+  return [...new Set(tabs.map((t) => t.paperId).filter((x): x is string => !!x))];
+}
+
 /** Close the tabs showing a paper (e.g. before it is moved to the Trash). */
 export function closePaperTabs(paperId: string, kind?: TabKind) {
   for (const t of tabs.filter((t) => t.paperId === paperId && (!kind || t.kind === kind))) closeTab(t);
