@@ -1,5 +1,7 @@
 /** Renderer entry: tabs and app-wide actions. */
 import type { Config, SyncTexPosition } from '../shared/types';
+// Copying rendered maths (KaTeX) copies its LaTeX source, as $…$ or $$…$$, with the text around it.
+import 'katex/contrib/copy-tex';
 import { openFindBar } from './findbar';
 import { api } from './api';
 import { clear, errorMessage, h, icon, installTooltips, promptDialog, toast } from './dom';
