@@ -110,7 +110,7 @@ import {
   renamePapersInSyntheses,
 } from './syntheses';
 import { cleanPdfStem } from '../shared/filenames';
-import { downloadPdf, NotPdfError, uniquePath, writeFileAtomic } from './download';
+import { downloadPdf, NotPdfError, toPdfUrl, uniquePath, writeFileAtomic } from './download';
 import { yearOf, type WebClip } from './webclip';
 import { RecentStore, createTextFile, insideRoots, isEditable, linkTarget, listFolder, readTextFile, writeTextFile } from './textfiles';
 import * as latex from './latex';
@@ -588,10 +588,72 @@ export class OmoebaService implements OmoebaAPI {
     return dir;
   }
 
-  async addFromUrl(url: string, folder: string): Promise<PaperDetail> {
+  /** The papers of the library (their PDF paths), those moved to the Trash left out. */
+  private async libraryIds(): Promise<string[]> {
+    const folders = new Set(this.config.folders);
+    const rows = this.index.list()?.filter((r) => folders.has(r.root));
+    const ids = rows ? rows.map((r) => r.id) : (await scanFolders(this.config.folders)).map((f) => pdfPathOf(f.base));
+    return ids.filter((id) => !this.trashed.has(id));
+  }
+
+  /** Whether a paper is still there (its PDF, or its .json when the PDF is missing). */
+  private async paperExists(id: string): Promise<boolean> {
+    return !!((await fs.stat(id).catch(() => null)) ?? (await fs.stat(jsonPathOf(id)).catch(() => null)));
+  }
+
+  /**
+   * The paper of the library that an address about to be added leads to: the same arXiv paper
+   * (whatever its version), or null. Checked before downloading.
+   */
+  private async existingForUrl(url: string): Promise<string | null> {
+    const arxiv = arxivIdOf(toPdfUrl(url))?.id.toLowerCase();
+    if (!arxiv) return null;
+    const folders = new Set(this.config.folders);
+    const rows = this.index.list()?.filter((r) => folders.has(r.root));
+    let ids: string[];
+    if (rows) {
+      ids = rows.filter((r) => (r.meta.arxiv ?? arxivIdOf(r.info?.arxivId)?.id)?.toLowerCase() === arxiv).map((r) => r.id);
+    } else {
+      ids = [];
+      for (const f of await scanFolders(this.config.folders)) {
+        if (arxivIdOf((await this.sidecarFor(f)).source?.url)?.id.toLowerCase() === arxiv) ids.push(pdfPathOf(f.base));
+      }
+    }
+    for (const id of ids) if (!this.trashed.has(id) && (await this.paperExists(id))) return id;
+    return null;
+  }
+
+  /** A PDF of the library with exactly this content, or null. */
+  private async existingCopyOf(data: Buffer): Promise<string | null> {
+    const sha256 = createHash('sha256').update(data).digest('hex');
+    for (const c of await this.localPdfs()) {
+      if (c.size !== data.length || this.trashed.has(c.path)) continue;
+      const h = await this.hashes.hash(c.path);
+      if (h && h.size === data.length && h.sha256 === sha256) return c.path;
+    }
+    return null;
+  }
+
+  /** A web page of the library saved from this address under this file name (or name-1, name-2…), or null. */
+  private async existingWebPage(url: string, fileName: string): Promise<string | null> {
+    const address = (u: string | undefined) => (u ?? '').trim().replace(/#.*$/, '').replace(/\/$/, '').toLowerCase();
+    const stem = fileName.replace(/\.pdf$/i, '');
+    for (const id of await this.libraryIds()) {
+      const name = path.basename(id, '.pdf');
+      if (name !== stem && !(name.startsWith(stem + '-') && /^\d+$/.test(name.slice(stem.length + 1)))) continue;
+      const sc = await readSidecar(jsonPathOf(id)).catch(() => null);
+      if (sc?.source?.url && address(sc.source.url) === address(url)) return id;
+    }
+    return null;
+  }
+
+  async addFromUrl(url: string, folder: string): Promise<{ paper: PaperDetail; existing: boolean }> {
     const dir = path.resolve(folder || this.config.folders[0] || '');
     if (!this.inLibrary(dir)) throw new Error('Choose a folder inside your library to download into.');
     if (!(await fs.stat(dir).catch(() => null))?.isDirectory()) throw new Error('That folder does not exist anymore.');
+    // Already in the library (the same arXiv paper): nothing is downloaded.
+    const known = await this.existingForUrl(url);
+    if (known) return { paper: await this.getPaper(known), existing: true };
     let got: Awaited<ReturnType<typeof downloadPdf>>;
     try {
       got = await downloadPdf(url);
@@ -601,6 +663,9 @@ export class OmoebaService implements OmoebaAPI {
       throw e;
     }
     const { data, fileName, finalUrl } = got;
+    // Already in the library (the very same PDF): nothing is added.
+    const copy = await this.existingCopyOf(data);
+    if (copy) return { paper: await this.getPaper(copy), existing: true };
     const named = await this.downloadName(url, finalUrl, fileName, data);
     const pdfPath = await uniquePath(dir, named.fileName);
     await writeFileAtomic(pdfPath, data);
@@ -609,7 +674,7 @@ export class OmoebaService implements OmoebaAPI {
       ...(named.title ? { title: named.title } : {}),
     });
     this.newFiles(pdfPath);
-    return this.getPaper(pdfPath);
+    return { paper: await this.getPaper(pdfPath), existing: false };
   }
 
   /**
@@ -617,9 +682,12 @@ export class OmoebaService implements OmoebaAPI {
    * sidebars), named after its title, its .json with its details (a blog post, its author, date,
    * site, description) and its address.
    */
-  private async addWebPage(url: string, dir: string): Promise<PaperDetail> {
+  private async addWebPage(url: string, dir: string): Promise<{ paper: PaperDetail; existing: boolean }> {
     const { clip, pdf } = await this.platform.captureWebPage!(url);
     const title = clip.title.replace(/\s+/g, ' ').trim() || new URL(url).hostname;
+    // Already in the library (saved from the same address, under the same title): nothing is added.
+    const known = await this.existingWebPage(url, fileNameForTitle(title));
+    if (known) return { paper: await this.getPaper(known), existing: true };
     const pdfPath = await uniquePath(dir, fileNameForTitle(title));
     await writeFileAtomic(pdfPath, pdf);
     const year = yearOf(clip.published);
@@ -636,7 +704,7 @@ export class OmoebaService implements OmoebaAPI {
       source: { url, downloadedAt: new Date().toISOString() },
     });
     this.newFiles(pdfPath);
-    return this.getPaper(pdfPath);
+    return { paper: await this.getPaper(pdfPath), existing: false };
   }
 
   /**

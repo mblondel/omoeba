@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { OmoebaService, type Platform } from '../src/main/api';
@@ -118,5 +119,55 @@ test('duplicates: a copy goes to the Trash with its sidecar; the last copy never
     svc.dispose();
     for (const d of [lib, trashDir, process.env.OMOEBA_HOME!]) await rm(d, { recursive: true, force: true });
     delete process.env.OMOEBA_HOME;
+  }
+});
+
+test('add from URL: a paper already in the library is not added again (same PDF, same arXiv paper)', async () => {
+  const lib = await tmp('omoeba-add-lib-');
+  process.env.OMOEBA_HOME = await tmp('omoeba-add-app-');
+  const platform: Platform = {
+    pickFolders: async () => [],
+    pickFolder: async () => null,
+    revealInFolder: async () => undefined,
+    openExternal: async () => undefined,
+    trashItem: async () => undefined,
+    emit: () => undefined,
+    workerScript: '/nonexistent-worker.js',
+  };
+  const svc = new OmoebaService(platform);
+  (svc as unknown as { config: Config }).config = { ...defaultConfig(), folders: [lib] };
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/pdf' });
+    res.end(req.url === '/known.pdf' ? pdf('the paper') : pdf('a new paper'));
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  try {
+    await mkdir(path.join(lib, 'sub'));
+    const have = path.join(lib, 'sub', 'have.pdf');
+    await writeFile(have, pdf('the paper'));
+    const fromArxiv = path.join(lib, 'fromarxiv.pdf');
+    await writeFile(fromArxiv, pdf('an arXiv paper'));
+    await updateSidecar(path.join(lib, 'fromarxiv.json'), { source: { url: 'https://arxiv.org/abs/2301.00001v1', downloadedAt: '' } });
+
+    // The very same PDF, from another address and into another folder: the one in the library.
+    const same = await svc.addFromUrl(`${base}/known.pdf`, lib);
+    assert.equal(same.existing, true);
+    assert.equal(same.paper.id, have);
+    assert.deepEqual((await readdir(lib)).sort(), ['fromarxiv.json', 'fromarxiv.pdf', 'sub']);
+
+    // The same arXiv paper (another version): found before anything is downloaded.
+    const arxiv = await svc.addFromUrl('https://arxiv.org/pdf/2301.00001v3', lib);
+    assert.equal(arxiv.existing, true);
+    assert.equal(arxiv.paper.id, fromArxiv);
+
+    // A paper that is not there is added.
+    const added = await svc.addFromUrl(`${base}/new.pdf`, lib);
+    assert.equal(added.existing, false);
+    assert.equal(added.paper.id, path.join(lib, 'new.pdf'));
+    assert.ok((await stat(path.join(lib, 'new.pdf'))).size > 0);
+  } finally {
+    server.close();
+    for (const d of [lib, process.env.OMOEBA_HOME!]) await rm(d, { recursive: true, force: true });
   }
 });

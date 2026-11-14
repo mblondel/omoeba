@@ -642,7 +642,12 @@ export interface OmoebaAPI {
   redownload(id: string): Promise<PaperDetail>;
   /** Native folder dialog (starting at `start` or the library folder) to choose where to save a PDF. */
   pickSaveFolder(start?: string): Promise<string | null>;
-  addFromUrl(url: string, folder: string): Promise<PaperDetail>;
+  /**
+   * Add a PDF, or a web page (saved as a PDF), to the library. If it is already there (the same
+   * arXiv paper, the same PDF or the same web page), nothing is added: `existing` is true and
+   * `paper` is the one in the library.
+   */
+  addFromUrl(url: string, folder: string): Promise<{ paper: PaperDetail; existing: boolean }>;
   /** Rename a tag in all papers (merging it into `to` if that tag exists); returns how many papers changed. */
   renameTag(from: string, to: string): Promise<{ changed: number }>;
   /**

@@ -598,8 +598,8 @@ export async function addPaperFromUrl() {
   }
   toast('Adding… (a web page takes a few seconds: its article is saved as a PDF)', 'info', 15000);
   try {
-    const p = await api.addFromUrl(url, folder);
-    toast(`Added ${p.fileName} to ${p.folder}`);
+    const { paper: p, existing } = await api.addFromUrl(url, folder);
+    toast(existing ? 'The paper is already in your library' : `Added ${p.fileName} to ${p.folder}`);
     navigate(`#/paper/${encodeURIComponent(p.id)}`);
   } catch (e) {
     toast(errorMessage(e), 'error', 8000);
