@@ -836,6 +836,7 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     if (!shown.some((t) => t.key === activeTab)) activeTab = shown[0].key;
     const buttons = new Map<PaperTab, HTMLButtonElement>();
     const select = (key: PaperTab, focus = false) => {
+      const from = activeTab;
       activeTab = key;
       // (After this render: it renders the page again.)
       if (key === 'related') queueMicrotask(autoRelated);
@@ -848,6 +849,17 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
         t.panel.hidden = !on;
       }
       if (focus) buttons.get(key)!.focus();
+      // Ask AI: the end of the conversation each time the tab is opened (not when the page is
+      // only drawn again with the tab already open).
+      if (key === 'ask' && (from !== 'ask' || !askOpened)) {
+        askOpened = true;
+        const place = () => {
+          if (activeTab === 'ask') scroller.scrollTop = scroller.scrollHeight;
+        };
+        // (Once the panel is on the page: it is not yet while the page is being drawn.)
+        if (bar.isConnected) place();
+        else requestAnimationFrame(place);
+      }
     };
     const bar = h('div', { class: 'paper-tabs', role: 'tablist', 'aria-label': 'Paper sections' });
     for (const t of shown) {
@@ -1226,6 +1238,8 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
     },
   });
   let askBusy = false;
+  /** Whether Ask AI was opened on this page (its end is shown each time the tab is opened). */
+  let askOpened = false;
   /** The questions asked in the paper's conversation (shown on the Ask AI tab). */
   const askCount = (p: PaperDetail) => conversationOf(p.sidecar.chats).filter((m) => m.role === 'user').length;
 

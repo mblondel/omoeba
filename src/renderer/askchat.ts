@@ -69,6 +69,16 @@ export function createAskChat(opts: AskChatOptions): AskChat {
   const root = h('div', { class: 'ask-chat' });
   const toolbar = h('div', { class: 'pane-toolbar' });
   const msgs = h('div', { class: 'chat' });
+  /**
+   * Where the conversation is scrolled to (in the PDF reader's pane, where it scrolls by itself):
+   * its end each time the chat is opened (see `refresh` below), and where the reader left it
+   * when the chat redraws itself meanwhile (another AI chosen, a passage removed…).
+   */
+  let seen = false;
+  let top = 0;
+  msgs.addEventListener('scroll', () => {
+    if (msgs.isConnected) top = msgs.scrollTop;
+  });
   const ctxSlot = h('div', { class: 'ctx-slot' });
   const input = h('textarea', { rows: 3 });
   const sendBtn = h('button', { class: 'icon-btn send', title: 'Send (↩ — ⇧↩ for a new line)', onclick: () => send() }, icon('send'));
@@ -448,9 +458,15 @@ export function createAskChat(opts: AskChatOptions): AskChat {
     // arrived), once laid out (the paper page shows the chat again after this).
     const target = scrollTo;
     scrollTo = null;
-    // (Otherwise, as before: the end of the conversation, in the PDF reader's pane.)
-    if (!target) msgs.scrollTop = msgs.scrollHeight;
-    else
+    // (Otherwise, in the PDF reader's pane: the end of the conversation when the chat is opened,
+    // and where it was left when it redraws itself.)
+    const visible = root.isConnected && msgs.clientHeight > 0;
+    if (!target) {
+      msgs.scrollTop = seen ? top : msgs.scrollHeight;
+      if (visible) top = msgs.scrollTop;
+    }
+    if (visible && (history.length || job)) seen = true;
+    if (target)
       requestAnimationFrame(() =>
         requestAnimationFrame(() => {
           if (!root.isConnected) return;
@@ -509,7 +525,11 @@ export function createAskChat(opts: AskChatOptions): AskChat {
 
   return {
     root,
-    refresh,
+    // (Called when the chat is put on screen: the end of the conversation is shown.)
+    refresh() {
+      seen = false;
+      refresh();
+    },
     setContext(text) {
       context = text?.trim() || null;
       refresh();
