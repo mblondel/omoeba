@@ -195,6 +195,50 @@ function parenthesizePageRefs(root: DocumentFragment) {
 }
 
 /** Render into an element and wire up in-app links (#page=N). */
+const COPY_ICON =
+  '<rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 5.5V3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/>';
+const COPIED_ICON = '<path d="M3 8.5l3.2 3.2L13 4.8"/>';
+
+/**
+ * Code blocks get a button copying their text (at their top right, shown when the pointer is
+ * over the block). The block is wrapped, so the button stays in place when the code scrolls.
+ */
+function addCopyButtons(root: DocumentFragment) {
+  for (const pre of root.querySelectorAll<HTMLElement>('pre')) {
+    const text = () => (pre.textContent ?? '').replace(/\n$/, '');
+    if (!text().trim()) continue;
+    const wrap = document.createElement('div');
+    wrap.className = 'code-block';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'code-copy';
+    btn.title = 'Copy';
+    btn.setAttribute('aria-label', 'Copy');
+    const svg = (paths: string) =>
+      `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+    btn.innerHTML = svg(COPY_ICON);
+    let timer: number | undefined;
+    btn.addEventListener('click', () => {
+      navigator.clipboard.writeText(text()).then(
+        () => {
+          btn.innerHTML = svg(COPIED_ICON);
+          btn.classList.add('copied');
+          btn.title = 'Copied';
+          window.clearTimeout(timer);
+          timer = window.setTimeout(() => {
+            btn.innerHTML = svg(COPY_ICON);
+            btn.classList.remove('copied');
+            btn.title = 'Copy';
+          }, 1500);
+        },
+        (e) => console.warn('Copy failed', e),
+      );
+    });
+    pre.replaceWith(wrap);
+    wrap.append(pre, btn);
+  }
+}
+
 export function mountMarkdown(
   el: HTMLElement,
   src: string,
@@ -257,6 +301,7 @@ export function mountMarkdown(
     fig.append(img, cap);
   }
   parenthesizePageRefs(tpl.content);
+  addCopyButtons(tpl.content);
   el.replaceChildren(tpl.content);
   for (const { img, ref } of pendingFigures) {
     const fallback = () => {

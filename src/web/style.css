@@ -269,6 +269,49 @@ a {
 .markdown code { font-family: var(--mono); font-size: 0.9em; background: var(--bg-sunken); padding: 1px 4px; border-radius: 4px; }
 .markdown pre { background: var(--bg-sunken); padding: 10px 12px; border-radius: 6px; overflow: auto; }
 .markdown pre code { background: none; padding: 0; }
+
+/* A code block with its copy button (shown when the pointer is over the block). */
+.markdown .code-block {
+  position: relative;
+  margin: 1em 0;
+}
+.markdown .code-block pre {
+  margin: 0;
+}
+.markdown .code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg-soft);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.markdown .code-block:hover .code-copy,
+.markdown .code-copy:focus-visible,
+.markdown .code-copy.copied {
+  opacity: 1;
+}
+.markdown .code-copy:hover {
+  color: var(--fg);
+}
+.markdown .code-copy.copied {
+  color: var(--accent);
+}
+@media (hover: none) {
+  .markdown .code-copy {
+    opacity: 1;
+  }
+}
 .markdown blockquote { margin: 0.6em 0; padding: 0 0 0 12px; border-left: 3px solid var(--border-strong); color: var(--fg-soft); }
 .markdown table { border-collapse: collapse; margin: 0.6em 0; }
 .markdown th, .markdown td { border: 1px solid var(--border); padding: 4px 8px; }
