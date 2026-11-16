@@ -1176,6 +1176,44 @@ a.related-title:hover {
   margin-top: 6px;
   text-align: right;
 }
+/* Under the list of an author's papers: the author's papers that are not in the library. */
+.author-more {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  max-height: 55%;
+  border-top: 1px solid var(--border-strong);
+  background: var(--bg);
+}
+.author-more[hidden] {
+  display: none;
+}
+.author-more-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.author-more-head a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.author-more-body {
+  overflow: auto;
+  padding: 2px 16px 10px;
+}
+.author-more-note {
+  margin: 10px 0;
+}
+.author-more-note select {
+  margin-left: 4px;
+  max-width: 100%;
+}
+.author-more .error-text {
+  color: var(--danger);
+}
 .md-editor {
   width: 100%;
   min-height: 320px;

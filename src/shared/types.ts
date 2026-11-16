@@ -122,6 +122,53 @@ export interface RelatedPaper {
   page?: number;
 }
 
+/** An author, as Semantic Scholar knows them. */
+export interface AuthorProfile {
+  /** Semantic Scholar's id of the author. */
+  id: string;
+  name: string;
+  /** How many papers and citations Semantic Scholar counts, and where the author works, if known. */
+  papers?: number;
+  citations?: number;
+  affiliations?: string[];
+  /** The author's page on Semantic Scholar. */
+  url: string;
+}
+
+/** A paper of an author, as Semantic Scholar lists it. */
+export interface AuthorPaper {
+  title: string;
+  authors: string[];
+  year?: number;
+  venue?: string;
+  /** arXiv id (without version) and DOI, if known. */
+  arxiv?: string;
+  doi?: string;
+  /** An open-access PDF, if Semantic Scholar knows one. */
+  pdfUrl?: string;
+  /** The paper's page on Semantic Scholar. */
+  url: string;
+  citations?: number;
+}
+
+/** The papers of an author that the library does not have (see OmoebaAPI.authorPapers). */
+export interface AuthorPapers {
+  /** Whose papers these are (several profiles when Semantic Scholar splits one person). */
+  authors: AuthorProfile[];
+  /**
+   * How the author was found: among the authors of papers of the library ("library": no
+   * confusion with a namesake), by name only ("name"), or chosen by the user ("chosen").
+   */
+  foundBy: 'library' | 'name' | 'chosen';
+  /** Other people with this name (when found by name only). */
+  others: AuthorProfile[];
+  /** Their papers that are not in the library: newest first, then most cited. */
+  missing: AuthorPaper[];
+  /** How many of their papers are in the library, and how many Semantic Scholar lists in all. */
+  inLibrary: number;
+  total: number;
+}
+
 /** Content of the .json sidecar stored next to a PDF. */
 export interface Sidecar {
   omoeba: 1;
@@ -759,6 +806,17 @@ export interface OmoebaAPI {
    * paper's id. Fails if no PDF can be found online.
    */
   downloadRelated(id: string, index: number, folder: string): Promise<string>;
+  /**
+   * The papers of an author that are not in the library, according to Semantic Scholar. The
+   * author is the one of the library's papers by `name`; else the best match for the name, or
+   * the profile `authorId` (one of the `others` offered).
+   */
+  authorPapers(name: string, authorId?: string): Promise<AuthorPapers>;
+  /**
+   * Download one of these papers into `folder` (inside the library); resolves to the new paper's
+   * id (or to the paper's, if it is in the library by now). Fails if no PDF can be found online.
+   */
+  downloadAuthorPaper(paper: AuthorPaper, folder: string): Promise<string>;
 
   // --- File editor: files and folders opened (File › Open File…, Open Folder…), remembered in
   // ~/omoeba/recent.json. Only those files, and files inside those folders, can be read or written.

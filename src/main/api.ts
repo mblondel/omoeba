@@ -42,6 +42,10 @@ import type {
   TextWriteResult,
   PaperDetail,
   PaperSummary,
+  AuthorPaper,
+  AuthorPapers,
+  AuthorProfile,
+  RelatedPaper,
   Sidecar,
   SourceSearchSummary,
   SummaryEntry,
@@ -50,6 +54,8 @@ import * as cfg from './config';
 import { conversationOf, conversationPatch, findAIChoice } from '../shared/aichoices';
 import { listModels, modelListerFor } from './aimodels';
 import { citationKeysOf, citationsEntry, paperByTitle, papersByIds, type S2Paper } from './citations';
+import { authorProfile, authorsFromPapers, mergePapers, papersOfAuthor, searchAuthors } from './authorpapers';
+import { sameAuthor } from '../renderer/authors';
 import { docTypeOf, isCitedType, isDocType, mayReplaceType } from '../shared/doctype';
 import { docTypeFromBibtex, docTypeFromPdf } from './doctype';
 import { pdfIsLandscape } from './pdftext';
@@ -120,7 +126,7 @@ import { byInode, driveFsState, driveIdOf, readDriveFiles } from './gdrive';
 import { appendBibEntry, bibField, bibliographyFiles, fetchDblpBibtex, findBibEntry, freeKey, freeKeyAmong, makeCiteKey, parseBibFile, setBibKey, titleSimilarity } from './cite';
 import { WebLibraryData } from './webdata';
 import { DATA_FILE, libraryFile, sameLibraryData } from '../web/paper';
-import { arxivTitle, fileNameForTitle, matchLibrary, parseRelated, pdfCandidates, relatedPrompt, uninformativeFileName } from './related';
+import { arxivTitle, fileNameForTitle, matchLibrary, parseRelated, pdfCandidates, relatedPrompt, uninformativeFileName, type LibraryEntry } from './related';
 import {
   arxivIdOf,
   arxivStampOf,
@@ -2160,8 +2166,13 @@ export class OmoebaService implements OmoebaAPI {
     const pdfPath = this.checkId(id);
     const papers = (await readSidecar(jsonPathOf(pdfPath))).related?.papers ?? [];
     if (!papers.length) return [];
+    return matchLibrary(papers, await this.libraryEntries(), pdfPath);
+  }
+
+  /** What identifies each paper of the library (titles, arXiv id), to find a paper in it. */
+  private async libraryEntries(): Promise<LibraryEntry[]> {
     const rows = this.index.list();
-    const library = rows
+    return rows
       ? rows.map((r) => ({
           id: r.id,
           titles: [r.meta.title ?? '', r.info?.title ?? ''],
@@ -2175,7 +2186,6 @@ export class OmoebaService implements OmoebaAPI {
             return { id: pdfPathOf(f.base), titles: [sc.title ?? ''], fileName: path.basename(f.base), arxiv: arxivIdOf(sc.source?.url)?.id };
           }),
         );
-    return matchLibrary(papers, library, pdfPath);
   }
 
   async downloadRelated(id: string, index: number, folder: string): Promise<string> {
@@ -2187,7 +2197,16 @@ export class OmoebaService implements OmoebaAPI {
     if (!(await fs.stat(dir).catch(() => null))?.isDirectory()) throw new Error('That folder does not exist anymore.');
     const existing = (await this.matchRelated(pdfPath))[index];
     if (existing) return existing;
+    return this.downloadReference(p, dir);
+  }
+
+  /**
+   * A paper known by its reference (title, arXiv id, URL…), downloaded into `dir`: the new paper's
+   * id. `alsoTry`: addresses tried after the usual ones (kept only if they do serve a PDF).
+   */
+  private async downloadReference(p: RelatedPaper, dir: string, alsoTry: string[] = []): Promise<string> {
     const urls = await pdfCandidates(p);
+    for (const u of alsoTry) if (!urls.includes(u)) urls.push(u);
     if (!urls.length) throw new Error(`No PDF found online for “${p.title}”.`);
     let lastError: unknown;
     for (const url of urls) {
@@ -2214,6 +2233,78 @@ export class OmoebaService implements OmoebaAPI {
       return target;
     }
     throw new Error(`Could not download “${p.title}”: ${(lastError as Error)?.message ?? 'unknown error'}`);
+  }
+
+  // --- Papers of an author that are not in the library (Semantic Scholar)
+
+  /** The library's papers by an author: what identifies each for Semantic Scholar ("arXiv:…", "DOI:…"). */
+  private async citationIdsOfAuthor(name: string): Promise<string[]> {
+    const ids: string[] = [];
+    for (const p of await this.listPapers()) {
+      if (ids.length >= 40) break;
+      if (!p.hasJson || !p.authors.some((a) => sameAuthor(a, name))) continue;
+      const sc = await readSidecar(p.jsonPath).catch(() => null);
+      const id = sc ? citationKeysOf(sc, p.pdfPath).id : undefined;
+      if (id && !ids.includes(id)) ids.push(id);
+    }
+    return ids;
+  }
+
+  async authorPapers(name: string, authorId?: string): Promise<AuthorPapers> {
+    name = String(name ?? '').replace(/\s+/g, ' ').trim();
+    if (!name) throw new Error('Whose papers?');
+    let authors: AuthorProfile[] = [];
+    let others: AuthorProfile[] = [];
+    let foundBy: AuthorPapers['foundBy'] = 'library';
+    if (authorId) {
+      const chosen = await authorProfile(String(authorId));
+      if (!chosen) throw new Error('Semantic Scholar no longer has this author.');
+      authors = [chosen];
+      foundBy = 'chosen';
+    } else {
+      // The author of the library's own papers; several profiles if Semantic Scholar has split them.
+      authors = (await authorsFromPapers(name, await this.citationIdsOfAuthor(name))).slice(0, 3);
+      if (!authors.length) {
+        const found = await searchAuthors(name);
+        if (!found.length) throw new Error(`Semantic Scholar knows no author named “${name}”.`);
+        authors = [found[0]];
+        others = found.slice(1, 12);
+        foundBy = 'name';
+      }
+    }
+    const lists: AuthorPaper[][] = [];
+    for (const a of authors) lists.push(await papersOfAuthor(a.id));
+    const papers = mergePapers(lists);
+    const inLibrary = matchLibrary(
+      papers.map((p) => ({ title: p.title, arxiv: p.arxiv, relation: '' })),
+      await this.libraryEntries(),
+    );
+    const trashed = (id: string | null) => !!id && this.trashed.has(id);
+    const missing = papers.filter((_, i) => !inLibrary[i] || trashed(inLibrary[i]));
+    return { authors, foundBy, others, missing, inLibrary: papers.length - missing.length, total: papers.length };
+  }
+
+  async downloadAuthorPaper(paper: AuthorPaper, folder: string): Promise<string> {
+    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+    const title = str(paper?.title);
+    if (!title) throw new Error('This paper has no title.');
+    const dir = path.resolve(String(folder ?? ''));
+    if (!this.inLibrary(dir)) throw new Error('Choose a folder inside your library to download into.');
+    if (!(await fs.stat(dir).catch(() => null))?.isDirectory()) throw new Error('That folder does not exist anymore.');
+    const pdfUrl = str(paper.pdfUrl);
+    const p: RelatedPaper = {
+      title,
+      authors: Array.isArray(paper.authors) ? paper.authors.filter((a) => typeof a === 'string' && a.trim()) : undefined,
+      year: typeof paper.year === 'number' ? paper.year : undefined,
+      venue: str(paper.venue),
+      arxiv: str(paper.arxiv),
+      doi: str(paper.doi),
+      relation: '',
+    };
+    const existing = matchLibrary([p], await this.libraryEntries())[0];
+    if (existing && !this.trashed.has(existing)) return existing;
+    // (After arXiv, OpenReview and HAL: the open-access PDF Semantic Scholar knows, wherever it is.)
+    return this.downloadReference(p, dir, pdfUrl && /^https?:\/\//i.test(pdfUrl) ? [pdfUrl] : []);
   }
 
   async cancelAI(jobId: string): Promise<void> {

@@ -58,6 +58,8 @@ export const API_METHODS: (keyof OmoebaAPI)[] = [
   'extractRelated',
   'matchRelated',
   'downloadRelated',
+  'authorPapers',
+  'downloadAuthorPaper',
   'pickTextFile',
   'pickFolderToOpen',
   'recentItems',

@@ -8,7 +8,8 @@ import path from 'node:path';
 import type { Sidecar } from '../shared/types';
 import { arxivIdOf } from '../shared/arxiv';
 
-const API = 'https://api.semanticscholar.org/graph/v1';
+export const S2_API = 'https://api.semanticscholar.org/graph/v1';
+const API = S2_API;
 const FIELDS = 'citationCount,url,title,year';
 const UA = { 'User-Agent': 'Omoeba/0.1 (reference manager)' };
 
@@ -50,7 +51,8 @@ export function citationKeysOf(sc: Sidecar, pdfPath: string): CitationKeys {
 /** Semantic Scholar refused (too many requests from everyone without a key, or down): try later. */
 export class S2Busy extends Error {}
 
-async function call(url: string, init: RequestInit = {}): Promise<Response | null> {
+/** A request to Semantic Scholar (tried again a few times when it is busy); null if it knows no such thing (404). */
+export async function s2Call(url: string, init: RequestInit = {}): Promise<Response | null> {
   const key = process.env.SEMANTIC_SCHOLAR_API_KEY?.trim();
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, {
@@ -76,7 +78,7 @@ const asPaper = (v: unknown): S2Paper | null =>
 /** Papers by their ids ("arXiv:…", "DOI:…"), up to 500: each found, or null. */
 export async function papersByIds(ids: string[]): Promise<(S2Paper | null)[]> {
   if (!ids.length) return [];
-  const res = await call(`${API}/paper/batch?fields=${FIELDS}`, {
+  const res = await s2Call(`${API}/paper/batch?fields=${FIELDS}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ids }),
@@ -120,7 +122,7 @@ export function sameTitle(a: string, b: string): boolean {
 /** The paper with this title (if Semantic Scholar's best match has the same title, and year). */
 export async function paperByTitle(title: string, year?: number): Promise<S2Paper | null> {
   if (words(title).length < 2) return null;
-  const res = await call(`${API}/paper/search/match?query=${encodeURIComponent(title.slice(0, 300))}&fields=${FIELDS}`);
+  const res = await s2Call(`${API}/paper/search/match?query=${encodeURIComponent(title.slice(0, 300))}&fields=${FIELDS}`);
   if (!res) return null;
   const body = (await res.json()) as { data?: unknown[] };
   const p = asPaper(body.data?.[0]);

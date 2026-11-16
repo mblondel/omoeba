@@ -36,6 +36,13 @@ A reverse index is synchronized from time to time to easily be able to
 search from tags, keywords, authors, and institutions.
 This is down in the background to not block the app.
 
+## More papers by an author
+
+A click on an author's name lists the library's papers by this author (a search for author:"…").
+There, "More by this author…" lists under them the author's papers that are not in the library, from Semantic Scholar (newest first), each with a Download button (the folder is chosen; the PDF is looked for on arXiv, OpenReview, HAL, then where Semantic Scholar says it is open access).
+The author is the one of the library's own papers (found on Semantic Scholar by their arXiv id or DOI), so a namesake is not mistaken for them; if none of these papers is known to Semantic Scholar, the author is found by name, and the other people with this name can be chosen instead.
+Semantic Scholar is used without a key (with one if SEMANTIC_SCHOLAR_API_KEY is set).
+
 ## Paper view
 
 When clicking on a paper in the list, we are first shown a page containing:

@@ -18,6 +18,7 @@ import {
 } from '../dom';
 import { navigate, state, addPaperFromUrl, isActiveView, openSynthesesTab as navigateToSyntheses, openSynthesisTab, retargetSearchTab } from '../app';
 import { openSummarizeDialog } from './synthesis';
+import { mountAuthorPapers } from './authorpapers';
 import { renderThumbnail } from '../thumbnail';
 import { sameAuthor, sameInstitution, tagQuery } from '../authors';
 import { confirmTrashPaper } from '../trashpaper';
@@ -231,6 +232,47 @@ export function mountList(root: HTMLElement, opts: { query?: string; starred?: b
     }
   }
 
+  // When the list shows one author (a search for author:"…", e.g. after a click on a name), the
+  // author's papers that are not in the library can be listed under it (from Semantic Scholar).
+  const shownAuthor = () => /^(?:author|authors|a):"([^"]+)"$/i.exec(search.value.trim())?.[1].trim() || null;
+  const authorMore = h('div', { class: 'author-more', hidden: true });
+  let authorMoreFor: string | null = null;
+  const closeAuthorMore = () => {
+    authorMoreFor = null;
+    authorMore.hidden = true;
+    authorMore.replaceChildren();
+  };
+  const moreByBtn = h(
+    'button',
+    {
+      class: 'btn',
+      hidden: true,
+      onclick: () => {
+        const name = shownAuthor();
+        if (!name) return;
+        authorMoreFor = name;
+        authorMore.hidden = false;
+        mountAuthorPapers(authorMore, name, {
+          onClose: closeAuthorMore,
+          // (The folder dialog starts where one of the author's papers is.)
+          startFolder: () => {
+            const p = visible[0]?.pdfPath;
+            return p ? p.slice(0, Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))) : undefined;
+          },
+        });
+      },
+    },
+    icon('person', 13),
+    'More by this author…',
+  );
+  const updateMoreByBtn = () => {
+    const name = shownAuthor();
+    moreByBtn.hidden = !name;
+    if (name) moreByBtn.title = `Papers by ${name} that are not in your library (from Semantic Scholar)`;
+    // (Another search: the papers listed were another author's.)
+    if (authorMoreFor && authorMoreFor !== name) closeAuthorMore();
+  };
+
   // When the list shows a folder (folder: in the search), a tag can be added to all its papers.
   const tagAllBtn = h(
     'button',
@@ -318,6 +360,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; starred?: b
       'div',
       { class: 'topbar-actions' },
       synthLink,
+      moreByBtn,
       summarizeBtn,
       tagAllBtn,
       renameBtn,
@@ -389,7 +432,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; starred?: b
     requestAnimationFrame(updateTagMore);
   }
 
-  root.append(h('div', { class: 'view list-view' }, header, isSearchTab ? null : tagBar, wrap, footer));
+  root.append(h('div', { class: 'view list-view' }, header, isSearchTab ? null : tagBar, wrap, authorMore, footer));
 
   const columns: { key: SortKey; label: string; cls: string }[] = [
     { key: 'title', label: 'Title', cls: 'c-title' },
@@ -690,6 +733,7 @@ export function mountList(root: HTMLElement, opts: { query?: string; starred?: b
     const q = search.value.trim();
     if (!isSearchTab) state.listQuery = q;
     updateRenameBtn();
+    updateMoreByBtn();
     renderTagBar();
     const { rest, folders, authors, insts, tags, types } = splitQuery(q);
     let list = papers.filter(inTab);
