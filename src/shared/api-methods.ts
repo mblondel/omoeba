@@ -51,6 +51,8 @@ export const API_METHODS: (keyof OmoebaAPI)[] = [
   'generateSummary',
   'aiBacklog',
   'refreshCitations',
+  'arxivUpdate',
+  'updateFromArxiv',
   'askAI',
   'cancelAI',
   'findSource',

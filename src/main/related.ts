@@ -237,6 +237,26 @@ export async function arxivTitle(arxivId: string, timeoutMs = 10_000): Promise<s
   return parseArxivFeed(await res.text()).find((e) => e.id === id)?.title ?? null;
 }
 
+/** The latest version of the paper `id` (without version) in an arXiv API (Atom) response, or null. */
+export function latestVersionInFeed(xml: string, id: string): number | null {
+  for (const m of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
+    const e = /<id>\s*https?:\/\/arxiv\.org\/abs\/([^<\s]+?)v(\d+)\s*<\/id>/.exec(m[1]);
+    if (e && e[1] === id) return Number(e[2]);
+  }
+  return null;
+}
+
+/** The latest version of an arXiv paper (arXiv API), or null if it cannot be had. */
+export async function arxivLatestVersion(arxivId: string, timeoutMs = 10_000): Promise<number | null> {
+  const id = arxivId.replace(/v\d+$/, '');
+  const res = await fetch(`https://export.arxiv.org/api/query?id_list=${encodeURIComponent(id)}&max_results=1`, {
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: { 'User-Agent': 'Omoeba/0.1' },
+  });
+  if (!res.ok) return null;
+  return latestVersionInFeed(await res.text(), id);
+}
+
 export { uninformativeFileName } from '../shared/filenames';
 
 /** arXiv papers whose title is exactly this one (arXiv API title search). */

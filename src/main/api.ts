@@ -42,6 +42,7 @@ import type {
   TextWriteResult,
   PaperDetail,
   PaperSummary,
+  ArxivUpdate,
   AuthorPaper,
   AuthorPapers,
   AuthorProfile,
@@ -116,6 +117,7 @@ import {
   renamePapersInSyntheses,
 } from './syntheses';
 import { cleanPdfStem } from '../shared/filenames';
+import { readSkimFile } from './skim';
 import { downloadPdf, NotPdfError, toPdfUrl, uniquePath, writeFileAtomic } from './download';
 import { yearOf, type WebClip } from './webclip';
 import { RecentStore, createTextFile, insideRoots, isEditable, linkTarget, listFolder, readTextFile, writeTextFile } from './textfiles';
@@ -126,7 +128,7 @@ import { byInode, driveFsState, driveIdOf, readDriveFiles } from './gdrive';
 import { appendBibEntry, bibField, bibliographyFiles, fetchDblpBibtex, findBibEntry, freeKey, freeKeyAmong, makeCiteKey, parseBibFile, setBibKey, titleSimilarity } from './cite';
 import { WebLibraryData } from './webdata';
 import { DATA_FILE, libraryFile, sameLibraryData } from '../web/paper';
-import { arxivTitle, fileNameForTitle, matchLibrary, parseRelated, pdfCandidates, relatedPrompt, uninformativeFileName, type LibraryEntry } from './related';
+import { arxivLatestVersion, arxivTitle, fileNameForTitle, matchLibrary, parseRelated, pdfCandidates, relatedPrompt, uninformativeFileName, type LibraryEntry } from './related';
 import {
   arxivIdOf,
   arxivStampOf,
@@ -2233,6 +2235,83 @@ export class OmoebaService implements OmoebaAPI {
       return target;
     }
     throw new Error(`Could not download “${p.title}”: ${(lastError as Error)?.message ?? 'unknown error'}`);
+  }
+
+  // --- A newer version of the paper on arXiv
+
+  /** The latest version of arXiv papers, as last asked (not asked again for a few hours). */
+  private arxivLatest = new Map<string, { at: number; version: number }>();
+
+  /**
+   * arXiv id and version of a PDF: from arXiv's stamp on its first page (it names the exact
+   * version), else from the address it was downloaded from, if that names a version.
+   */
+  private async arxivVersionOf(pdfPath: string, sc: Sidecar): Promise<{ id: string; version: number } | null> {
+    let stamp: string | undefined;
+    try {
+      stamp = arxivStampOf((await extractPdf(pdfPath, 1)).pages[0] ?? '');
+    } catch {
+      /* not readable: the address it was downloaded from */
+    }
+    const from = (stamp ? arxivIdOf(`arXiv:${stamp}`) : null) ?? arxivIdOf(sc.source?.url);
+    const version = Number(from?.version?.slice(1));
+    return from && version >= 1 ? { id: from.id, version } : null;
+  }
+
+  async arxivUpdate(id: string): Promise<ArxivUpdate | null> {
+    const pdfPath = this.checkId(id);
+    if (!(await fs.stat(pdfPath).catch(() => null))?.isFile()) return null;
+    const sc = await readSidecar(jsonPathOf(pdfPath));
+    const cur = await this.arxivVersionOf(pdfPath, sc);
+    if (!cur) return null;
+    let known = this.arxivLatest.get(cur.id);
+    if (!known || Date.now() - known.at > 6 * 3600_000) {
+      const version = await arxivLatestVersion(cur.id);
+      if (!version) return null;
+      known = { at: Date.now(), version };
+      this.arxivLatest.set(cur.id, known);
+    }
+    if (known.version <= cur.version) return null;
+    // What was written on this version: notes, annotations (in the .json, else in the .skim file).
+    let annotations = Array.isArray(sc.annotations) ? sc.annotations.length : 0;
+    if (!annotations && (await fs.stat(skimPathOf(pdfPath)).catch(() => null))?.isFile()) {
+      // (A .skim file that cannot be read counts: better to ask.)
+      annotations = await readSkimFile(skimPathOf(pdfPath)).then(
+        (a) => a.length,
+        () => 1,
+      );
+    }
+    return {
+      arxiv: cur.id,
+      current: cur.version,
+      latest: known.version,
+      hasNotes: typeof sc.notes === 'string' && sc.notes.trim() !== '',
+      annotations,
+    };
+  }
+
+  async updateFromArxiv(id: string, version: number): Promise<PaperDetail> {
+    const pdfPath = this.checkId(id);
+    const wanted = Math.floor(Number(version));
+    if (!(wanted >= 1)) throw new Error('Which version?');
+    if (!(await fs.stat(pdfPath).catch(() => null))?.isFile()) throw new Error('The PDF file is missing.');
+    const cur = await this.arxivVersionOf(pdfPath, await readSidecar(jsonPathOf(pdfPath)));
+    if (!cur) throw new Error('This PDF does not come from arXiv (or its version is not known).');
+    if (wanted <= cur.version) return this.getPaper(pdfPath);
+    const url = `https://arxiv.org/abs/${cur.id}v${wanted}`;
+    const { data } = await downloadPdf(url);
+    await this.serially(pdfPath, async () => {
+      await this.checkNotTrashed(pdfPath);
+      // (The version replaced stays on arXiv: nothing is lost.)
+      await writeFileAtomic(pdfPath, data);
+      await updateSidecar(jsonPathOf(pdfPath), {
+        source: { url, downloadedAt: new Date().toISOString() },
+        pdf: { sha256: createHash('sha256').update(data).digest('hex'), size: data.length },
+      });
+    });
+    this.newFiles(pdfPath);
+    this.platform.emit({ type: 'paper-updated', id: pdfPath });
+    return this.getPaper(pdfPath);
   }
 
   // --- Papers of an author that are not in the library (Semantic Scholar)

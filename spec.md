@@ -64,6 +64,11 @@ The .json file is then used as a cache.
 
 If the PDF is missing, we use the original download location specified in the .json file to attempt to redownload the file.
 
+If the PDF comes from arXiv, opening the page checks whether arXiv has a newer version (the PDF's version is the one in arXiv's stamp on its first page, else the one in its download location).
+A PDF without notes or annotations is replaced by the newest version at once (a message says so).
+Otherwise the page asks: "Update" replaces the PDF and keeps the notes and annotations as they are (annotations may no longer be where their text is); "Keep this version" is remembered, until a later version appears.
+Only the PDF, its download location and its checksum change: summaries, related work and conversations stay as they were.
+
 ## PDF reader
 
 The main view is the PDF.

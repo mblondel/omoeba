@@ -122,6 +122,18 @@ export interface RelatedPaper {
   page?: number;
 }
 
+/** A newer version of a paper on arXiv than the PDF in the library (see OmoebaAPI.arxivUpdate). */
+export interface ArxivUpdate {
+  /** arXiv id, without version. */
+  arxiv: string;
+  /** The version of the PDF in the library, and the latest one on arXiv. */
+  current: number;
+  latest: number;
+  /** What was written on the PDF in the library: notes, and how many annotations. */
+  hasNotes: boolean;
+  annotations: number;
+}
+
 /** An author, as Semantic Scholar knows them. */
 export interface AuthorProfile {
   /** Semantic Scholar's id of the author. */
@@ -784,6 +796,16 @@ export interface OmoebaAPI {
    * changed substantially): the paper if it changed, else null. `force`: now, and the exact count.
    */
   refreshCitations(id: string, force?: boolean): Promise<PaperDetail | null>;
+  /**
+   * For a PDF that comes from arXiv (its version is known from arXiv's stamp on its first page,
+   * else from where it was downloaded): the newer version there is on arXiv, if any; else null.
+   */
+  arxivUpdate(id: string): Promise<ArxivUpdate | null>;
+  /**
+   * Replace the paper's PDF by this version from arXiv (a newer one than the PDF's). Its notes,
+   * annotations, summaries… are kept as they are.
+   */
+  updateFromArxiv(id: string, version: number): Promise<PaperDetail>;
   /** `context.papers`: other papers of the library mentioned in the question (their ids). */
   askAI(
     id: string,

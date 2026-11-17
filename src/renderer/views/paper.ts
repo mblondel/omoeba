@@ -1,5 +1,5 @@
 /** Paper view: metadata, tags, summaries, download location. */
-import type { AIProvider, Config, FigureRef, JobStep, PaperDetail, RelatedPaper, Sidecar, SourceCheckResult, SummaryEntry } from '../../shared/types';
+import type { AIProvider, ArxivUpdate, Config, FigureRef, JobStep, PaperDetail, RelatedPaper, Sidecar, SourceCheckResult, SummaryEntry } from '../../shared/types';
 import { api, newJobId } from '../api';
 import { clear, confirmDialog, errorMessage, formatAuthors, h, icon, iconButton, toast, tagColor, setTagPalette } from '../dom';
 import { mountMarkdown } from '../markdown';
@@ -713,6 +713,27 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       );
     }
 
+    // A newer version on arXiv, when something was written on this one: the choice is the user's.
+    if (arxivOffer && p.hasPdf) {
+      const o = arxivOffer;
+      const written = [o.hasNotes ? 'notes' : '', o.annotations ? `${o.annotations} annotation${o.annotations === 1 ? '' : 's'}` : ''].filter(Boolean).join(' and ');
+      content.append(
+        h(
+          'div',
+          { class: 'banner' },
+          icon('refresh'),
+          h(
+            'span',
+            null,
+            `A newer version of this paper is on arXiv: version ${o.latest} (this PDF is version ${o.current}). `,
+            `Your ${written} ${o.annotations ? 'are kept, but annotations may no longer be where the text they mark is' : 'are kept'}.`,
+          ),
+          h('button', { class: 'btn', disabled: arxivUpdating, onclick: () => updateFromArxiv(o) }, arxivUpdating ? 'Updating…' : `Update to version ${o.latest}`),
+          h('button', { class: 'btn', disabled: arxivUpdating, title: 'Not asked again for this version', onclick: () => keepArxivVersion(o) }, 'Keep this version'),
+        ),
+      );
+    }
+
     const ais = enabledAIs();
     const reextract = ais.length
       ? iconButton('sparkle', 'Re-extract information with AI', () => runMetadata(cfg?.defaultAI ?? ais[0].id), 'reextract-btn')
@@ -1221,6 +1242,60 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
       }),
     );
     return details ? h('div', { class: 'source-block' }, row, details) : row;
+  }
+
+  // --- A newer version on arXiv: checked when the page opens. The PDF is replaced at once when
+  // nothing was written on it (no notes, no annotations); otherwise the user is asked (above).
+  let arxivOffer: ArxivUpdate | null = null;
+  let arxivUpdating = false;
+  /** The version the user chose not to update to (not offered again). */
+  const arxivSkipKey = `omoeba.arxivSkip:${id}`;
+
+  async function checkArxivVersion() {
+    let u: ArxivUpdate | null;
+    try {
+      u = await api.arxivUpdate(id);
+    } catch (e) {
+      console.warn('arXiv version not checked:', e);
+      return;
+    }
+    if (!u || disposed) return;
+    if (!u.hasNotes && !u.annotations) return updateFromArxiv(u);
+    try {
+      if (localStorage.getItem(arxivSkipKey) === String(u.latest)) return;
+    } catch {
+      /* ignore */
+    }
+    arxivOffer = u;
+    if (!editingSummary) render();
+  }
+
+  async function updateFromArxiv(u: ArxivUpdate) {
+    if (arxivUpdating) return;
+    arxivUpdating = true;
+    if (arxivOffer && !editingSummary) render();
+    try {
+      const next = await api.updateFromArxiv(id, u.latest);
+      arxivOffer = null;
+      if (disposed) return;
+      paper = next;
+      toast(`PDF updated to version ${u.latest} from arXiv (it was version ${u.current}).`, 'info', 8000);
+    } catch (e) {
+      toast(`Version ${u.latest} could not be downloaded from arXiv: ${errorMessage(e)}`, 'error', 8000);
+    } finally {
+      arxivUpdating = false;
+      if (!disposed && !editingSummary) render();
+    }
+  }
+
+  function keepArxivVersion(u: ArxivUpdate) {
+    try {
+      localStorage.setItem(arxivSkipKey, String(u.latest));
+    } catch {
+      /* ignore */
+    }
+    arxivOffer = null;
+    render();
   }
 
   // Ask AI about the paper (the same conversations as in the PDF reader).
@@ -1862,6 +1937,8 @@ export function mountPaper(root: HTMLElement, id: string): () => void {
           }
         })
         .catch((e) => console.warn('Citation count not read:', e));
+      // A newer version on arXiv (for a PDF that is on this computer).
+      if (d.hasPdf && !d.cloudOnly) checkArxivVersion();
       // A missing PDF is fetched as soon as the page opens: from its download location, else from
       // Google Drive through the browser. Once per paper while Omoeba runs (after a failure or a
       // Cancel, "Read PDF" tries again).
